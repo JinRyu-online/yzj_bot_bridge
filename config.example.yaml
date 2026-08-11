@@ -1,0 +1,92 @@
+# 复制为 ~/.yzj-bridge/config.yaml（或仓库旁 config.yaml）后填写真实值。
+# config.yaml 已被 gitignore，请勿把真实密钥提交到 Git。
+# 多 agent 格式：defaults + groups + bots
+
+defaults:
+  cursor_api_key: ""                    # 或环境变量 CURSOR_API_KEY；勿填真实值到示例文件
+  anthropic_api_key: ""                 # 可选；留空则由 Claude Code 读取自身配置
+  openai_api_key: ""
+  openai_base_url: ""
+  openai_model: ""
+  openai_timeout: 120
+  openai_max_tool_rounds: 8
+  workspace: "~"
+  cursor_workspace: "~/.yzj-bridge/workspace/cursor_cli"
+  claude_workspace: "~/.yzj-bridge/workspace/claude_code"
+  projects_root: "~"
+  projects: []                          # 可选：[{ name, path, aliases }]
+  cursor_bin: "agent"                   # 建议绝对路径
+  claude_bin: "claude"                  # Windows 建议 claude.exe（勿用 claude.cmd）
+  cursor_model: ""
+  claude_model: ""
+  session_mode: "per_user"              # per_user | shared | oneshot
+  allow_users: []
+  cursor_timeout: 300
+  ack_pending: true
+  mention_on_reply: true
+  cursor_sandbox: "disabled"
+  cursor_force: true
+  cursor_stream: true
+  cursor_stream_partial: true
+  log_level: "info"
+  commands_enabled: true
+  reconnect_delay_sec: 5
+  reconnect_max_delay_sec: 60
+  heartbeat_interval_sec: 30
+  stale_ms: 45000
+  ws_invalid_frame_limit: 3
+  inbound_mode: websocket               # websocket | webhook | both
+  webhook_host: "0.0.0.0"
+  webhook_port: 8765
+  sessions_file: "sessions.json"
+  conversations_dir: "logs/conversations"
+  max_workers: 4
+
+# groups 是逻辑分组标签（不是云之家群 ID）
+groups:
+  - id: group_a
+    description: "云之家群 A（逻辑名，自行命名）"
+  - id: group_b
+    description: "云之家群 B"
+
+bots:
+  # 单群写法：group + send_msg_url
+  - id: fairy
+    name: "Fairy"
+    group: group_a
+    send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_ME_YZJTOKEN"
+    backend: cursor_cli                 # cursor_cli | claude_code | openai | opencode
+    system_prompt: |
+      你是 Fairy，本地编程与排障助手。
+    skills: []
+    model: ""
+    workspace: ""                       # 留空则用引擎/全局默认目录
+    allow_users: []
+    # inbound_mode: both
+    # webhook_path: "/yzj/webhook/fairy"
+    # secret: ""                        # 配置后校验 Webhook 请求头 sign（HmacSHA1）
+
+  # 多群复用：channels 挂多个云之家群 webhook
+  # 运行时 id 默认为 ghost__group_a / ghost__group_b
+  - id: ghost
+    name: "Ghost"
+    backend: cursor_cli
+    system_prompt: |
+      你是 Ghost，专注运维排查。
+    skills: []
+    workspace: ""
+    channels:
+      - group: group_a
+        send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_GROUP_A"
+      - group: group_b
+        send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_GROUP_B"
+
+  # Claude Code 示例
+  # - id: code
+  #   name: "CodeBot"
+  #   backend: claude_code
+  #   model: sonnet
+  #   permission_mode: bypassPermissions
+  #   channels:
+  #     - group: group_a
+  #       send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_ME"

@@ -1,0 +1,252 @@
+package sessions
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"yzj-bridge/internal/bot"
+	"yzj-bridge/internal/paths"
+)
+
+type HistoryItem struct {
+	ChatID    string `json:"chat_id"`
+	ClearedAt string `json:"cleared_at,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+type Entry struct {
+	Current     string        `json:"current"`
+	Name        string        `json:"name,omitempty"`
+	History     []HistoryItem `json:"history,omitempty"`
+	ProjectName string        `json:"project_name,omitempty"`
+	ProjectPath string        `json:"project_path,omitempty"`
+	AgentCWD    string        `json:"agent_cwd,omitempty"`
+}
+
+type Store struct {
+	mu   sync.Mutex
+	path string
+	data struct {
+		Version int                       `json:"version"`
+		Bots    map[string]map[string]any `json:"bots"`
+	}
+}
+
+func Open(path string) (*Store, error) {
+	if path == "" {
+		path = paths.SessionsPath("sessions.json")
+	} else if !filepath.IsAbs(path) {
+		path = paths.SessionsPath(path)
+	}
+	s := &Store{path: path}
+	s.data.Version = 3
+	s.data.Bots = map[string]map[string]any{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return s, nil
+		}
+		return nil, err
+	}
+	_ = json.Unmarshal(b, &s.data)
+	if s.data.Bots == nil {
+		s.data.Bots = map[string]map[string]any{}
+	}
+	if s.data.Version == 0 {
+		s.data.Version = 3
+	}
+	return s, nil
+}
+
+func (s *Store) Save() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.Version = 3
+	b, err := json.MarshalIndent(s.data, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := s.path + ".tmp"
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.path)
+}
+
+func ResolveSessionKey(cfg bot.Config, openID string) (string, bool) {
+	switch cfg.SessionMode {
+	case "oneshot":
+		return "", false
+	case "shared":
+		key := cfg.SharedSessionKey
+		if key == "" {
+			key = "__shared__"
+		}
+		return key, true
+	default:
+		if openID == "" {
+			return "", false
+		}
+		return openID, true
+	}
+}
+
+func (s *Store) getUsers(botID string) map[string]any {
+	b, ok := s.data.Bots[botID]
+	if !ok {
+		b = map[string]any{"users": map[string]any{}}
+		s.data.Bots[botID] = b
+	}
+	users, _ := b["users"].(map[string]any)
+	if users == nil {
+		users = map[string]any{}
+		b["users"] = users
+	}
+	return users
+}
+
+func entryFromAny(v any) Entry {
+	switch t := v.(type) {
+	case string:
+		return Entry{Current: t}
+	case map[string]any:
+		e := Entry{
+			Current: asStr(t["current"]), Name: asStr(t["name"]),
+			ProjectName: asStr(t["project_name"]), ProjectPath: asStr(t["project_path"]),
+			AgentCWD: asStr(t["agent_cwd"]),
+		}
+		if e.Current == "" {
+			e.Current = asStr(t["chat_id"])
+		}
+		return e
+	default:
+		return Entry{}
+	}
+}
+
+func (s *Store) GetEntry(botID, userKey string) Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users := s.getUsers(botID)
+	return entryFromAny(users[userKey])
+}
+
+func (s *Store) SetChatID(botID, userKey, chatID, name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users := s.getUsers(botID)
+	e := entryFromAny(users[userKey])
+	e.Current = chatID
+	if name != "" {
+		e.Name = name
+	}
+	users[userKey] = e
+}
+
+func (s *Store) ClearSession(botID, userKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users := s.getUsers(botID)
+	e := entryFromAny(users[userKey])
+	if e.Current != "" {
+		e.History = append(e.History, HistoryItem{
+			ChatID: e.Current, ClearedAt: time.Now().UTC().Format(time.RFC3339), Name: e.Name,
+		})
+	}
+	e.Current = ""
+	users[userKey] = e
+}
+
+func (s *Store) SetProject(botID, userKey, name, path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users := s.getUsers(botID)
+	e := entryFromAny(users[userKey])
+	e.ProjectName = name
+	e.ProjectPath = path
+	e.AgentCWD = path
+	users[userKey] = e
+}
+
+func (s *Store) HistoryMessages(botID, userKey string, limit int) []map[string]string {
+	// Lightweight: stored separately in conversations; for openai we keep recent in Raw via conversation append.
+	_ = botID
+	_ = userKey
+	_ = limit
+	return nil
+}
+
+func ResolveAgentWorkspace(cfg bot.Config, openID string, store *Store, globalWorkspace string) string {
+	if key, ok := ResolveSessionKey(cfg, openID); ok && store != nil {
+		e := store.GetEntry(cfg.ID, key)
+		if e.ProjectPath != "" {
+			if st, err := os.Stat(e.ProjectPath); err == nil && st.IsDir() {
+				return e.ProjectPath
+			}
+		}
+		if e.AgentCWD != "" {
+			if st, err := os.Stat(e.AgentCWD); err == nil && st.IsDir() {
+				return e.AgentCWD
+			}
+		}
+	}
+	if cfg.Workspace != "" {
+		return cfg.Workspace
+	}
+	if globalWorkspace != "" {
+		return globalWorkspace
+	}
+	return filepath.Join(paths.UserDataDir(), "workspace")
+}
+
+func AppendConversation(dir, group, botID, openID, role, content string) {
+	if dir == "" {
+		dir = filepath.Join(paths.UserDataDir(), "logs", "conversations")
+	} else if !filepath.IsAbs(dir) {
+		dir = filepath.Join(paths.UserDataDir(), dir)
+	}
+	_ = os.MkdirAll(dir, 0o755)
+	day := time.Now().Format("2006-01-02")
+	name := day + "_" + sanitize(group) + "_" + sanitize(botID) + "_" + sanitize(openID) + ".jsonl"
+	path := filepath.Join(dir, name)
+	rec, _ := json.Marshal(map[string]any{
+		"ts": time.Now().Format(time.RFC3339), "role": role, "content": content,
+	})
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(rec, '\n'))
+}
+
+func sanitize(s string) string {
+	b := make([]rune, 0, len(s))
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b = append(b, r)
+		} else {
+			b = append(b, '_')
+		}
+	}
+	if len(b) == 0 {
+		return "x"
+	}
+	return string(b)
+}
+
+func asStr(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}

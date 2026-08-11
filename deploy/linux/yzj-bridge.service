@@ -1,0 +1,17 @@
+[Unit]
+Description=YZJ Bridge (Go)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/yzj-bridge
+ExecStart=/opt/yzj-bridge/yzj-bridge
+Restart=on-failure
+RestartSec=5
+# 按需调整路径与用户
+# User=yzj
+# Environment=HOME=/home/yzj
+
+[Install]
+WantedBy=multi-user.target
