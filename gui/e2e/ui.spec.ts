@@ -129,6 +129,22 @@ async function installTauriMock(page: Page) {
           message: "super_long_line_" + "x".repeat(240) + "_end",
         },
       ],
+      skills: [
+        {
+          id: "hello-workspace",
+          name: "Hello Workspace",
+          version: "1.0.0",
+          description: "样例 Skill",
+        },
+      ] as { id: string; name: string; version?: string; description?: string }[],
+      catalog: [
+        {
+          id: "hello-workspace",
+          name: "Hello Workspace",
+          description: "样例 Skill：回显参数",
+          version: "1.0.0",
+        },
+      ] as { id: string; name: string; description?: string; version?: string }[],
       revealed: [] as string[],
     };
 
@@ -274,6 +290,45 @@ async function installTauriMock(page: Page) {
                   { id: "gpt-4o", label: "gpt-4o" },
                 ],
               });
+            }
+            if (path.startsWith("/v1/skills/catalog")) {
+              return JSON.stringify({ skills: state.catalog });
+            }
+            if (path.startsWith("/v1/skills/install") && method === "POST") {
+              const body = JSON.parse(bodyRaw || "{}") as {
+                source?: string;
+                catalog_id?: string;
+                path?: string;
+              };
+              const id =
+                body.catalog_id ||
+                (body.path ? String(body.path).split(/[/\\]/).pop() : "") ||
+                "imported";
+              const name =
+                state.catalog.find((c) => c.id === id)?.name || id;
+              if (!state.skills.some((s) => s.id === id)) {
+                state.skills.push({
+                  id,
+                  name,
+                  version: "1.0.0",
+                  description: "installed in mock",
+                });
+              }
+              return JSON.stringify({ ok: true, id, name });
+            }
+            if (path.startsWith("/v1/skills/") && method === "DELETE") {
+              const id = decodeURIComponent(path.replace(/^\/v1\/skills\//, ""));
+              state.skills = state.skills.filter((s) => s.id !== id);
+              return JSON.stringify({ ok: true });
+            }
+            if (path.startsWith("/v1/skills/") && method === "GET") {
+              const id = decodeURIComponent(path.replace(/^\/v1\/skills\//, ""));
+              const sk = state.skills.find((s) => s.id === id);
+              if (!sk) throw new Error(`skill not found: ${id}`);
+              return JSON.stringify(sk);
+            }
+            if (path.startsWith("/v1/skills")) {
+              return JSON.stringify({ skills: state.skills });
             }
             return JSON.stringify({ ok: true });
           }
