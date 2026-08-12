@@ -93,7 +93,7 @@ bots:
 - `defaults` + `bots` + 可选 `channels` 多群展开（runtime id：`{role}__{group}`）
 - `inbound_mode`: `websocket` | `webhook` | `both`
 - 会话：`sessions.json` v3；WSS 启停记忆：`wss_enabled.json`
-- 参考模板：`config.default.yaml` / `config.example.yaml`（均为占位符，无真实密钥）
+- 参考模板：`config.default.yaml`（占位符，无真实密钥；首次启动会复制到用户目录）
 
 ## 目录
 
@@ -101,7 +101,6 @@ bots:
 |------|------|
 | `bridge/` | Go 桥接核心 |
 | `gui/` | Tauri 控制面板 |
-| `config.default.yaml` | 默认配置模板 |
-| `config.example.yaml` | 带注释的示例配置 |
+| `config.default.yaml` | 默认配置模板（首次初始化用） |
 | `build_all.ps1` | Windows 一键构建 |
 | `deploy/linux/` | systemd 示例 |

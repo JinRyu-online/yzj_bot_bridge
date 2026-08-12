@@ -12,17 +12,22 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "gui_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# 桌面端不需要 cdylib；Windows-GNU 下 cdylib 会触发 "export ordinal too large"。
+crate-type = ["staticlib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "custom-protocol"] }
+# 不要在这里写死 custom-protocol；否则 `tauri dev` 也会当成生产环境去加载 frontendDist，无法连 Vite 热更新。
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = "2"
 winreg = "0.55"
 
-
+[features]
+# Tauri CLI：`tauri build` 用默认 features；`tauri dev` 会加 `--no-default-features` 关掉本项。
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

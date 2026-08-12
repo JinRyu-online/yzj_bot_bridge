@@ -1,22 +1,24 @@
-# 首次启动写入 ~/.yzj-bridge/config.yaml 的默认模板（无真实密钥）
-# 请在「机器人设置」中补全 send_msg_url / API Key 等。
+# 首次启动写入 ~/.yzj-bridge/config.yaml 的默认模板（无真实密钥）。
+# 请在 GUI「机器人 / AI 设置」中补全 send_msg_url、API Key 等；勿把真实密钥提交到 Git。
 
 defaults:
-  cursor_api_key: ""
-  anthropic_api_key: ""
+  cursor_api_key: ""                    # 或环境变量 CURSOR_API_KEY
+  anthropic_api_key: ""                 # 可选；留空则由 Claude Code 读取自身配置
   openai_api_key: ""
   openai_base_url: ""
+  openai_model: ""
   openai_timeout: 120
   openai_max_tool_rounds: 8
   workspace: "~"
   cursor_workspace: "~/.yzj-bridge/workspace/cursor_cli"
   claude_workspace: "~/.yzj-bridge/workspace/claude_code"
   projects_root: "~"
-  cursor_bin: "agent"
-  claude_bin: "claude"
+  projects: []                          # 可选：[{ name, path, aliases }]
+  cursor_bin: "agent"                   # 建议绝对路径
+  claude_bin: "claude"                  # Windows 建议 claude.exe（勿用 claude.cmd）
   cursor_model: ""
   claude_model: ""
-  session_mode: "per_user"
+  session_mode: "per_user"              # per_user | shared | oneshot
   allow_users: []
   cursor_timeout: 600
   ack_pending: true
@@ -32,7 +34,12 @@ defaults:
   heartbeat_interval_sec: 30
   sessions_file: "sessions.json"
   conversations_dir: "logs/conversations"
-  projects: []
+  inbound_mode: websocket               # websocket | webhook | both
+  webhook_host: "0.0.0.0"
+  webhook_port: 8765
+  stale_ms: 45000
+  ws_invalid_frame_limit: 3
+  max_workers: 4
 
 groups:
   - id: default
@@ -41,13 +48,19 @@ groups:
 bots:
   - id: fairy
     name: "Fairy"
-    backend: cursor_cli
+    backend: cursor_cli                 # cursor_cli | claude_code | openai | opencode
     # 也可改为 openai，并设置 model / openai_base_url / openai_api_key
     system_prompt: |
       你是 Fairy，本地编程与排障助手。
       回答简洁，需要强调时只用 **粗体**。
     skills: []
-    workspace: "~"
+    workspace: "~"                      # 留空则回退引擎/全局默认目录
     allow_users: []
     group: default
     send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_ME"
+    # 多通道写法：用 channels 数组代替 group/send_msg_url
+    # channels:
+    #   - group: workAssistant
+    #     send_msg_url: "https://...yzjtoken=REPLACE_A"
+    #   - group: development
+    #     send_msg_url: "https://...yzjtoken=REPLACE_B"

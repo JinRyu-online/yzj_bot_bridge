@@ -50,15 +50,37 @@ func LoadFile(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseYAML(data)
+}
+
+// ParseYAML 从 YAML 字节解析配置（含 ExpandBots 所需结构）。
+func ParseYAML(data []byte) (*File, error) {
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
 	f := &File{raw: raw}
-	_ = yaml.Unmarshal(data, f)
+	if err := yaml.Unmarshal(data, f); err != nil {
+		return nil, err
+	}
 	if f.Defaults == nil {
 		f.Defaults = map[string]any{}
 	}
+	return f, nil
+}
+
+// ParseRaw 将 GUI/API 提交的 map 规范成 File，便于保存前校验。
+func ParseRaw(raw map[string]any) (*File, error) {
+	data, err := yaml.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	f, err := ParseYAML(data)
+	if err != nil {
+		return nil, err
+	}
+	// 保留原始 map，供后续 SaveRaw / GetRawConfig 使用。
+	f.raw = raw
 	return f, nil
 }
 

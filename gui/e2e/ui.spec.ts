@@ -403,16 +403,22 @@ test("启动遮罩在桥就绪后消失", async ({ page }) => {
   await expect(page.getByTestId("bridge-status")).toContainText("桥已连接");
 });
 
-test("弹窗 ESC 关闭 + OpenAI 字段", async ({ page }) => {
+test("弹窗 X 关闭 + OpenAI 字段", async ({ page }) => {
   await page.getByTestId("nav-bots").click();
   await page.getByTestId("create-bot").click();
   await expect(page.getByTestId("bot-modal")).toBeVisible();
   await page.getByTestId("bot-backend").locator(".fancy-select-trigger").click();
   await page.getByTestId("bot-backend-menu").getByRole("option", { name: "openai" }).click();
+  await expect(page.getByTestId("openai-use-defaults")).toBeVisible();
+  await expect(page.getByTestId("openai-use-defaults")).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("openai-use-defaults").click();
+  await expect(page.getByTestId("openai-use-defaults")).toHaveAttribute("aria-checked", "false");
   await expect(page.getByTestId("openai-base-url")).toBeVisible();
   await expect(page.getByTestId("openai-api-key")).toBeVisible();
   await expect(page.getByTestId("openai-model")).toBeVisible();
-  await page.keyboard.press("Escape");
+  await page.getByTestId("save-bot").click();
+  await expect(page.getByTestId("bot-modal-error")).toBeVisible();
+  await page.getByTestId("bot-modal-close").click();
   await expect(page.getByTestId("bot-modal")).toHaveCount(0);
 });
 

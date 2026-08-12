@@ -215,7 +215,7 @@ fn do_fetch(state: &BridgeState, method: &str, path: &str, body: Option<&str>) -
     };
     let url = format!("http://{}{}", addr, path);
     let auth = format!("Bearer {}", token);
-    let resp = match method.to_uppercase().as_str() {
+    let result = match method.to_uppercase().as_str() {
         "GET" => ureq::get(&url).set("Authorization", &auth).call(),
         "POST" => {
             let mut r = ureq::post(&url).set("Authorization", &auth);
@@ -236,9 +236,30 @@ fn do_fetch(state: &BridgeState, method: &str, path: &str, body: Option<&str>) -
             }
         }
         other => return Err(format!("unsupported method {other}")),
+    };
+    match result {
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.into_string().map_err(|e| e.to_string())?;
+            if !(200..300).contains(&status) {
+                return Err(if text.trim().is_empty() {
+                    format!("HTTP {status}")
+                } else {
+                    text
+                });
+            }
+            Ok(text)
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let text = resp.into_string().unwrap_or_default();
+            Err(if text.trim().is_empty() {
+                format!("HTTP {code}")
+            } else {
+                text
+            })
+        }
+        Err(e) => Err(e.to_string()),
     }
-    .map_err(|e| e.to_string())?;
-    resp.into_string().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

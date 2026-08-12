@@ -31,6 +31,8 @@ type BotForm = {
   model: string;
   openai_base_url: string;
   openai_api_key: string;
+  /** 为 true 时 Base URL / API Key / model 使用 AI 设置中的全局默认。 */
+  openai_use_defaults: boolean;
   inbound_mode: string;
   workspace: string;
 };
@@ -166,6 +168,43 @@ function Switch({
     >
       <span className="switch-knob">{loading ? <span className="spinner" /> : null}</span>
     </button>
+  );
+}
+
+/** 弹窗内悬浮错误：固定在可视区中上，约 3 秒后带退场动画消失。 */
+function ModalFloatMessage({
+  message,
+  testId,
+  onDismissed,
+}: {
+  message: string;
+  testId?: string;
+  onDismissed: () => void;
+}) {
+  const [phase, setPhase] = useState<"enter" | "exit">("enter");
+  const onDismissedRef = useRef(onDismissed);
+  onDismissedRef.current = onDismissed;
+
+  useEffect(() => {
+    setPhase("enter");
+    const exitTimer = window.setTimeout(() => setPhase("exit"), 3000);
+    return () => window.clearTimeout(exitTimer);
+  }, [message]);
+
+  useEffect(() => {
+    if (phase !== "exit") return;
+    const done = window.setTimeout(() => onDismissedRef.current(), 220);
+    return () => window.clearTimeout(done);
+  }, [phase]);
+
+  return (
+    <div
+      className={`modal-float-msg ${phase}`}
+      data-testid={testId}
+      role="alert"
+    >
+      {message}
+    </div>
   );
 }
 
@@ -478,9 +517,19 @@ function emptyBotForm(): BotForm {
     model: "",
     openai_base_url: "",
     openai_api_key: "",
+    openai_use_defaults: true,
     inbound_mode: "websocket",
     workspace: "",
   };
+}
+
+/** 机器人未写 OpenAI 三项覆盖时，视为使用 AI 设置默认。 */
+function botUsesOpenaiDefaults(cfg: Record<string, unknown>): boolean {
+  return (
+    !String(cfg.openai_base_url || "").trim() &&
+    !String(cfg.openai_api_key || "").trim() &&
+    !String(cfg.model || "").trim()
+  );
 }
 
 function App() {
@@ -527,12 +576,17 @@ function App() {
   const [botModal, setBotModal] = useState<"create" | "edit" | null>(null);
   const [channelModal, setChannelModal] = useState(false);
   const [botForm, setBotForm] = useState<BotForm>(emptyBotForm());
+  const [botModalError, setBotModalError] = useState<{ text: string; seq: number } | null>(null);
+  const [botFieldErrors, setBotFieldErrors] = useState<Record<string, string>>({});
   const [channelForm, setChannelForm] = useState<ChannelForm>({
     id: "",
     group: "",
     send_msg_url: "",
     model: "",
   });
+  const [channelModalError, setChannelModalError] = useState<{ text: string; seq: number } | null>(
+    null,
+  );
   const [editingChannelIdx, setEditingChannelIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -995,13 +1049,27 @@ function App() {
     }
   }
 
+  function flashBotModalError(text: string) {
+    setBotModalError((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
+  }
+
+  function flashChannelModalError(text: string) {
+    setChannelModalError((prev) => ({ text, seq: (prev?.seq ?? 0) + 1 }));
+  }
+
   function openCreateBot() {
     setBotForm(emptyBotForm());
+    setBotModalError(null);
+    setBotFieldErrors({});
     setBotModal("create");
   }
 
   function openEditBot() {
     if (!selectedRoleConfig) return;
+    const useDefaults =
+      String(selectedRoleConfig.backend || "") === "openai"
+        ? botUsesOpenaiDefaults(selectedRoleConfig)
+        : true;
     setBotForm({
       id: String(selectedRoleConfig.id || ""),
       name: String(selectedRoleConfig.name || ""),
@@ -1012,24 +1080,54 @@ function App() {
       model: String(selectedRoleConfig.model || ""),
       openai_base_url: String(selectedRoleConfig.openai_base_url || ""),
       openai_api_key: String(selectedRoleConfig.openai_api_key || ""),
+      openai_use_defaults: useDefaults,
       inbound_mode: String(selectedRoleConfig.inbound_mode || "websocket"),
       workspace: String(selectedRoleConfig.workspace || ""),
     });
+    setBotModalError(null);
+    setBotFieldErrors({});
     setBotModal("edit");
   }
 
   async function submitBot() {
     if (!rawConfig) return;
-    if (!botForm.id.trim() || !botForm.name.trim()) {
-      setError("机器人 id / name 不能为空");
-      return;
+    const fieldErrs: Record<string, string> = {};
+    if (!botForm.id.trim()) fieldErrs.id = "请填写机器人 ID";
+    if (!botForm.name.trim()) fieldErrs.name = "请填写显示名称";
+    const needChannelFields =
+      botModal === "create" || !Array.isArray(selectedRoleConfig?.channels);
+    if (needChannelFields && !botForm.send_msg_url.trim()) {
+      fieldErrs.send_msg_url = "请填写云之家 send_msg_url（含 yzjtoken）";
     }
     if (botForm.backend === "openai") {
-      if (!botForm.openai_base_url.trim() || !botForm.openai_api_key.trim() || !botForm.model.trim()) {
-        setError("OpenAI 机器人需要填写 Base URL、API Key 与模型名称");
-        return;
+      if (botForm.openai_use_defaults) {
+        if (
+          !cliForm.openai_base_url.trim() ||
+          !cliForm.openai_api_key.trim() ||
+          !cliForm.openai_model.trim()
+        ) {
+          fieldErrs.openai =
+            "AI 设置中尚未配齐 Base URL、API Key 与模型，请先到「AI 设置」填写，或关闭开关单独配置";
+        }
+      } else {
+        if (!botForm.openai_base_url.trim()) fieldErrs.openai_base_url = "请填写 Base URL";
+        if (!botForm.openai_api_key.trim()) fieldErrs.openai_api_key = "请填写 API Key";
+        if (!botForm.model.trim()) fieldErrs.model = "请选择或填写模型";
       }
     }
+    if (Object.keys(fieldErrs).length) {
+      setBotFieldErrors(fieldErrs);
+      flashBotModalError(
+        fieldErrs.send_msg_url ||
+          fieldErrs.openai ||
+          fieldErrs.id ||
+          fieldErrs.name ||
+          "请完善表单后再保存",
+      );
+      return;
+    }
+    setBotFieldErrors({});
+    setBotModalError(null);
     const bots = [...((rawConfig.bots as Record<string, unknown>[]) || [])];
     const payload: Record<string, unknown> = {
       id: botForm.id.trim(),
@@ -1037,33 +1135,53 @@ function App() {
       backend: botForm.backend,
       inbound_mode: botForm.inbound_mode,
       system_prompt: botForm.system_prompt,
-      model: botForm.model,
       workspace: botForm.workspace,
     };
     if (botForm.backend === "openai") {
-      payload.openai_base_url = botForm.openai_base_url.trim();
-      payload.openai_api_key = botForm.openai_api_key.trim();
+      if (botForm.openai_use_defaults) {
+        // 不写覆盖字段，运行时回退到 defaults；编辑时需删掉旧覆盖。
+      } else {
+        payload.openai_base_url = botForm.openai_base_url.trim();
+        payload.openai_api_key = botForm.openai_api_key.trim();
+        payload.model = botForm.model.trim();
+      }
+    } else if (botForm.model.trim()) {
+      payload.model = botForm.model.trim();
     }
     if (botModal === "create") {
       if (bots.some((b) => String(b.id) === payload.id)) {
-        setError("机器人 id 已存在");
+        setBotFieldErrors({ id: "该 ID 已被占用" });
+        flashBotModalError("机器人 id 已存在");
         return;
       }
       payload.group = botForm.group || "default";
-      payload.send_msg_url = botForm.send_msg_url;
+      payload.send_msg_url = botForm.send_msg_url.trim();
       bots.push(payload);
     } else {
       const idx = bots.findIndex((b) => String(b.id) === selectedRoleId);
       if (idx < 0) return;
       const prev = { ...bots[idx] };
       Object.assign(prev, payload);
+      if (botForm.backend === "openai" && botForm.openai_use_defaults) {
+        delete prev.openai_base_url;
+        delete prev.openai_api_key;
+        delete prev.model;
+      }
+      if (botForm.backend !== "openai" && !botForm.model.trim()) {
+        delete prev.model;
+      }
       if (!Array.isArray(prev.channels)) {
         prev.group = botForm.group || prev.group || "default";
-        if (botForm.send_msg_url) prev.send_msg_url = botForm.send_msg_url;
+        if (botForm.send_msg_url.trim()) prev.send_msg_url = botForm.send_msg_url.trim();
       }
       bots[idx] = prev;
     }
-    await saveConfig({ ...rawConfig, bots });
+    try {
+      await saveConfig({ ...rawConfig, bots });
+    } catch (e) {
+      flashBotModalError(String(e));
+      return;
+    }
     setBotModal(null);
     setSelected(String(payload.id));
     void guiLog(
@@ -1087,6 +1205,7 @@ function App() {
   function openAddChannel() {
     setEditingChannelIdx(null);
     setChannelForm({ id: "", group: "", send_msg_url: "", model: "" });
+    setChannelModalError(null);
     setChannelModal(true);
     if (String(selectedRoleConfig?.backend || "") === "openai" && !openaiModels.length) {
       void probeOpenai(
@@ -1105,6 +1224,7 @@ function App() {
       send_msg_url: String(ch.send_msg_url || ""),
       model: String(ch.model || ""),
     });
+    setChannelModalError(null);
     setChannelModal(true);
     if (String(selectedRoleConfig?.backend || "") === "openai" && !openaiModels.length) {
       void probeOpenai(
@@ -1117,9 +1237,10 @@ function App() {
   async function submitChannel() {
     if (!rawConfig || !selectedRoleConfig) return;
     if (!channelForm.group.trim() || !channelForm.send_msg_url.trim()) {
-      setError("通道 group / send_msg_url 不能为空");
+      flashChannelModalError("通道 group / send_msg_url 不能为空");
       return;
     }
+    setChannelModalError(null);
     const bots = [...((rawConfig.bots as Record<string, unknown>[]) || [])];
     const idx = bots.findIndex((b) => String(b.id) === selectedRoleId);
     if (idx < 0) return;
@@ -1250,6 +1371,11 @@ function App() {
         <div className="brand">
           <span className="brand-mark" />
           YZJ Bridge
+          {import.meta.env.DEV ? (
+            <span className="dev-badge" title="正在连接 Vite 开发服（可热更新）">
+              DEV
+            </span>
+          ) : null}
         </div>
         {(
           [
@@ -1286,7 +1412,7 @@ function App() {
 
       <main className="main">
         {page === "system" && (
-          <section className="page" data-testid="page-system">
+          <section className="page" key="system" data-testid="page-system">
             <header className="page-head">
               <div>
                 <h1>系统设置</h1>
@@ -1295,11 +1421,11 @@ function App() {
             </header>
             <div className="stack page-body">
               <div className="card soft">
-                <div className="row">
+      <div className="row">
                   <div className="row-text">
                     <strong>开机自启</strong>
                     <span>写入当前用户 Run 注册表（无控制台闪烁）</span>
-                  </div>
+      </div>
                   <Switch checked={autostart} loading={loadingAuto} onChange={toggleAutostart} />
                 </div>
                 <div className="row">
@@ -1375,7 +1501,7 @@ function App() {
         )}
 
         {page === "settings" && (
-          <section className="page" data-testid="page-settings">
+          <section className="page" key="settings" data-testid="page-settings">
             <header className="page-head">
               <div>
                 <h1>AI 设置</h1>
@@ -1401,7 +1527,7 @@ function App() {
                 <div className="form-grid">
                   <label className="full">
                     可执行路径（cursor_bin）
-                    <input
+        <input
                       data-testid="cursor-bin"
                       value={cliForm.cursor_bin}
                       onChange={(e) => setCliForm({ ...cliForm, cursor_bin: e.target.value })}
@@ -1673,7 +1799,7 @@ function App() {
         )}
 
         {page === "bots" && (
-          <section className="page bots" data-testid="page-bots">
+          <section className="page bots" key="bots" data-testid="page-bots">
             <header className="page-head">
               <div>
                 <h1>机器人</h1>
@@ -1810,7 +1936,7 @@ function App() {
         )}
 
         {page === "logs" && (
-          <section className="page logs-page" data-testid="page-logs">
+          <section className="page logs-page" key="logs" data-testid="page-logs">
             <header className="page-head">
               <div>
                 <h1>运行日志</h1>
@@ -1860,7 +1986,7 @@ function App() {
         )}
 
         {page === "help" && (
-          <section className="page help-page" data-testid="page-help">
+          <section className="page help-page" key="help" data-testid="page-help">
             <header className="page-head help-hero">
               <div>
                 <p className="help-brand">YZJ Bridge</p>
@@ -1956,32 +2082,66 @@ function App() {
             </div>
           </section>
         )}
-      </main>
+    </main>
 
       {botModal && (
-        <div className="modal-backdrop" data-testid="bot-modal" onClick={() => setBotModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>{botModal === "create" ? "新建机器人" : "编辑机器人"}</h3>
+        <div className="modal-backdrop" data-testid="bot-modal">
+          <div className="modal" role="dialog" aria-modal="true">
+            <div className="modal-head">
+              <h3>{botModal === "create" ? "新建机器人" : "编辑机器人"}</h3>
+              <button
+                type="button"
+                className="modal-close"
+                data-testid="bot-modal-close"
+                aria-label="关闭"
+                onClick={() => setBotModal(null)}
+              >
+                ×
+              </button>
+            </div>
+            {botModalError ? (
+              <ModalFloatMessage
+                key={botModalError.seq}
+                message={botModalError.text}
+                testId="bot-modal-error"
+                onDismissed={() => setBotModalError(null)}
+              />
+            ) : null}
+            <div className="modal-scroll">
             <div className="form-grid">
-              <label>
-                ID
+              <div className="field">
+                <span className="field-label">ID</span>
                 <input
                   data-testid="bot-id"
                   disabled={botModal === "edit"}
+                  className={botFieldErrors.id ? "invalid" : undefined}
                   value={botForm.id}
-                  onChange={(e) => setBotForm({ ...botForm, id: e.target.value })}
+                  onChange={(e) => {
+                    setBotForm({ ...botForm, id: e.target.value });
+                    if (botFieldErrors.id) setBotFieldErrors({ ...botFieldErrors, id: "" });
+                  }}
                   placeholder="唯一标识，如 fairy"
                 />
-              </label>
-              <label>
-                名称
+                {botFieldErrors.id ? (
+                  <span className="field-hint error">{botFieldErrors.id}</span>
+                ) : null}
+              </div>
+              <div className="field">
+                <span className="field-label">名称</span>
                 <input
                   data-testid="bot-name"
+                  className={botFieldErrors.name ? "invalid" : undefined}
                   value={botForm.name}
-                  onChange={(e) => setBotForm({ ...botForm, name: e.target.value })}
+                  onChange={(e) => {
+                    setBotForm({ ...botForm, name: e.target.value });
+                    if (botFieldErrors.name) setBotFieldErrors({ ...botFieldErrors, name: "" });
+                  }}
                   placeholder="显示名称，如 Fairy"
                 />
-              </label>
+                {botFieldErrors.name ? (
+                  <span className="field-hint error">{botFieldErrors.name}</span>
+                ) : null}
+              </div>
               <div className="field">
                 <span className="field-label">后端引擎</span>
                 <FancySelect
@@ -1989,11 +2149,16 @@ function App() {
                   value={botForm.backend}
                   options={backendOptions}
                   onChange={(v) => {
-                    setBotForm({ ...botForm, backend: v });
+                    setBotForm({
+                      ...botForm,
+                      backend: v,
+                      openai_use_defaults: v === "openai" ? botForm.openai_use_defaults : true,
+                    });
                     if (v === "openai" && !openaiModels.length) {
+                      const useDef = botForm.openai_use_defaults;
                       void probeOpenai(
-                        botForm.openai_base_url || cliForm.openai_base_url,
-                        botForm.openai_api_key || cliForm.openai_api_key,
+                        useDef ? cliForm.openai_base_url : botForm.openai_base_url || cliForm.openai_base_url,
+                        useDef ? cliForm.openai_api_key : botForm.openai_api_key || cliForm.openai_api_key,
                       );
                     }
                   }}
@@ -2022,11 +2187,21 @@ function App() {
                     <span className="field-label">发送地址 send_msg_url</span>
                     <input
                       data-testid="bot-send-url"
+                      className={botFieldErrors.send_msg_url ? "invalid" : undefined}
                       value={botForm.send_msg_url}
-                      onChange={(e) => setBotForm({ ...botForm, send_msg_url: e.target.value })}
+                      onChange={(e) => {
+                        setBotForm({ ...botForm, send_msg_url: e.target.value });
+                        if (botFieldErrors.send_msg_url) {
+                          setBotFieldErrors({ ...botFieldErrors, send_msg_url: "" });
+                        }
+                      }}
                       placeholder="https://www.yunzhijia.com/gateway/robot/webhook/send?..."
                     />
-                    <span className="field-hint">云之家机器人 Webhook 发送 URL（含 yzjtoken）</span>
+                    {botFieldErrors.send_msg_url ? (
+                      <span className="field-hint error">{botFieldErrors.send_msg_url}</span>
+                    ) : (
+                      <span className="field-hint">云之家机器人 Webhook 发送 URL（含 yzjtoken）</span>
+                    )}
                   </div>
                 </>
               ) : null}
@@ -2041,61 +2216,146 @@ function App() {
               </div>
               {botForm.backend === "openai" ? (
                 <>
-                  <label className="full">
-                    Base URL
-                    <input
-                      data-testid="openai-base-url"
-                      value={botForm.openai_base_url}
-                      onChange={(e) => setBotForm({ ...botForm, openai_base_url: e.target.value })}
-                      placeholder="https://api.openai.com/v1"
-                    />
-                  </label>
-                  <label className="full">
-                    API Key
-                    <SecretInput
-                      testId="openai-api-key"
-                      value={botForm.openai_api_key}
-                      onChange={(v) => setBotForm({ ...botForm, openai_api_key: v })}
-                    />
-                  </label>
-                  <div className="field full">
-                    <span className="field-label">模型 Model</span>
-                    <div className="inline-field">
-                      <FancySelect
-                        testId="openai-model"
-                        className="form-select"
-                        value={botForm.model}
-                        options={openaiModels}
-                        disabled={probingOpenai}
-                        placeholder={
-                          probingOpenai
-                            ? "测试中…"
-                            : openaiModels.length
-                              ? "选择模型"
-                              : "点击选择（首次自动测试连通）"
-                        }
-                        onChange={(v) => setBotForm({ ...botForm, model: v })}
-                        onOpen={() => {
-                          if (!probingOpenai && !openaiModels.length) {
-                            void probeOpenai(botForm.openai_base_url, botForm.openai_api_key);
-                          }
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className={`action-chip side${probingOpenai ? " loading" : ""}`}
-                        data-testid="probe-openai-bot"
-                        disabled={probingOpenai}
-                        onClick={() =>
-                          void probeOpenai(botForm.openai_base_url, botForm.openai_api_key)
-                        }
-                      >
-                        {probingOpenai ? <span className="spinner dark" /> : null}
-                        <span>{probingOpenai ? "测试中" : "重新测试"}</span>
-                      </button>
+                  <div className="field full field-switch">
+                    <div className="field-switch-text">
+                      <strong>使用 AI 设置默认配置</strong>
+                      <span>统一控制 Base URL、API Key、模型是否取自「AI 设置」</span>
                     </div>
-                    <span className="field-hint">该机器人实际调用的大模型名称（如 gpt-4o-mini）</span>
+                    <Switch
+                      testId="openai-use-defaults"
+                      checked={botForm.openai_use_defaults}
+                      onChange={(v) => {
+                        setBotForm((prev) => {
+                          const next = { ...prev, openai_use_defaults: v };
+                          if (!v) {
+                            if (!prev.openai_base_url.trim()) {
+                              next.openai_base_url = cliForm.openai_base_url;
+                            }
+                            if (!prev.openai_api_key.trim()) {
+                              next.openai_api_key = cliForm.openai_api_key;
+                            }
+                            if (!prev.model.trim()) {
+                              next.model = cliForm.openai_model;
+                            }
+                          }
+                          return next;
+                        });
+                        setBotModalError(null);
+                        setBotFieldErrors((errs) => {
+                          const next = { ...errs };
+                          delete next.openai;
+                          delete next.openai_base_url;
+                          delete next.openai_api_key;
+                          delete next.model;
+                          return next;
+                        });
+                        if (!v && !openaiModels.length) {
+                          void probeOpenai(
+                            botForm.openai_base_url || cliForm.openai_base_url,
+                            botForm.openai_api_key || cliForm.openai_api_key,
+                          );
+                        }
+                      }}
+                    />
                   </div>
+                  {botForm.openai_use_defaults ? (
+                    <div className="field full">
+                      <span className="field-hint">
+                        将使用：{cliForm.openai_base_url.trim() || "（未配置 Base URL）"}
+                        {" · "}
+                        模型 {cliForm.openai_model.trim() || "（未配置）"}
+                      </span>
+                      {botFieldErrors.openai ? (
+                        <span className="field-hint error" data-testid="openai-defaults-error">
+                          {botFieldErrors.openai}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="field full">
+                        <span className="field-label">Base URL</span>
+                        <input
+                          data-testid="openai-base-url"
+                          className={botFieldErrors.openai_base_url ? "invalid" : undefined}
+                          value={botForm.openai_base_url}
+                          onChange={(e) => {
+                            setBotForm({ ...botForm, openai_base_url: e.target.value });
+                            if (botFieldErrors.openai_base_url) {
+                              setBotFieldErrors({ ...botFieldErrors, openai_base_url: "" });
+                            }
+                          }}
+                          placeholder="https://api.openai.com/v1"
+                        />
+                        {botFieldErrors.openai_base_url ? (
+                          <span className="field-hint error">{botFieldErrors.openai_base_url}</span>
+                        ) : null}
+                      </div>
+                      <div className="field full">
+                        <span className="field-label">API Key</span>
+                        <SecretInput
+                          testId="openai-api-key"
+                          value={botForm.openai_api_key}
+                          onChange={(v) => {
+                            setBotForm({ ...botForm, openai_api_key: v });
+                            if (botFieldErrors.openai_api_key) {
+                              setBotFieldErrors({ ...botFieldErrors, openai_api_key: "" });
+                            }
+                          }}
+                        />
+                        {botFieldErrors.openai_api_key ? (
+                          <span className="field-hint error">{botFieldErrors.openai_api_key}</span>
+                        ) : null}
+                      </div>
+                      <div className="field full">
+                        <span className="field-label">模型 Model</span>
+                        <div className="inline-field">
+                          <FancySelect
+                            testId="openai-model"
+                            className="form-select"
+                            value={botForm.model}
+                            options={openaiModels}
+                            disabled={probingOpenai}
+                            placeholder={
+                              probingOpenai
+                                ? "测试中…"
+                                : openaiModels.length
+                                  ? "选择模型"
+                                  : "点击选择（首次自动测试连通）"
+                            }
+                            onChange={(v) => {
+                              setBotForm({ ...botForm, model: v });
+                              if (botFieldErrors.model) {
+                                setBotFieldErrors({ ...botFieldErrors, model: "" });
+                              }
+                            }}
+                            onOpen={() => {
+                              if (!probingOpenai && !openaiModels.length) {
+                                void probeOpenai(botForm.openai_base_url, botForm.openai_api_key);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className={`action-chip side${probingOpenai ? " loading" : ""}`}
+                            data-testid="probe-openai-bot"
+                            disabled={probingOpenai}
+                            onClick={() =>
+                              void probeOpenai(botForm.openai_base_url, botForm.openai_api_key)
+                            }
+                          >
+                            {probingOpenai ? <span className="spinner dark" /> : null}
+                            <span>{probingOpenai ? "测试中" : "重新测试"}</span>
+                          </button>
+                        </div>
+                        {botFieldErrors.model ? (
+                          <span className="field-hint error">{botFieldErrors.model}</span>
+                        ) : (
+                          <span className="field-hint">该机器人实际调用的大模型名称（如 gpt-4o-mini）</span>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </>
               ) : (
                 <div className="field">
@@ -2129,14 +2389,35 @@ function App() {
                 {saving ? "保存中…" : "保存"}
               </button>
             </div>
+            </div>
           </div>
         </div>
       )}
 
       {channelModal && (
-        <div className="modal-backdrop" data-testid="channel-modal" onClick={() => setChannelModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>{editingChannelIdx === null ? "新增通道" : "编辑通道"}</h3>
+        <div className="modal-backdrop" data-testid="channel-modal">
+          <div className="modal" role="dialog" aria-modal="true">
+            <div className="modal-head">
+              <h3>{editingChannelIdx === null ? "新增通道" : "编辑通道"}</h3>
+              <button
+                type="button"
+                className="modal-close"
+                data-testid="channel-modal-close"
+                aria-label="关闭"
+                onClick={() => setChannelModal(false)}
+              >
+                ×
+              </button>
+            </div>
+            {channelModalError ? (
+              <ModalFloatMessage
+                key={channelModalError.seq}
+                message={channelModalError.text}
+                testId="channel-modal-error"
+                onDismissed={() => setChannelModalError(null)}
+              />
+            ) : null}
+            <div className="modal-scroll">
             <div className="form-grid">
               <div className="field">
                 <span className="field-label">自定义通道 ID（可选）</span>
@@ -2149,7 +2430,10 @@ function App() {
                 <span className="field-label">分组 Group</span>
                 <input
                   value={channelForm.group}
-                  onChange={(e) => setChannelForm({ ...channelForm, group: e.target.value })}
+                  onChange={(e) => {
+                    setChannelForm({ ...channelForm, group: e.target.value });
+                    if (channelModalError) setChannelModalError(null);
+                  }}
                   placeholder="如 workAssistant"
                 />
                 <span className="field-hint">通道分组标识，用于区分同一机器人下的不同会话入口</span>
@@ -2158,7 +2442,10 @@ function App() {
                 <span className="field-label">发送地址 send_msg_url</span>
                 <input
                   value={channelForm.send_msg_url}
-                  onChange={(e) => setChannelForm({ ...channelForm, send_msg_url: e.target.value })}
+                  onChange={(e) => {
+                    setChannelForm({ ...channelForm, send_msg_url: e.target.value });
+                    if (channelModalError) setChannelModalError(null);
+                  }}
                 />
                 <span className="field-hint">该通道对应的云之家机器人 Webhook 发送 URL</span>
               </div>
@@ -2218,6 +2505,7 @@ function App() {
               <button className="btn" disabled={saving} onClick={submitChannel}>
                 {saving ? "保存中…" : "保存"}
               </button>
+            </div>
             </div>
           </div>
         </div>

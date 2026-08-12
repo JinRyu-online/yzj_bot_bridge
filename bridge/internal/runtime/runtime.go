@@ -57,12 +57,12 @@ func (r *Runtime) Load(restoreWSS bool) error {
 	if err != nil {
 		return err
 	}
-	r.File = f
-	r.Defaults = f.MergedDefaults()
 	cfgs, err := config.ExpandBots(f)
 	if err != nil {
 		return err
 	}
+	r.File = f
+	r.Defaults = f.MergedDefaults()
 	sessFile, _ := r.Defaults["sessions_file"].(string)
 	store, err := sessions.Open(sessFile)
 	if err != nil {
@@ -239,6 +239,14 @@ func (r *Runtime) GetRawConfig() map[string]any {
 }
 
 func (r *Runtime) SaveAndReload(raw map[string]any, keepWSS bool) error {
+	// 先 ExpandBots 校验，再落盘，避免半残配置写进磁盘后 reload 失败。
+	f, err := config.ParseRaw(raw)
+	if err != nil {
+		return err
+	}
+	if _, err := config.ExpandBots(f); err != nil {
+		return err
+	}
 	if err := config.SaveRaw(r.CfgPath, raw); err != nil {
 		return err
 	}
