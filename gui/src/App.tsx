@@ -19,7 +19,24 @@ type StatusItem = {
 
 type LogLine = { seq: number; time: string; level: string; bot?: string; message: string };
 type ThemeId = "aurora" | "midnight" | "sand" | "ice";
-type PageId = "system" | "bots" | "settings" | "logs" | "help";
+type PageId = "system" | "bots" | "settings" | "skills" | "logs" | "help";
+
+type SkillInfo = {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  author?: string;
+  tags?: string[];
+};
+
+type CatalogSkill = {
+  id: string;
+  name: string;
+  description?: string;
+  path?: string;
+  version?: string;
+};
 
 type BotForm = {
   id: string;
@@ -33,6 +50,7 @@ type BotForm = {
   openai_api_key: string;
   /** 为 true 时 Base URL / API Key / model 使用 AI 设置中的全局默认。 */
   openai_use_defaults: boolean;
+  skills: string[];
   inbound_mode: string;
   workspace: string;
 };
@@ -518,6 +536,7 @@ function emptyBotForm(): BotForm {
     openai_base_url: "",
     openai_api_key: "",
     openai_use_defaults: true,
+    skills: [],
     inbound_mode: "websocket",
     workspace: "",
   };
@@ -589,6 +608,11 @@ function App() {
   );
   const [editingChannelIdx, setEditingChannelIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  const [installedSkills, setInstalledSkills] = useState<SkillInfo[]>([]);
+  const [skillCatalog, setSkillCatalog] = useState<CatalogSkill[]>([]);
+  const [skillsBusy, setSkillsBusy] = useState(false);
+  const [skillInstallPath, setSkillInstallPath] = useState("");
+  const [skillsPageError, setSkillsPageError] = useState<{ text: string; seq: number } | null>(null);
 
   const [cliForm, setCliForm] = useState({
     cursor_bin: "agent",
@@ -793,13 +817,31 @@ function App() {
     });
   }, []);
 
+  const refreshSkills = useCallback(async () => {
+    try {
+      const [installedRaw, catalogRaw] = await Promise.all([
+        api("GET", "/v1/skills"),
+        api("GET", "/v1/skills/catalog"),
+      ]);
+      const installed = JSON.parse(installedRaw) as { skills?: SkillInfo[] };
+      const catalog = JSON.parse(catalogRaw) as { skills?: CatalogSkill[] };
+      setInstalledSkills(installed.skills || []);
+      setSkillCatalog(catalog.skills || []);
+    } catch (e) {
+      setSkillsPageError((prev) => ({
+        text: String(e),
+        seq: (prev?.seq ?? 0) + 1,
+      }));
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       await boot();
       if (cancelled) return;
       try {
-        await Promise.all([refreshStatus(), refreshConfig()]);
+        await Promise.all([refreshStatus(), refreshConfig(), refreshSkills()]);
       } catch {
         /* ignore until next poll */
       }
@@ -1081,6 +1123,9 @@ function App() {
       openai_base_url: String(selectedRoleConfig.openai_base_url || ""),
       openai_api_key: String(selectedRoleConfig.openai_api_key || ""),
       openai_use_defaults: useDefaults,
+      skills: Array.isArray(selectedRoleConfig.skills)
+        ? (selectedRoleConfig.skills as unknown[]).map((x) => String(x))
+        : [],
       inbound_mode: String(selectedRoleConfig.inbound_mode || "websocket"),
       workspace: String(selectedRoleConfig.workspace || ""),
     });
@@ -1136,6 +1181,7 @@ function App() {
       inbound_mode: botForm.inbound_mode,
       system_prompt: botForm.system_prompt,
       workspace: botForm.workspace,
+      skills: botForm.skills,
     };
     if (botForm.backend === "openai") {
       if (botForm.openai_use_defaults) {
@@ -1381,6 +1427,7 @@ function App() {
           [
             ["system", "系统设置"],
             ["bots", "机器人"],
+            ["skills", "Skills"],
             ["settings", "AI 设置"],
             ["logs", "运行日志"],
             ["help", "帮助"],
@@ -1390,7 +1437,10 @@ function App() {
             key={id}
             data-testid={`nav-${id}`}
             className={page === id ? "nav-btn active" : "nav-btn"}
-            onClick={() => setPage(id)}
+            onClick={() => {
+              setPage(id);
+              if (id === "skills") void refreshSkills();
+            }}
           >
             {label}
           </button>
@@ -1798,6 +1848,165 @@ function App() {
           </section>
         )}
 
+        {page === "skills" && (
+          <section className="page" key="skills" data-testid="page-skills">
+            <header className="page-head">
+              <div>
+                <h1>Skills</h1>
+                <p className="subtitle">统一 Skill 包：安装、Catalog 一键导入、供各机器人勾选</p>
+              </div>
+              <button
+                type="button"
+                className={`action-chip${skillsBusy ? " loading" : ""}`}
+                disabled={skillsBusy}
+                onClick={() => void refreshSkills()}
+              >
+                {skillsBusy ? <span className="spinner dark" /> : null}
+                <span>刷新</span>
+              </button>
+            </header>
+            {skillsPageError ? (
+              <ModalFloatMessage
+                key={skillsPageError.seq}
+                message={skillsPageError.text}
+                testId="skills-page-error"
+                onDismissed={() => setSkillsPageError(null)}
+              />
+            ) : null}
+            <div className="stack page-body">
+              <div className="card soft" data-testid="skills-installed">
+                <div className="nested-title">已安装</div>
+                {installedSkills.length === 0 ? (
+                  <div className="empty">尚未安装 Skill</div>
+                ) : (
+                  <div className="skill-list">
+                    {installedSkills.map((sk) => (
+                      <div key={sk.id} className="skill-row">
+                        <div>
+                          <strong>{sk.name || sk.id}</strong>
+                          <span className="skill-meta">
+                            {sk.id}
+                            {sk.version ? ` · v${sk.version}` : ""}
+                          </span>
+                          <p>{sk.description || ""}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          disabled={skillsBusy}
+                          onClick={() =>
+                            void (async () => {
+                              setSkillsBusy(true);
+                              try {
+                                await api("DELETE", `/v1/skills/${encodeURIComponent(sk.id)}`);
+                                await refreshSkills();
+                                void guiLog(`卸载 Skill ${sk.id}`, "WARN");
+                              } catch (e) {
+                                setSkillsPageError((prev) => ({
+                                  text: String(e),
+                                  seq: (prev?.seq ?? 0) + 1,
+                                }));
+                              } finally {
+                                setSkillsBusy(false);
+                              }
+                            })()
+                          }
+                        >
+                          卸载
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="card soft" data-testid="skills-catalog">
+                <div className="nested-title">Catalog 一键导入</div>
+                {skillCatalog.length === 0 ? (
+                  <div className="empty">未找到 catalog（请确认 skills-catalog/ 可读）</div>
+                ) : (
+                  <div className="skill-list">
+                    {skillCatalog.map((sk) => (
+                      <div key={sk.id} className="skill-row">
+                        <div>
+                          <strong>{sk.name || sk.id}</strong>
+                          <span className="skill-meta">{sk.id}</span>
+                          <p>{sk.description || ""}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn"
+                          data-testid={`install-catalog-${sk.id}`}
+                          disabled={skillsBusy}
+                          onClick={() =>
+                            void (async () => {
+                              setSkillsBusy(true);
+                              try {
+                                await api("POST", "/v1/skills/install", {
+                                  source: "catalog",
+                                  catalog_id: sk.id,
+                                });
+                                await refreshSkills();
+                                void guiLog(`安装 Catalog Skill ${sk.id}`);
+                              } catch (e) {
+                                setSkillsPageError((prev) => ({
+                                  text: String(e),
+                                  seq: (prev?.seq ?? 0) + 1,
+                                }));
+                              } finally {
+                                setSkillsBusy(false);
+                              }
+                            })()
+                          }
+                        >
+                          安装
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="card soft" data-testid="skills-import">
+                <div className="nested-title">从本地导入</div>
+                <div className="inline-field">
+                  <input
+                    value={skillInstallPath}
+                    onChange={(e) => setSkillInstallPath(e.target.value)}
+                    placeholder="Skill 目录或 .zip 绝对路径"
+                    data-testid="skill-install-path"
+                  />
+                  <button
+                    type="button"
+                    className="action-chip side"
+                    disabled={skillsBusy || !skillInstallPath.trim()}
+                    onClick={() =>
+                      void (async () => {
+                        const p = skillInstallPath.trim();
+                        const source = p.toLowerCase().endsWith(".zip") ? "zip" : "dir";
+                        setSkillsBusy(true);
+                        try {
+                          await api("POST", "/v1/skills/install", { source, path: p });
+                          await refreshSkills();
+                          void guiLog(`导入 Skill（${source}） ${p}`);
+                        } catch (e) {
+                          setSkillsPageError((prev) => ({
+                            text: String(e),
+                            seq: (prev?.seq ?? 0) + 1,
+                          }));
+                        } finally {
+                          setSkillsBusy(false);
+                        }
+                      })()
+                    }
+                  >
+                    导入
+                  </button>
+                </div>
+                <span className="field-hint">目录需含 SKILL.yaml；zip 解压后同理</span>
+              </div>
+            </div>
+          </section>
+        )}
+
         {page === "bots" && (
           <section className="page bots" key="bots" data-testid="page-bots">
             <header className="page-head">
@@ -1851,6 +2060,13 @@ function App() {
                         <p>
                           {selectedRoleId} · {selectedItem.backend} · {selectedItem.inbound_mode}
                         </p>
+                        {Array.isArray(selectedRoleConfig.skills) &&
+                        (selectedRoleConfig.skills as unknown[]).length > 0 ? (
+                          <p className="skill-meta" data-testid="bot-skills-summary">
+                            Skills:{" "}
+                            {(selectedRoleConfig.skills as unknown[]).map((x) => String(x)).join(", ")}
+                          </p>
+                        ) : null}
                       </div>
                       <button className="btn danger ghost" disabled={saving} onClick={deleteBot}>
                         删除机器人
@@ -2370,6 +2586,39 @@ function App() {
                   </span>
                 </div>
               )}
+              <div className="field full">
+                <span className="field-label">启用 Skills</span>
+                {installedSkills.length === 0 ? (
+                  <span className="field-hint">暂无已安装 Skill，请先到「Skills」页安装</span>
+                ) : (
+                  <div className="skill-check-list" data-testid="bot-skills">
+                    {installedSkills.map((sk) => {
+                      const on = botForm.skills.includes(sk.id);
+                      return (
+                        <label key={sk.id} className="skill-check">
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => {
+                              setBotForm((prev) => ({
+                                ...prev,
+                                skills: on
+                                  ? prev.skills.filter((x) => x !== sk.id)
+                                  : [...prev.skills, sk.id],
+                              }));
+                            }}
+                          />
+                          <span>
+                            <strong>{sk.name || sk.id}</strong>
+                            <em>{sk.id}</em>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                <span className="field-hint">按机器人白名单启用；OpenAI 真执行，Cursor/Claude 物化到工作区</span>
+              </div>
               <div className="field full">
                 <span className="field-label">系统提示词 System Prompt</span>
                 <textarea

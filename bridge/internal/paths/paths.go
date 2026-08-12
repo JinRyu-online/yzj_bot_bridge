@@ -32,6 +32,14 @@ func WSSEnabledPath() string {
 	return filepath.Join(UserDataDir(), "wss_enabled.json")
 }
 
+// SkillsDir returns the default installed-skills root (~/.yzj-bridge/skills).
+func SkillsDir() string {
+	return filepath.Join(UserDataDir(), "skills")
+}
+
 func EnsureUserData() error {
-	return os.MkdirAll(UserDataDir(), 0o755)
+	if err := os.MkdirAll(UserDataDir(), 0o755); err != nil {
+		return err
+	}
+	return os.MkdirAll(SkillsDir(), 0o755)
 }

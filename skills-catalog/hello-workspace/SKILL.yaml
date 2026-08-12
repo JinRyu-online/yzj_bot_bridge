@@ -1,0 +1,26 @@
+id: hello-workspace
+name: Hello Workspace
+version: "1.0.0"
+description: 样例 Skill，回显工具参数并输出当前工作区
+author: yzj-bridge
+tags: [sample, hello]
+entry:
+  type: shell
+  command: python
+  args: ["scripts/hello.py"]
+  timeout_sec: 30
+tools:
+  - name: hello_echo
+    description: Echo input text and report workspace path
+    parameters:
+      type: object
+      properties:
+        text:
+          type: string
+          description: text to echo
+      required: [text]
+client_sync:
+  cursor:
+    path: .cursor/skills/hello-workspace
+  claude:
+    path: .claude/skills/hello-workspace

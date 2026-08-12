@@ -40,6 +40,7 @@ defaults:
   stale_ms: 45000
   ws_invalid_frame_limit: 3
   max_workers: 4
+  skills_dir: "~/.yzj-bridge/skills"    # 已安装 Skill 包目录；bots[].skills 为白名单 id
 
 groups:
   - id: default
@@ -53,7 +54,7 @@ bots:
     system_prompt: |
       你是 Fairy，本地编程与排障助手。
       回答简洁，需要强调时只用 **粗体**。
-    skills: []
+    skills: []                          # 桥管 Skill id 白名单，见 docs/skills.md / GUI「Skills」
     workspace: "~"                      # 留空则回退引擎/全局默认目录
     allow_users: []
     group: default

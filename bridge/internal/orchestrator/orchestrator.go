@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"log"
 	"unicode/utf8"
 
@@ -8,12 +9,14 @@ import (
 	"yzj-bridge/internal/commands"
 	"yzj-bridge/internal/registry"
 	"yzj-bridge/internal/sessions"
+	"yzj-bridge/internal/skills"
 )
 
 type Orchestrator struct {
 	Reg             *registry.Registry
 	Store           *sessions.Store
 	GlobalWorkspace string
+	Skills          *skills.Store
 }
 
 type DispatchResult struct {
@@ -53,11 +56,33 @@ func (o *Orchestrator) Dispatch(receiveBotID, content, openID, name string, over
 			_ = o.Store.Save()
 		}
 	}
-	result := handler.Backend.Run(clean, bot.RunOpts{
+	opts := bot.RunOpts{
 		Workspace: ws, Mode: mode, Skills: handler.Config.Skills,
 		Model: overrides["model"], OperatorOpenID: openID, OperatorName: name,
 		Overrides: overrides,
-	})
+	}
+	if o.Skills != nil && len(handler.Config.Skills) > 0 {
+		pkgs, err := skills.Resolve(o.Skills, handler.Config.Skills)
+		if err != nil {
+			log.Printf("bot=%s skills resolve: %v", handlerID, err)
+		} else {
+			if err := skills.Materialize(pkgs, ws, handler.Config.Backend); err != nil {
+				log.Printf("bot=%s skills materialize: %v", handlerID, err)
+			}
+			opts.SkillPrompt = skills.PromptAppendix(pkgs)
+			for _, t := range skills.OpenAITools(pkgs) {
+				opts.SkillTools = append(opts.SkillTools, bot.ToolSpec{
+					Name: t.Name, Description: t.Description, Parameters: t.Parameters,
+				})
+			}
+			store := o.Skills
+			runner := &skills.Runner{}
+			opts.SkillDispatch = func(toolName, argsJSON, workspace string) string {
+				return runner.ExecByExportName(context.Background(), store, toolName, argsJSON, workspace)
+			}
+		}
+	}
+	result := handler.Backend.Run(clean, opts)
 	log.Printf("bot=%s reply: %s", handlerID, clip(result.Reply, 2000))
 	return DispatchResult{Reply: result.Reply, HandlerBotID: handlerID, ReceiveBotID: receiveBotID}
 }

@@ -19,23 +19,25 @@ import (
 	"yzj-bridge/internal/paths"
 	"yzj-bridge/internal/registry"
 	"yzj-bridge/internal/sessions"
+	"yzj-bridge/internal/skills"
 	"yzj-bridge/internal/webhook"
 	"yzj-bridge/internal/ws"
 	"yzj-bridge/internal/wssstate"
 )
 
 type Runtime struct {
-	mu       sync.Mutex
-	CfgPath  string
-	File     *config.File
-	Defaults map[string]any
-	Reg      *registry.Registry
-	Store    *sessions.Store
-	Orch     *orchestrator.Orchestrator
-	Disp     *inbound.Dispatcher
-	Clients  map[string]*ws.Client
-	Webhook  *webhook.Server
-	enabled  map[string]bool
+	mu         sync.Mutex
+	CfgPath    string
+	File       *config.File
+	Defaults   map[string]any
+	Reg        *registry.Registry
+	Store      *sessions.Store
+	SkillStore *skills.Store
+	Orch       *orchestrator.Orchestrator
+	Disp       *inbound.Dispatcher
+	Clients    map[string]*ws.Client
+	Webhook    *webhook.Server
+	enabled    map[string]bool
 }
 
 func New(cfgPath string) *Runtime {
@@ -69,6 +71,19 @@ func (r *Runtime) Load(restoreWSS bool) error {
 		return err
 	}
 	r.Store = store
+	skillsRoot, _ := r.Defaults["skills_dir"].(string)
+	if strings.TrimSpace(skillsRoot) == "" {
+		skillsRoot = paths.SkillsDir()
+	} else {
+		skillsRoot = config.ExpandHome(skillsRoot)
+	}
+	r.SkillStore = skills.NewStore(skillsRoot)
+	_ = r.SkillStore.EnsureRoot()
+	for _, cfg := range cfgs {
+		if err := r.SkillStore.ValidateIDs(cfg.Skills); err != nil {
+			log.Printf("warn: bot %s skills: %v (ignored until installed)", cfg.ID, err)
+		}
+	}
 	globalWS, _ := r.Defaults["workspace"].(string)
 	if globalWS == "" {
 		globalWS = filepath.Join(paths.UserDataDir(), "workspace")
@@ -91,7 +106,9 @@ func (r *Runtime) Load(restoreWSS bool) error {
 		bots = append(bots, b)
 	}
 	r.Reg.Replace(bots)
-	r.Orch = &orchestrator.Orchestrator{Reg: r.Reg, Store: store, GlobalWorkspace: globalWS}
+	r.Orch = &orchestrator.Orchestrator{
+		Reg: r.Reg, Store: store, GlobalWorkspace: globalWS, Skills: r.SkillStore,
+	}
 	r.Disp = &inbound.Dispatcher{
 		Reg: r.Reg, Orch: r.Orch, Dedupe: dedupe.New(), Jobs: jobs.New(), Store: store,
 	}
@@ -244,8 +261,21 @@ func (r *Runtime) SaveAndReload(raw map[string]any, keepWSS bool) error {
 	if err != nil {
 		return err
 	}
-	if _, err := config.ExpandBots(f); err != nil {
+	cfgs, err := config.ExpandBots(f)
+	if err != nil {
 		return err
+	}
+	skillsRoot, _ := f.MergedDefaults()["skills_dir"].(string)
+	if strings.TrimSpace(skillsRoot) == "" {
+		skillsRoot = paths.SkillsDir()
+	} else {
+		skillsRoot = config.ExpandHome(skillsRoot)
+	}
+	sk := skills.NewStore(skillsRoot)
+	for _, cfg := range cfgs {
+		if err := sk.ValidateIDs(cfg.Skills); err != nil {
+			return fmt.Errorf("bot %s: %w", firstNonEmptyLocal(cfg.RoleID, cfg.ID), err)
+		}
 	}
 	if err := config.SaveRaw(r.CfgPath, raw); err != nil {
 		return err
@@ -332,4 +362,11 @@ func intFrom(v any, def int) int {
 	default:
 		return def
 	}
+}
+
+func firstNonEmptyLocal(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }

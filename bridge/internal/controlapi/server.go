@@ -66,6 +66,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/backends/cursor/models", s.auth(s.cursorModels))
 	mux.HandleFunc("/v1/backends/claude/models", s.auth(s.claudeModels))
 	mux.HandleFunc("/v1/backends/openai/probe", s.auth(s.openaiProbe))
+	mux.HandleFunc("/v1/skills", s.auth(s.skillsRoot))
+	mux.HandleFunc("/v1/skills/", s.auth(s.skillsRoot))
 
 	s.srv = &http.Server{Addr: s.Addr, Handler: mux}
 	path, _ := s.WriteTokenFile()

@@ -60,15 +60,25 @@ type Backend interface {
 	ClearSession(sessionID string) (string, error)
 }
 
+// ToolSpec is a function-tool schema passed into backends (e.g. OpenAI).
+type ToolSpec struct {
+	Name        string
+	Description string
+	Parameters  map[string]any
+}
+
 type RunOpts struct {
-	Workspace       string
-	SessionID       string
-	Mode            string
-	Skills          []string
-	Model           string
-	OperatorOpenID  string
-	OperatorName    string
-	Overrides       map[string]string
+	Workspace      string
+	SessionID      string
+	Mode           string
+	Skills         []string
+	SkillPrompt    string
+	SkillTools     []ToolSpec
+	SkillDispatch  func(toolName, argsJSON, workspace string) string
+	Model          string
+	OperatorOpenID string
+	OperatorName   string
+	Overrides      map[string]string
 }
 
 type RunResult struct {

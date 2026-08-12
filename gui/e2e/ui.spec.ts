@@ -422,6 +422,22 @@ test("弹窗 X 关闭 + OpenAI 字段", async ({ page }) => {
   await expect(page.getByTestId("bot-modal")).toHaveCount(0);
 });
 
+test("Skills 页入口与 Catalog 区", async ({ page }) => {
+  await page.getByTestId("nav-skills").click();
+  await expect(page.getByTestId("page-skills")).toBeVisible();
+  await expect(page.getByTestId("skills-installed")).toBeVisible();
+  await expect(page.getByTestId("skills-catalog")).toBeVisible();
+  await expect(page.getByTestId("skills-import")).toBeVisible();
+});
+
+test("新建机器人可见 Skills 勾选区", async ({ page }) => {
+  await page.getByTestId("nav-bots").click();
+  await page.getByTestId("create-bot").click();
+  await expect(page.getByTestId("bot-modal")).toBeVisible();
+  await expect(page.getByTestId("bot-skills")).toBeVisible();
+  await page.getByTestId("bot-modal-close").click();
+});
+
 test("机器人排序稳定", async ({ page }) => {
   await page.getByTestId("nav-bots").click();
   const first = async () =>

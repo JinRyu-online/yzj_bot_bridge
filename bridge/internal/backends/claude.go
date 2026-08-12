@@ -83,6 +83,13 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	if c.cfg.SystemPrompt != "" {
 		_ = os.WriteFile(filepath.Join(opts.Workspace, "CLAUDE.md"), []byte(c.cfg.SystemPrompt), 0o644)
 	}
+	if opts.SkillPrompt != "" {
+		prompt = prompt + opts.SkillPrompt
+	} else if len(opts.Skills) > 0 {
+		prompt = prompt + "\n\n优先使用这些 skills: " + strings.Join(opts.Skills, ", ")
+	} else if len(c.cfg.Skills) > 0 {
+		prompt = prompt + "\n\n优先使用这些 skills: " + strings.Join(c.cfg.Skills, ", ")
+	}
 
 	args := []string{"--print", prompt, "--output-format", "stream-json", "--verbose"}
 	if c.cfg.CursorStreamPart {

@@ -1,0 +1,11 @@
+{
+  "skills": [
+    {
+      "id": "hello-workspace",
+      "name": "Hello Workspace",
+      "description": "样例 Skill：回显参数并打印工作区路径，用于验收桥接 Skills 运行时",
+      "path": "hello-workspace",
+      "version": "1.0.0"
+    }
+  ]
+}

@@ -85,12 +85,14 @@ bots:
 
 - 地址：`127.0.0.1:18765`（可用 `--control-addr`）
 - Token：写入 `%TEMP%/yzj-bridge.token`（第一行 token，第二行 addr）
-- 主要路由：`/health` `/v1/status` `/v1/wss/start|stop` `/v1/config` `/v1/reload` `/v1/logs` `/v1/shutdown`
+- 主要路由：`/health` `/v1/status` `/v1/wss/start|stop` `/v1/config` `/v1/reload` `/v1/logs` `/v1/shutdown` `/v1/skills*`
 - 模型：`GET /v1/backends/cursor/models`、`GET /v1/backends/claude/models`、`POST /v1/backends/openai/probe`
+- Skills：见 [docs/skills.md](docs/skills.md)；样例目录 `skills-catalog/`
 
 ## 配置要点
 
 - `defaults` + `bots` + 可选 `channels` 多群展开（runtime id：`{role}__{group}`）
+- `bots[].skills`：已安装 Skill 的 id 白名单（跨 OpenAI / Cursor / Claude）
 - `inbound_mode`: `websocket` | `webhook` | `both`
 - 会话：`sessions.json` v3；WSS 启停记忆：`wss_enabled.json`
 - 参考模板：`config.default.yaml`（占位符，无真实密钥；首次启动会复制到用户目录）
@@ -101,6 +103,8 @@ bots:
 |------|------|
 | `bridge/` | Go 桥接核心 |
 | `gui/` | Tauri 控制面板 |
+| `skills-catalog/` | 可一键导入的官方样例 Skill |
+| `docs/skills.md` | 统一 Skills 格式与 API |
 | `config.default.yaml` | 默认配置模板（首次初始化用） |
 | `build_all.ps1` | Windows 一键构建 |
 | `deploy/linux/` | systemd 示例 |

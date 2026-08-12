@@ -97,12 +97,16 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		}
 	}
 
-	if len(opts.Skills) > 0 || len(c.cfg.Skills) > 0 {
-		skills := opts.Skills
-		if len(skills) == 0 {
-			skills = c.cfg.Skills
+	if len(opts.Skills) > 0 || len(c.cfg.Skills) > 0 || opts.SkillPrompt != "" {
+		if opts.SkillPrompt != "" {
+			prompt = prompt + opts.SkillPrompt
+		} else {
+			skills := opts.Skills
+			if len(skills) == 0 {
+				skills = c.cfg.Skills
+			}
+			prompt = prompt + "\n\n优先使用这些 skills: " + strings.Join(skills, ", ")
 		}
-		prompt = prompt + "\n\n优先使用这些 skills: " + strings.Join(skills, ", ")
 	}
 
 	args := []string{"-p", prompt, "--workspace", opts.Workspace, "--trust"}

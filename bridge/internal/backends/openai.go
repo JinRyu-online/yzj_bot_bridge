@@ -105,12 +105,12 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	}
 
 	system := o.cfg.SystemPrompt
-	skills := opts.Skills
-	if len(skills) == 0 {
-		skills = o.cfg.Skills
-	}
-	if len(skills) > 0 {
-		system += "\n\n优先使用这些 skills: " + strings.Join(skills, ", ")
+	if opts.SkillPrompt != "" {
+		system += opts.SkillPrompt
+	} else if len(opts.Skills) > 0 {
+		system += "\n\n优先使用这些 skills: " + strings.Join(opts.Skills, ", ")
+	} else if len(o.cfg.Skills) > 0 {
+		system += "\n\n优先使用这些 skills: " + strings.Join(o.cfg.Skills, ", ")
 	}
 	system += "\n工作区: " + opts.Workspace
 
@@ -120,6 +120,9 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	}
 	messages = append(messages, oaMessage{Role: "user", Content: prompt})
 	tools := buildOATools(mode == "agent")
+	for _, st := range opts.SkillTools {
+		tools = append(tools, oaToolFromSpec(st))
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -140,7 +143,7 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		}
 		messages = append(messages, msg)
 		for _, tc := range msg.ToolCalls {
-			out := o.execTool(tc.Function.Name, tc.Function.Arguments, opts.Workspace, mode)
+			out := o.execTool(tc.Function.Name, tc.Function.Arguments, opts.Workspace, mode, opts.SkillDispatch)
 			messages = append(messages, oaMessage{
 				Role: "tool", ToolCallID: tc.ID, Content: out, Name: tc.Function.Name,
 			})
@@ -234,7 +237,26 @@ func buildOATools(full bool) []oaTool {
 	return tools
 }
 
-func (o *OpenAIBackend) execTool(name, argsJSON, workspace, mode string) string {
+func oaToolFromSpec(st bot.ToolSpec) oaTool {
+	var t oaTool
+	t.Type = "function"
+	t.Function.Name = st.Name
+	t.Function.Description = st.Description
+	t.Function.Parameters = st.Parameters
+	if t.Function.Parameters == nil {
+		t.Function.Parameters = map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	return t
+}
+
+func (o *OpenAIBackend) execTool(name, argsJSON, workspace, mode string, skillDispatch func(string, string, string) string) string {
+	if strings.HasPrefix(name, "skill_") && skillDispatch != nil {
+		return skillDispatch(name, argsJSON, workspace)
+	}
+	return o.execBuiltinTool(name, argsJSON, workspace, mode)
+}
+
+func (o *OpenAIBackend) execBuiltinTool(name, argsJSON, workspace, mode string) string {
 	var args map[string]any
 	_ = json.Unmarshal([]byte(argsJSON), &args)
 	switch name {
