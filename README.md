@@ -87,7 +87,7 @@ bots:
 - Token：写入 `%TEMP%/yzj-bridge.token`（第一行 token，第二行 addr）
 - 主要路由：`/health` `/v1/status` `/v1/wss/start|stop` `/v1/config` `/v1/reload` `/v1/logs` `/v1/shutdown` `/v1/skills*`
 - 模型：`GET /v1/backends/cursor/models`、`GET /v1/backends/claude/models`、`POST /v1/backends/openai/probe`
-- Skills：见 [docs/skills.md](docs/skills.md)；样例目录 `skills-catalog/`
+- Skills：见 [docs/skills.md](docs/skills.md)（官方 `SKILL.md` 格式）
 
 ## 配置要点
 
@@ -103,7 +103,6 @@ bots:
 |------|------|
 | `bridge/` | Go 桥接核心 |
 | `gui/` | Tauri 控制面板 |
-| `skills-catalog/` | 可一键导入的官方样例 Skill |
 | `docs/skills.md` | 统一 Skills 格式与 API |
 | `config.default.yaml` | 默认配置模板（首次初始化用） |
 | `build_all.ps1` | Windows 一键构建 |

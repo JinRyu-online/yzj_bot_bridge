@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tauri::{
+    ipc::Channel,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, State, WindowEvent,
@@ -88,6 +90,9 @@ fn read_token_file() -> Option<Endpoint> {
 
 fn find_bridge_bin(app: &AppHandle) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
+    // Dev first: prefer freshly built bridge/bin over stale src-tauri/binaries.
+    candidates.push(PathBuf::from("../../bridge/bin/yzj-bridge.exe"));
+    candidates.push(PathBuf::from("../bridge/bin/yzj-bridge.exe"));
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("yzj-bridge.exe"));
@@ -101,10 +106,6 @@ fn find_bridge_bin(app: &AppHandle) -> Option<PathBuf> {
     }
     candidates.push(PathBuf::from("binaries/yzj-bridge.exe"));
     candidates.push(PathBuf::from("src-tauri/binaries/yzj-bridge.exe"));
-    // Dev: repo bridge/bin
-    candidates.push(PathBuf::from("../bridge/bin/yzj-bridge.exe"));
-    candidates.push(PathBuf::from("../../bridge/bin/yzj-bridge.exe"));
-    candidates.push(PathBuf::from("E:/cursor-cli-robot/bridge/bin/yzj-bridge.exe"));
     candidates.into_iter().find(|p| p.exists())
 }
 
@@ -235,6 +236,24 @@ fn do_fetch(state: &BridgeState, method: &str, path: &str, body: Option<&str>) -
                 r.call()
             }
         }
+        "PATCH" => {
+            let mut r = ureq::request("PATCH", &url).set("Authorization", &auth);
+            if let Some(b) = body {
+                r = r.set("Content-Type", "application/json");
+                r.send_string(b)
+            } else {
+                r.call()
+            }
+        }
+        "DELETE" => {
+            let mut r = ureq::delete(&url).set("Authorization", &auth);
+            if let Some(b) = body {
+                r = r.set("Content-Type", "application/json");
+                r.send_string(b)
+            } else {
+                r.call()
+            }
+        }
         other => return Err(format!("unsupported method {other}")),
     };
     match result {
@@ -277,6 +296,112 @@ async fn bridge_fetch(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Stream SSE from control API chat endpoint; each event is forwarded to `on_event`.
+/// Payload shape: `{ "event": "<type>", "data": <json-value-or-string> }`.
+#[tauri::command]
+async fn bridge_chat_stream(
+    app: AppHandle,
+    path: String,
+    body: String,
+    on_event: Channel<serde_json::Value>,
+) -> Result<(), String> {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app2.state::<BridgeState>();
+        let _ = ensure_bridge_running(&app2, &st);
+        do_chat_stream(&st, &path, &body, &on_event)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn do_chat_stream(
+    state: &BridgeState,
+    path: &str,
+    body: &str,
+    on_event: &Channel<serde_json::Value>,
+) -> Result<(), String> {
+    let token = state.token.lock().unwrap().clone();
+    let addr = state.addr.lock().unwrap().clone();
+    let (token, addr) = if token.is_empty() {
+        let ep = read_token_file().ok_or_else(|| "no token".to_string())?;
+        (ep.token, ep.addr)
+    } else {
+        (token, addr)
+    };
+    let url = format!("http://{}{}", addr, path);
+    let resp = ureq::post(&url)
+        .set("Authorization", &format!("Bearer {}", token))
+        .set("Content-Type", "application/json")
+        .set("Accept", "text/event-stream")
+        .send_string(body)
+        .map_err(|e| match e {
+            ureq::Error::Status(code, resp) => {
+                let text = resp.into_string().unwrap_or_default();
+                if text.trim().is_empty() {
+                    format!("HTTP {code}")
+                } else {
+                    text
+                }
+            }
+            other => other.to_string(),
+        })?;
+    let status = resp.status();
+    if !(200..300).contains(&status) {
+        let text = resp.into_string().unwrap_or_default();
+        return Err(if text.trim().is_empty() {
+            format!("HTTP {status}")
+        } else {
+            text
+        });
+    }
+
+    let reader = BufReader::new(resp.into_reader());
+    let mut event_name = String::from("message");
+    let mut data_buf = String::new();
+
+    let flush_event = |event_name: &str, data_buf: &str, on_event: &Channel<serde_json::Value>| -> Result<(), String> {
+        if data_buf.is_empty() && event_name == "message" {
+            return Ok(());
+        }
+        let data_val: serde_json::Value =
+            serde_json::from_str(data_buf).unwrap_or_else(|_| serde_json::Value::String(data_buf.to_string()));
+        let payload = serde_json::json!({
+            "event": event_name,
+            "data": data_val,
+        });
+        on_event.send(payload).map_err(|e| e.to_string())
+    };
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        if line.is_empty() {
+            flush_event(&event_name, &data_buf, on_event)?;
+            event_name = String::from("message");
+            data_buf.clear();
+            continue;
+        }
+        if line.starts_with(':') {
+            continue; // comment
+        }
+        if let Some(rest) = line.strip_prefix("event:") {
+            event_name = rest.trim().to_string();
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("data:") {
+            let piece = rest.strip_prefix(' ').unwrap_or(rest);
+            if !data_buf.is_empty() {
+                data_buf.push('\n');
+            }
+            data_buf.push_str(piece);
+            continue;
+        }
+    }
+    // trailing event without blank line
+    flush_event(&event_name, &data_buf, on_event)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -445,6 +570,7 @@ fn show_main(app: &AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(BridgeState {
             child: Mutex::new(None),
             token: Mutex::new(String::new()),
@@ -455,6 +581,7 @@ pub fn run() {
             get_endpoint,
             ensure_bridge,
             bridge_fetch,
+            bridge_chat_stream,
             get_autostart,
             set_autostart,
             reveal_path,

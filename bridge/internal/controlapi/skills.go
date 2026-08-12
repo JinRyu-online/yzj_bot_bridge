@@ -14,8 +14,6 @@ func (s *Server) skillsRoot(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "" && r.Method == http.MethodGet:
 		s.skillsList(w, r)
-	case path == "catalog" && r.Method == http.MethodGet:
-		s.skillsCatalog(w, r)
 	case path == "install" && r.Method == http.MethodPost:
 		s.skillsInstall(w, r)
 	case path != "" && !strings.Contains(path, "/") && r.Method == http.MethodGet:
@@ -43,9 +41,8 @@ func (s *Server) skillsList(w http.ResponseWriter, _ *http.Request) {
 	items := make([]map[string]any, 0, len(list))
 	for _, p := range list {
 		items = append(items, map[string]any{
-			"id": p.Manifest.ID, "name": p.Manifest.Name, "version": p.Manifest.Version,
-			"description": p.Manifest.Description, "author": p.Manifest.Author,
-			"tags": p.Manifest.Tags, "tools": p.Manifest.Tools,
+			"id": p.Manifest.ID, "name": p.Manifest.Name,
+			"description": p.Manifest.Description,
 		})
 	}
 	writeJSON(w, map[string]any{"skills": items})
@@ -58,10 +55,9 @@ func (s *Server) skillsGet(w http.ResponseWriter, _ *http.Request, id string) {
 		return
 	}
 	writeJSON(w, map[string]any{
-		"id": pkg.Manifest.ID, "name": pkg.Manifest.Name, "version": pkg.Manifest.Version,
-		"description": pkg.Manifest.Description, "author": pkg.Manifest.Author,
-		"tags": pkg.Manifest.Tags, "tools": pkg.Manifest.Tools,
-		"skill_md": pkg.SkillMD, "dir": pkg.Dir,
+		"id": pkg.Manifest.ID, "name": pkg.Manifest.Name,
+		"description": pkg.Manifest.Description,
+		"skill_md":    pkg.SkillMD, "dir": pkg.Dir,
 	})
 }
 
@@ -73,21 +69,11 @@ func (s *Server) skillsDelete(w http.ResponseWriter, _ *http.Request, id string)
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-func (s *Server) skillsCatalog(w http.ResponseWriter, _ *http.Request) {
-	c, err := skills.LoadCatalog()
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	writeJSON(w, c)
-}
-
 func (s *Server) skillsInstall(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Source    string `json:"source"` // dir | zip | catalog
-		Path      string `json:"path"`
-		URL       string `json:"url"`
-		CatalogID string `json:"catalog_id"`
+		Source string `json:"source"` // dir | zip | tgz | md | auto
+		Path   string `json:"path"`
+		URL    string `json:"url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", 400)
@@ -98,19 +84,21 @@ func (s *Server) skillsInstall(w http.ResponseWriter, r *http.Request) {
 		pkg *skills.Package
 		err error
 	)
-	switch strings.ToLower(strings.TrimSpace(body.Source)) {
+	src := strings.ToLower(strings.TrimSpace(body.Source))
+	if src == "" || src == "auto" {
+		src = skills.DetectInstallSource(body.Path)
+	}
+	switch src {
 	case "dir":
 		pkg, err = store.InstallFromDir(body.Path)
 	case "zip":
 		pkg, err = store.InstallFromZip(body.Path)
-	case "catalog":
-		id := body.CatalogID
-		if id == "" {
-			id = body.Path
-		}
-		pkg, err = store.InstallFromCatalog(id)
+	case "tgz", "tar.gz":
+		pkg, err = store.InstallFromTarGz(body.Path)
+	case "md", "markdown":
+		pkg, err = store.InstallFromMarkdown(body.Path)
 	default:
-		http.Error(w, `source must be "dir", "zip", or "catalog"`, 400)
+		http.Error(w, `source must be "dir", "zip", "tgz", or "md"`, 400)
 		return
 	}
 	if err != nil {
@@ -118,6 +106,6 @@ func (s *Server) skillsInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{
-		"ok": true, "id": pkg.Manifest.ID, "name": pkg.Manifest.Name, "version": pkg.Manifest.Version,
+		"ok": true, "id": pkg.Manifest.ID, "name": pkg.Manifest.Name,
 	})
 }

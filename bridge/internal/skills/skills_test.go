@@ -1,41 +1,69 @@
 package skills
 
 import (
-	"context"
+	"archive/tar"
+	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
 func writeSample(t *testing.T, dir, id string) {
 	t.Helper()
 	root := filepath.Join(dir, id)
-	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "id: " + id + "\nname: Sample\nversion: \"1.0.0\"\ndescription: test skill\n" +
-		"entry:\n  type: shell\n  command: " + shellEchoCmd() + "\n  args: []\n  timeout_sec: 10\n" +
-		"tools:\n  - name: echo\n    description: echo\n    parameters:\n      type: object\n      properties: {}\n"
-	if err := os.WriteFile(filepath.Join(root, "SKILL.yaml"), []byte(yaml), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte("# Sample\n"), 0o644); err != nil {
+	md := "---\n" +
+		"name: " + id + "\n" +
+		"description: test skill\n" +
+		"---\n\n# Sample\n\nBody for agent.\n"
+	if err := os.WriteFile(filepath.Join(root, "SKILL.md"), []byte(md), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func shellEchoCmd() string {
-	if runtime.GOOS == "windows" {
-		return "cmd"
-	}
-	return "echo"
-}
-
-func TestValidateManifestRejectsBadID(t *testing.T) {
-	err := ValidateManifest(&Manifest{ID: "", Name: "x", Entry: Entry{Type: "prompt_only"}})
+func TestValidateManifestRejectsBadName(t *testing.T) {
+	err := ValidateManifest(&Manifest{Name: "bad id", Description: "x"})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+	err = ValidateManifest(&Manifest{Name: "ok", Description: ""})
+	if err == nil {
+		t.Fatal("expected description required")
+	}
+}
+
+func TestLoadDirFromSkillMD(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "hello-md")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := "---\nname: hello-md\ndescription: from md\n---\n\n# Hello\n\nDo the thing.\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Manifest.ID != "hello-md" || pkg.Manifest.Description != "from md" {
+		t.Fatalf("manifest=%+v", pkg.Manifest)
+	}
+	if !contains(pkg.SkillMD, "Do the thing") || contains(pkg.SkillMD, "---") {
+		t.Fatalf("body=%q", pkg.SkillMD)
+	}
+}
+
+func TestLoadDirRejectsYAMLOnly(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "legacy")
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "SKILL.yaml"), []byte("name: legacy\ndescription: old\n"), 0o644)
+	if _, err := LoadDir(dir); err == nil {
+		t.Fatal("expected error for yaml-only package")
 	}
 }
 
@@ -77,9 +105,16 @@ func TestAdapterToolsAndMaterialize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tools := OpenAITools(pkgs)
-	if len(tools) != 1 || tools[0].Name != "skill_demo__echo" {
-		t.Fatalf("tools=%+v", tools)
+	tool, ok := OpenAISkillTool(pkgs)
+	if !ok || tool.Name != "skill" {
+		t.Fatalf("tool=%+v ok=%v", tool, ok)
+	}
+	if !contains(tool.Description, "demo") || !contains(tool.Description, "test skill") {
+		t.Fatalf("desc=%q", tool.Description)
+	}
+	hint := OpenAISkillSystemHint()
+	if hint == "" || !contains(hint, "skill") {
+		t.Fatalf("hint=%q", hint)
 	}
 	appendix := PromptAppendix(pkgs)
 	if appendix == "" || !contains(appendix, "demo") {
@@ -90,42 +125,192 @@ func TestAdapterToolsAndMaterialize(t *testing.T) {
 	if err := Materialize(pkgs, ws, "cursor_cli"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(ws, ".cursor", "skills", "demo", "SKILL.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(ws, ".cursor", "skills", "demo", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Materialize(pkgs, ws, "openai"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(ws, ".agents", "skills", "demo", "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestRunnerPromptOnly(t *testing.T) {
+func TestRunnerLoadSkillTool(t *testing.T) {
 	tmp := t.TempDir()
+	writeSample(t, tmp, "ponly")
+	// overwrite description for this test
 	dir := filepath.Join(tmp, "ponly")
-	_ = os.MkdirAll(dir, 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "SKILL.yaml"), []byte(`
-id: ponly
-name: P
-version: "1"
+	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(`---
+name: ponly
 description: d
-entry:
-  type: prompt_only
-tools:
-  - name: invoke
-    description: i
-    parameters: {type: object, properties: {}}
+---
+
+# Ponly
+
+Body detail.
 `), 0o644)
-	pkg, err := LoadDir(dir)
+	store := NewStore(filepath.Join(tmp, "inst"))
+	if _, err := store.InstallFromDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	out := (&Runner{}).LoadSkillTool(store, `{"name":"ponly"}`)
+	if !contains(out, "Body detail") || !contains(out, "Skill: ponly") {
+		t.Fatalf("out=%q", out)
+	}
+	bad := (&Runner{}).LoadSkillTool(store, `{"name":"missing"}`)
+	if !contains(bad, "not found") && !contains(bad, "missing") {
+		t.Fatalf("bad=%q", bad)
+	}
+}
+
+func TestInstallFromMarkdownAndTarGz(t *testing.T) {
+	tmp := t.TempDir()
+	store := NewStore(filepath.Join(tmp, "installed"))
+
+	mdPath := filepath.Join(tmp, "hello-doc.md")
+	if err := os.WriteFile(mdPath, []byte("# Hello\n\nimported md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := store.InstallFromMarkdown(mdPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := (&Runner{}).Exec(context.Background(), pkg, "invoke", `{"x":1}`, tmp)
-	if !contains(out, "d") {
-		t.Fatalf("out=%q", out)
+	if pkg.Manifest.ID != "hello-doc" {
+		t.Fatalf("md pkg=%+v", pkg.Manifest)
+	}
+	if DetectInstallSource(mdPath) != "md" {
+		t.Fatalf("detect md")
+	}
+
+	srcRoot := filepath.Join(tmp, "src")
+	writeSample(t, srcRoot, "demo-tgz")
+	tgzPath := filepath.Join(tmp, "demo.tgz")
+	if err := writeTarGz(tgzPath, filepath.Join(srcRoot, "demo-tgz"), "demo-tgz"); err != nil {
+		t.Fatal(err)
+	}
+	if DetectInstallSource(tgzPath) != "tgz" {
+		t.Fatalf("detect tgz")
+	}
+	pkg2, err := store.InstallFromTarGz(tgzPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg2.Manifest.ID != "demo-tgz" {
+		t.Fatalf("tgz id=%s", pkg2.Manifest.ID)
 	}
 }
 
-func TestParseToolExportName(t *testing.T) {
-	id, tool, ok := ParseToolExportName("skill_hello-workspace__hello_echo")
-	if !ok || id != "hello-workspace" || tool != "hello_echo" {
-		t.Fatalf("%s %s %v", id, tool, ok)
+func TestInstallTarGzWithSkillMDAtRoot(t *testing.T) {
+	tmp := t.TempDir()
+	store := NewStore(filepath.Join(tmp, "installed"))
+
+	// Archive root contains SKILL.md directly (folder name is temp, not "kdlog").
+	rootContent := filepath.Join(tmp, "payload")
+	if err := os.MkdirAll(rootContent, 0o755); err != nil {
+		t.Fatal(err)
 	}
+	md := "---\nname: kdlog\ndescription: kdlog skill\n---\n\n# Kdlog\n"
+	if err := os.WriteFile(filepath.Join(rootContent, "SKILL.md"), []byte(md), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tgzPath := filepath.Join(tmp, "kdlog.tgz")
+	if err := writeTarGzFlat(tgzPath, rootContent); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := store.InstallFromTarGz(tgzPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Manifest.ID != "kdlog" {
+		t.Fatalf("id=%s", pkg.Manifest.ID)
+	}
+	if _, err := os.Stat(filepath.Join(store.Root, "kdlog", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTarGzFlat(outPath, srcDir string) error {
+	f, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz := gzip.NewWriter(f)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		name := filepath.ToSlash(rel)
+		hdr, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		hdr.Name = name
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		_, err = io.Copy(tw, in)
+		return err
+	})
+}
+
+func writeTarGz(outPath, srcDir, rootName string) error {
+	f, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz := gzip.NewWriter(f)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		name := filepath.ToSlash(filepath.Join(rootName, rel))
+		hdr, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		hdr.Name = name
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		_, err = io.Copy(tw, in)
+		return err
+	})
 }
 
 func contains(s, sub string) bool {

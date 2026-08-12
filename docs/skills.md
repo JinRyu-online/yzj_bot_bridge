@@ -1,48 +1,55 @@
 # 统一 Skills
 
-YZJ Bridge 以 `~/.yzj-bridge/skills/<id>/` 为权威 Skill 仓库。各后端共用同一套包：
+YZJ Bridge 采用与 Cursor / Claude 一致的 [Agent Skills](https://cursor.com/docs/skills) 包格式：目录内 **`SKILL.md`**（YAML frontmatter + Markdown 正文）。
+
+权威安装目录：`~/.yzj-bridge/skills/<name>/`（以 frontmatter `name` 为准；导入源目录名可不同，例如 tgz 解压临时目录）。
 
 | 后端 | 行为 |
 |------|------|
-| OpenAI | 暴露为 `skill_<id>__<tool>` function tools，由桥执行 |
-| Cursor CLI | 物化到 `workspace/.cursor/skills/<id>/`，并追加 prompt 说明 |
-| Claude Code | 物化到 `workspace/.claude/skills/<id>/`，并追加 prompt 说明 |
+| OpenAI 兼容 | **渐进披露**（对齐 OpenCode / Agent Skills）：注册单一 `skill` tool，描述里只列 name + description；模型调用 `skill({ "name": "..." })` 后再加载完整 `SKILL.md`。同时物化到 `workspace/.agents/skills/<name>/` |
+| Cursor CLI | 物化到 `workspace/.cursor/skills/<name>/`，并将说明注入 prompt |
+| Claude Code | 物化到 `workspace/.claude/skills/<name>/`，并将说明注入 prompt |
+
+OpenAI 路径**不会**把全部 Skill 正文塞进 system prompt，避免 token 膨胀；模型按需通过 `skill` tool 拉取。
 
 ## 包格式
 
 ```text
-SKILL.yaml   # 必填
-SKILL.md     # 可选长说明
-scripts/     # shell 入口
+my-skill/
+├── SKILL.md        # 必填
+├── scripts/        # 可选（正文中指引 Agent 执行）
+├── references/     # 可选
+└── assets/         # 可选
 ```
 
-`SKILL.yaml` 关键字段：`id`、`name`、`entry.type`（`shell` | `prompt_only`）、`tools[]`。
+```markdown
+---
+name: my-skill
+description: Short description of what this skill does and when to use it.
+---
 
-Tool 对外名强制为 `skill_<id>__<toolName>`。
+# My Skill
+
+Detailed instructions for the agent.
+```
+
+Frontmatter 仅使用官方字段：`name`、`description`，以及可选的 `paths`、`disable-model-invocation`、`metadata`。  
+**不支持** 独立的 `SKILL.yaml`，也不使用本桥私有字段（如 `entry` / `tools` / `client_sync`）。
 
 ## 按机器人启用
 
 ```yaml
 bots:
   - id: youkai
-    skills: [hello-workspace]
+    skills: [my-skill]
 ```
 
-空列表表示不启用桥管 Skill。保存配置时若引用未安装的 id 会失败。
+空列表表示不启用。保存时若引用未安装的 name 会失败。
 
 ## 安装方式
 
-Control API（需 Bearer token）：
+- `GET /v1/skills`
+- `POST /v1/skills/install` — `{ "source": "dir"|"zip"|"tgz"|"md"|"auto", "path": "..." }`
+- `DELETE /v1/skills/{id}`
 
-- `GET /v1/skills` — 已安装
-- `GET /v1/skills/catalog` — 可一键导入目录
-- `POST /v1/skills/install` — `{ "source": "catalog"|"dir"|"zip", "catalog_id"|"path": "..." }`
-- `DELETE /v1/skills/{id}` — 卸载
-
-GUI「Skills」页支持 Catalog 一键安装与本地路径/zip 导入。
-
-仓库内置样例：`skills-catalog/hello-workspace`。
-
-## MCP
-
-manifest 可预留 `mcp` 字段；本版本不接线 MCP 进程。
+GUI「Skills」页：本地目录 / zip / tar.gz / 单文件 md 导入。

@@ -274,7 +274,12 @@ func (r *Runtime) SaveAndReload(raw map[string]any, keepWSS bool) error {
 	sk := skills.NewStore(skillsRoot)
 	for _, cfg := range cfgs {
 		if err := sk.ValidateIDs(cfg.Skills); err != nil {
-			return fmt.Errorf("bot %s: %w", firstNonEmptyLocal(cfg.RoleID, cfg.ID), err)
+			// Stale skill refs on *other* bots used to block every save. Drop
+			// missing ids from the raw config and continue (Load already warns).
+			pruned := pruneMissingSkills(raw, cfg, sk)
+			if len(pruned) > 0 {
+				log.Printf("warn: bot %s removed uninstalled skills: %s", firstNonEmptyLocal(cfg.RoleID, cfg.ID), strings.Join(pruned, ", "))
+			}
 		}
 	}
 	if err := config.SaveRaw(r.CfgPath, raw); err != nil {
@@ -369,4 +374,44 @@ func firstNonEmptyLocal(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// pruneMissingSkills drops skill ids that are not installed from the matching
+// bots[] entry in raw. Returns the removed ids (for logging).
+func pruneMissingSkills(raw map[string]any, cfg bot.Config, sk *skills.Store) []string {
+	bots, ok := raw["bots"].([]any)
+	if !ok {
+		return nil
+	}
+	var removed []string
+	role := firstNonEmptyLocal(cfg.RoleID, cfg.ID)
+	for _, item := range bots {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := m["id"].(string)
+		if id != role && id != cfg.ID {
+			continue
+		}
+		list, ok := m["skills"].([]any)
+		if !ok || len(list) == 0 {
+			continue
+		}
+		kept := make([]any, 0, len(list))
+		for _, x := range list {
+			sid, _ := x.(string)
+			sid = strings.TrimSpace(sid)
+			if sid == "" {
+				continue
+			}
+			if sk.Has(sid) {
+				kept = append(kept, sid)
+			} else {
+				removed = append(removed, sid)
+			}
+		}
+		m["skills"] = kept
+	}
+	return removed
 }

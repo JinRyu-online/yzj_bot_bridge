@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { ChatPage } from "./ChatPage";
 import "./App.css";
 
 type StatusItem = {
@@ -19,7 +20,7 @@ type StatusItem = {
 
 type LogLine = { seq: number; time: string; level: string; bot?: string; message: string };
 type ThemeId = "aurora" | "midnight" | "sand" | "ice";
-type PageId = "system" | "bots" | "settings" | "skills" | "logs" | "help";
+type PageId = "chat" | "system" | "bots" | "settings" | "skills" | "logs" | "help";
 
 type SkillInfo = {
   id: string;
@@ -28,14 +29,6 @@ type SkillInfo = {
   description?: string;
   author?: string;
   tags?: string[];
-};
-
-type CatalogSkill = {
-  id: string;
-  name: string;
-  description?: string;
-  path?: string;
-  version?: string;
 };
 
 type BotForm = {
@@ -72,6 +65,85 @@ const THEMES: { id: ThemeId; label: string }[] = [
 const DEFAULT_CURSOR_WORKSPACE = "~/.yzj-bridge/workspace/cursor_cli";
 const DEFAULT_CLAUDE_WORKSPACE = "~/.yzj-bridge/workspace/claude_code";
 
+function defaultBotWorkspace(botId: string): string {
+  const id = botId.trim();
+  return id ? `~/.yzj-bridge/workspace/${id}` : "~/.yzj-bridge/workspace/";
+}
+
+function FieldLabel({ children, tip }: { children: React.ReactNode; tip?: string }) {
+  const iconRef = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ left: number; top: number; place: "above" | "below" }>({
+    left: 0,
+    top: 0,
+    place: "above",
+  });
+
+  const updatePosition = useCallback(() => {
+    const el = iconRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const gap = 8;
+    const preferAbove = rect.top > 88;
+    if (preferAbove) {
+      setCoords({ left: rect.left + rect.width / 2, top: rect.top - gap, place: "above" });
+    } else {
+      setCoords({ left: rect.left + rect.width / 2, top: rect.bottom + gap, place: "below" });
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const onReposition = () => updatePosition();
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [open, updatePosition]);
+
+  if (!tip) {
+    return <span className="field-label">{children}</span>;
+  }
+
+  return (
+    <span className="field-label with-tip">
+      <span className="field-label-text">{children}</span>
+      <span
+        className={`field-tip${open ? " open" : ""}`}
+        onMouseEnter={() => {
+          updatePosition();
+          setOpen(true);
+        }}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => {
+          updatePosition();
+          setOpen(true);
+        }}
+        onBlur={() => setOpen(false)}
+      >
+        <span ref={iconRef} className="field-tip-icon" tabIndex={0} aria-label="说明">
+          ?
+        </span>
+        {open
+          ? createPortal(
+              <span
+                className={`field-tip-bubble portal ${coords.place}`}
+                role="tooltip"
+                style={{ left: coords.left, top: coords.top }}
+              >
+                {tip}
+              </span>,
+              document.body,
+            )
+          : null}
+      </span>
+    </span>
+  );
+}
+
 const BACKENDS = ["cursor_cli", "claude_code", "openai", "opencode"];
 const MIN_LOADING_MS = 500;
 
@@ -98,6 +170,24 @@ async function openExternal(url: string) {
   } catch {
     window.open(url, "_blank", "noopener,noreferrer");
   }
+}
+
+function detectSkillInstallSource(path: string): "dir" | "zip" | "tgz" | "md" {
+  const lower = path.trim().toLowerCase();
+  if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) return "tgz";
+  if (lower.endsWith(".zip")) return "zip";
+  if (lower.endsWith(".md")) return "md";
+  return "dir";
+}
+
+async function pickSkillDirectory(): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "选择 Skill 目录（需含 SKILL.md）",
+  });
+  return typeof selected === "string" ? selected : null;
 }
 
 const GITHUB_URL = "https://github.com/JinRyu-online/yzj_bot_bridge";
@@ -538,7 +628,7 @@ function emptyBotForm(): BotForm {
     openai_use_defaults: true,
     skills: [],
     inbound_mode: "websocket",
-    workspace: "",
+    workspace: defaultBotWorkspace(""),
   };
 }
 
@@ -552,7 +642,7 @@ function botUsesOpenaiDefaults(cfg: Record<string, unknown>): boolean {
 }
 
 function App() {
-  const [page, setPage] = useState<PageId>("system");
+  const [page, setPage] = useState<PageId>("bots");
   const [theme, setTheme] = useState<ThemeId>(() => {
     const saved = localStorage.getItem("yzj-theme") as ThemeId | null;
     return saved && THEMES.some((t) => t.id === saved) ? saved : "ice";
@@ -570,7 +660,6 @@ function App() {
   const [rawConfig, setRawConfig] = useState<Record<string, unknown> | null>(null);
 
   const [loadingAuto, setLoadingAuto] = useState(false);
-  const [loadingWss, setLoadingWss] = useState(false);
   const [loadingReload, setLoadingReload] = useState(false);
   const [savingCli, setSavingCli] = useState(false);
   const [saveToast, setSaveToast] = useState("");
@@ -597,6 +686,7 @@ function App() {
   const [botForm, setBotForm] = useState<BotForm>(emptyBotForm());
   const [botModalError, setBotModalError] = useState<{ text: string; seq: number } | null>(null);
   const [botFieldErrors, setBotFieldErrors] = useState<Record<string, string>>({});
+  const [botWorkspaceTouched, setBotWorkspaceTouched] = useState(false);
   const [channelForm, setChannelForm] = useState<ChannelForm>({
     id: "",
     group: "",
@@ -609,10 +699,10 @@ function App() {
   const [editingChannelIdx, setEditingChannelIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [installedSkills, setInstalledSkills] = useState<SkillInfo[]>([]);
-  const [skillCatalog, setSkillCatalog] = useState<CatalogSkill[]>([]);
   const [skillsBusy, setSkillsBusy] = useState(false);
   const [skillInstallPath, setSkillInstallPath] = useState("");
   const [skillsPageError, setSkillsPageError] = useState<{ text: string; seq: number } | null>(null);
+  const [skillDropActive, setSkillDropActive] = useState(false);
 
   const [cliForm, setCliForm] = useState({
     cursor_bin: "agent",
@@ -819,14 +909,9 @@ function App() {
 
   const refreshSkills = useCallback(async () => {
     try {
-      const [installedRaw, catalogRaw] = await Promise.all([
-        api("GET", "/v1/skills"),
-        api("GET", "/v1/skills/catalog"),
-      ]);
+      const installedRaw = await api("GET", "/v1/skills");
       const installed = JSON.parse(installedRaw) as { skills?: SkillInfo[] };
-      const catalog = JSON.parse(catalogRaw) as { skills?: CatalogSkill[] };
       setInstalledSkills(installed.skills || []);
-      setSkillCatalog(catalog.skills || []);
     } catch (e) {
       setSkillsPageError((prev) => ({
         text: String(e),
@@ -834,6 +919,64 @@ function App() {
       }));
     }
   }, []);
+
+  const installSkillFromPath = useCallback(
+    async (rawPath: string) => {
+      const p = rawPath.trim();
+      if (!p) return;
+      const source = detectSkillInstallSource(p);
+      setSkillsBusy(true);
+      try {
+        await api("POST", "/v1/skills/install", { source, path: p });
+        setSkillInstallPath("");
+        await refreshSkills();
+        void guiLog(`导入 Skill（${source}） ${p}`);
+      } catch (e) {
+        setSkillsPageError((prev) => ({
+          text: String(e),
+          seq: (prev?.seq ?? 0) + 1,
+        }));
+      } finally {
+        setSkillsBusy(false);
+      }
+    },
+    [refreshSkills],
+  );
+
+  useEffect(() => {
+    if (page !== "skills") return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        if (disposed) return;
+        unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+          const kind = event.payload.type;
+          if (kind === "over") {
+            setSkillDropActive(true);
+            return;
+          }
+          if (kind === "leave") {
+            setSkillDropActive(false);
+            return;
+          }
+          if (kind === "drop") {
+            setSkillDropActive(false);
+            const first = event.payload.paths?.[0];
+            if (first) setSkillInstallPath(first);
+          }
+        });
+      } catch {
+        /* browser / e2e preview：无 Tauri 拖拽路径 */
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+      setSkillDropActive(false);
+    };
+  }, [page]);
 
   useEffect(() => {
     let cancelled = false;
@@ -894,11 +1037,6 @@ function App() {
     const enabled = status.filter((s) => s.ws_enabled).length;
     const connected = status.filter((s) => s.connected).length;
     return { total, enabled, connected };
-  }, [status]);
-
-  const wssAllOn = useMemo(() => {
-    const ws = status.filter((s) => s.has_ws);
-    return ws.length > 0 && ws.every((s) => s.ws_enabled);
   }, [status]);
 
   // Stable role order from config.bots, not map iteration of status polls.
@@ -1051,19 +1189,6 @@ function App() {
     });
   }
 
-  async function toggleWssAll(v: boolean) {
-    await withMinLoading(setLoadingWss, async () => {
-      try {
-        await api("POST", v ? "/v1/wss/start" : "/v1/wss/stop");
-        await refreshStatus();
-        void guiLog(`全部 WebSocket → ${v ? "启动" : "停止"}`);
-      } catch (e) {
-        setError(String(e));
-        void guiLog(`切换 WebSocket 失败: ${e}`, "ERROR");
-      }
-    });
-  }
-
   async function triggerReload() {
     await withMinLoading(setLoadingReload, async () => {
       try {
@@ -1101,6 +1226,7 @@ function App() {
 
   function openCreateBot() {
     setBotForm(emptyBotForm());
+    setBotWorkspaceTouched(false);
     setBotModalError(null);
     setBotFieldErrors({});
     setBotModal("create");
@@ -1112,8 +1238,9 @@ function App() {
       String(selectedRoleConfig.backend || "") === "openai"
         ? botUsesOpenaiDefaults(selectedRoleConfig)
         : true;
+    const botId = String(selectedRoleConfig.id || "");
     setBotForm({
-      id: String(selectedRoleConfig.id || ""),
+      id: botId,
       name: String(selectedRoleConfig.name || ""),
       backend: String(selectedRoleConfig.backend || "cursor_cli"),
       group: String(selectedRoleConfig.group || "default"),
@@ -1127,8 +1254,9 @@ function App() {
         ? (selectedRoleConfig.skills as unknown[]).map((x) => String(x))
         : [],
       inbound_mode: String(selectedRoleConfig.inbound_mode || "websocket"),
-      workspace: String(selectedRoleConfig.workspace || ""),
+      workspace: String(selectedRoleConfig.workspace || "").trim() || defaultBotWorkspace(botId),
     });
+    setBotWorkspaceTouched(true);
     setBotModalError(null);
     setBotFieldErrors({});
     setBotModal("edit");
@@ -1180,7 +1308,7 @@ function App() {
       backend: botForm.backend,
       inbound_mode: botForm.inbound_mode,
       system_prompt: botForm.system_prompt,
-      workspace: botForm.workspace,
+      workspace: botForm.workspace.trim() || defaultBotWorkspace(botForm.id),
       skills: botForm.skills,
     };
     if (botForm.backend === "openai") {
@@ -1425,12 +1553,13 @@ function App() {
         </div>
         {(
           [
-            ["system", "系统设置"],
+            ["chat", "聊天"],
             ["bots", "机器人"],
-            ["skills", "Skills"],
             ["settings", "AI 设置"],
+            ["skills", "Skills"],
             ["logs", "运行日志"],
             ["help", "帮助"],
+            ["system", "系统设置"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -1461,6 +1590,20 @@ function App() {
       </aside>
 
       <main className="main">
+        {ready ? (
+          <div
+            className="chat-page-host"
+            hidden={page !== "chat"}
+            aria-hidden={page !== "chat"}
+          >
+            <ChatPage
+              api={api}
+              ready={ready}
+              active={page === "chat"}
+              bots={status.map((b) => ({ id: b.id, name: b.name, backend: b.backend }))}
+            />
+          </div>
+        ) : null}
         {page === "system" && (
           <section className="page" key="system" data-testid="page-system">
             <header className="page-head">
@@ -1471,21 +1614,12 @@ function App() {
             </header>
             <div className="stack page-body">
               <div className="card soft">
-      <div className="row">
+                <div className="row">
                   <div className="row-text">
                     <strong>开机自启</strong>
                     <span>写入当前用户 Run 注册表（无控制台闪烁）</span>
-      </div>
-                  <Switch checked={autostart} loading={loadingAuto} onChange={toggleAutostart} />
-                </div>
-                <div className="row">
-                  <div className="row-text">
-                    <strong>全部 WebSocket</strong>
-                    <span>
-                      通道 {summary.total} · 启用 {summary.enabled} · 已连接 {summary.connected}
-                    </span>
                   </div>
-                  <Switch checked={wssAllOn} loading={loadingWss} onChange={toggleWssAll} />
+                  <Switch checked={autostart} loading={loadingAuto} onChange={toggleAutostart} />
                 </div>
                 <div className="row">
                   <div className="row-text">
@@ -1853,17 +1987,20 @@ function App() {
             <header className="page-head">
               <div>
                 <h1>Skills</h1>
-                <p className="subtitle">统一 Skill 包：安装、Catalog 一键导入、供各机器人勾选</p>
+                <p className="subtitle">统一 Skill 包：本地导入后供各机器人勾选启用</p>
               </div>
-              <button
-                type="button"
-                className={`action-chip${skillsBusy ? " loading" : ""}`}
-                disabled={skillsBusy}
-                onClick={() => void refreshSkills()}
-              >
-                {skillsBusy ? <span className="spinner dark" /> : null}
-                <span>刷新</span>
-              </button>
+              <div className="head-actions">
+                <button
+                  type="button"
+                  className={`action-chip${skillsBusy ? " loading" : ""}`}
+                  disabled={skillsBusy}
+                  data-testid="skills-refresh"
+                  onClick={() => void refreshSkills()}
+                >
+                  {skillsBusy ? <span className="spinner dark" /> : null}
+                  <span>{skillsBusy ? "刷新中" : "刷新"}</span>
+                </button>
+              </div>
             </header>
             {skillsPageError ? (
               <ModalFloatMessage
@@ -1873,26 +2010,34 @@ function App() {
                 onDismissed={() => setSkillsPageError(null)}
               />
             ) : null}
-            <div className="stack page-body">
-              <div className="card soft" data-testid="skills-installed">
-                <div className="nested-title">已安装</div>
+            <div className="stack page-body skills-page">
+              <div className="card soft pad skills-panel" data-testid="skills-installed">
+                <div className="skills-panel-head">
+                  <div>
+                    <h3 className="section-inline">已安装</h3>
+                    <p className="group-desc">当前桥接可用的 Skill 包，可在机器人编辑页勾选启用</p>
+                  </div>
+                  <span className="skills-count">{installedSkills.length}</span>
+                </div>
                 {installedSkills.length === 0 ? (
-                  <div className="empty">尚未安装 Skill</div>
+                  <div className="skills-empty">
+                    <strong>尚未安装 Skill</strong>
+                    <span>将含 SKILL.md 的目录、.zip / .tar.gz，或 .md 拖入下方导入区</span>
+                  </div>
                 ) : (
                   <div className="skill-list">
                     {installedSkills.map((sk) => (
                       <div key={sk.id} className="skill-row">
-                        <div>
-                          <strong>{sk.name || sk.id}</strong>
-                          <span className="skill-meta">
-                            {sk.id}
-                            {sk.version ? ` · v${sk.version}` : ""}
-                          </span>
-                          <p>{sk.description || ""}</p>
+                        <div className="skill-row-main">
+                          <div className="skill-row-title">
+                            <strong>{sk.name || sk.id}</strong>
+                            <span className="skill-id-chip">{sk.id}</span>
+                          </div>
+                          {sk.description ? <p className="skill-desc">{sk.description}</p> : null}
                         </div>
                         <button
                           type="button"
-                          className="btn ghost"
+                          className="btn ghost tiny"
                           disabled={skillsBusy}
                           onClick={() =>
                             void (async () => {
@@ -1919,89 +2064,81 @@ function App() {
                   </div>
                 )}
               </div>
-              <div className="card soft" data-testid="skills-catalog">
-                <div className="nested-title">Catalog 一键导入</div>
-                {skillCatalog.length === 0 ? (
-                  <div className="empty">未找到 catalog（请确认 skills-catalog/ 可读）</div>
-                ) : (
-                  <div className="skill-list">
-                    {skillCatalog.map((sk) => (
-                      <div key={sk.id} className="skill-row">
-                        <div>
-                          <strong>{sk.name || sk.id}</strong>
-                          <span className="skill-meta">{sk.id}</span>
-                          <p>{sk.description || ""}</p>
-                        </div>
-                        <button
-                          type="button"
-                          className="btn"
-                          data-testid={`install-catalog-${sk.id}`}
-                          disabled={skillsBusy}
-                          onClick={() =>
-                            void (async () => {
-                              setSkillsBusy(true);
-                              try {
-                                await api("POST", "/v1/skills/install", {
-                                  source: "catalog",
-                                  catalog_id: sk.id,
-                                });
-                                await refreshSkills();
-                                void guiLog(`安装 Catalog Skill ${sk.id}`);
-                              } catch (e) {
-                                setSkillsPageError((prev) => ({
-                                  text: String(e),
-                                  seq: (prev?.seq ?? 0) + 1,
-                                }));
-                              } finally {
-                                setSkillsBusy(false);
-                              }
-                            })()
-                          }
-                        >
-                          安装
-                        </button>
-                      </div>
-                    ))}
+
+              <div
+                className={`card soft pad skills-panel${skillDropActive ? " drop-active" : ""}`}
+                data-testid="skills-import"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setSkillDropActive(true);
+                }}
+                onDragLeave={() => setSkillDropActive(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setSkillDropActive(false);
+                  const file = e.dataTransfer.files?.[0] as (File & { path?: string }) | undefined;
+                  if (file?.path) setSkillInstallPath(file.path);
+                }}
+              >
+                <div className="skills-panel-head">
+                  <div>
+                    <h3 className="section-inline">从本地导入</h3>
+                    <p className="group-desc">
+                      文件夹图标选目录；.zip / .tar.gz / .md 可拖拽到此处或手输路径（目录需含 SKILL.md）
+                    </p>
                   </div>
-                )}
-              </div>
-              <div className="card soft" data-testid="skills-import">
-                <div className="nested-title">从本地导入</div>
-                <div className="inline-field">
-                  <input
-                    value={skillInstallPath}
-                    onChange={(e) => setSkillInstallPath(e.target.value)}
-                    placeholder="Skill 目录或 .zip 绝对路径"
-                    data-testid="skill-install-path"
-                  />
+                </div>
+                <div className="skills-import-row">
+                  <div className="skills-path-field">
+                    <input
+                      className="skills-import-input"
+                      value={skillInstallPath}
+                      onChange={(e) => setSkillInstallPath(e.target.value)}
+                      placeholder="拖拽到此处，或手输路径；点右侧图标选择文件夹"
+                      data-testid="skill-install-path"
+                    />
+                    <button
+                      type="button"
+                      className="skills-browse-btn"
+                      title="选择 Skill 文件夹"
+                      aria-label="选择 Skill 文件夹"
+                      data-testid="skill-browse-dir"
+                      disabled={skillsBusy}
+                      onClick={() =>
+                        void (async () => {
+                          try {
+                            const selected = await pickSkillDirectory();
+                            if (selected) setSkillInstallPath(selected);
+                          } catch (e) {
+                            setSkillsPageError((prev) => ({
+                              text: String(e),
+                              seq: (prev?.seq ?? 0) + 1,
+                            }));
+                          }
+                        })()
+                      }
+                    >
+                      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                        <path
+                          fill="currentColor"
+                          d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"
+                        />
+                      </svg>
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    className="action-chip side"
+                    className="btn"
+                    data-testid="skill-import-btn"
                     disabled={skillsBusy || !skillInstallPath.trim()}
-                    onClick={() =>
-                      void (async () => {
-                        const p = skillInstallPath.trim();
-                        const source = p.toLowerCase().endsWith(".zip") ? "zip" : "dir";
-                        setSkillsBusy(true);
-                        try {
-                          await api("POST", "/v1/skills/install", { source, path: p });
-                          await refreshSkills();
-                          void guiLog(`导入 Skill（${source}） ${p}`);
-                        } catch (e) {
-                          setSkillsPageError((prev) => ({
-                            text: String(e),
-                            seq: (prev?.seq ?? 0) + 1,
-                          }));
-                        } finally {
-                          setSkillsBusy(false);
-                        }
-                      })()
-                    }
+                    onClick={() => void installSkillFromPath(skillInstallPath)}
                   >
                     导入
                   </button>
                 </div>
-                <span className="field-hint">目录需含 SKILL.yaml；zip 解压后同理</span>
+                <span className="field-hint">
+                  以 SKILL.md 的 name 安装到本机；压缩包根目录直接放 SKILL.md 也可。单独 .md 按文件名生成包
+                </span>
               </div>
             </div>
           </section>
@@ -2217,26 +2354,50 @@ function App() {
                   云之家机器人桥接器：消息经 Go 桥收发与调度，本面板负责配置、通道启停与运行日志。支持 Cursor
                   CLI、Claude Code、OpenAI 兼容接口等本机引擎。
                 </p>
-                <ol className="help-flow">
+                <h2>使用流程</h2>
+                <ol className="help-flow" data-testid="help-flow">
                   <li>
                     <span className="help-flow-idx">01</span>
                     <div>
-                      <strong>接入</strong>
-                      <em>云之家 WebSocket / Webhook 入站</em>
+                      <strong>配置后端引擎</strong>
+                      <em>打开「AI 设置」，至少配置好一个可用引擎（Cursor CLI / Claude Code / OpenAI 等）。</em>
                     </div>
                   </li>
                   <li>
                     <span className="help-flow-idx">02</span>
                     <div>
-                      <strong>执行</strong>
-                      <em>本机引擎按机器人配置跑任务</em>
+                      <strong>创建云之家机器人</strong>
+                      <em>
+                        在云之家群组中新建机器人，或前往{" "}
+                        <a
+                          href="https://yunzhijia.com/im/personalRobotCreate"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            void openExternal("https://yunzhijia.com/im/personalRobotCreate");
+                          }}
+                        >
+                          个人机器人创建页
+                        </a>{" "}
+                        创建，并复制其 Webhook 发送地址。
+                      </em>
                     </div>
                   </li>
                   <li>
                     <span className="help-flow-idx">03</span>
                     <div>
-                      <strong>回写</strong>
-                      <em>回复发回对应通道与会话</em>
+                      <strong>在本应用接入</strong>
+                      <em>
+                        打开「机器人」页新建机器人，将第 2 步的 Webhook 链接粘贴到发送地址（send_msg_url），保存后即可收发消息。
+                      </em>
+                    </div>
+                  </li>
+                  <li>
+                    <span className="help-flow-idx">04</span>
+                    <div>
+                      <strong>本地聊天测试</strong>
+                      <em>
+                        打开「聊天」页，点右上角 + 新建会话，用下拉或 @ 指定机器人，即可在 GUI 内测对话（不推送云之家）。
+                      </em>
                     </div>
                   </li>
                 </ol>
@@ -2326,14 +2487,22 @@ function App() {
             <div className="modal-scroll">
             <div className="form-grid">
               <div className="field">
-                <span className="field-label">ID</span>
+                <FieldLabel tip="唯一标识，保存后不可修改；也用于默认工作目录名">ID</FieldLabel>
                 <input
                   data-testid="bot-id"
                   disabled={botModal === "edit"}
                   className={botFieldErrors.id ? "invalid" : undefined}
                   value={botForm.id}
                   onChange={(e) => {
-                    setBotForm({ ...botForm, id: e.target.value });
+                    const id = e.target.value;
+                    setBotForm((prev) => ({
+                      ...prev,
+                      id,
+                      workspace:
+                        botModal === "create" && !botWorkspaceTouched
+                          ? defaultBotWorkspace(id)
+                          : prev.workspace,
+                    }));
                     if (botFieldErrors.id) setBotFieldErrors({ ...botFieldErrors, id: "" });
                   }}
                   placeholder="唯一标识，如 fairy"
@@ -2343,7 +2512,7 @@ function App() {
                 ) : null}
               </div>
               <div className="field">
-                <span className="field-label">名称</span>
+                <FieldLabel tip="界面与日志中显示的名称">名称</FieldLabel>
                 <input
                   data-testid="bot-name"
                   className={botFieldErrors.name ? "invalid" : undefined}
@@ -2359,7 +2528,9 @@ function App() {
                 ) : null}
               </div>
               <div className="field">
-                <span className="field-label">后端引擎</span>
+                <FieldLabel tip="选择本机执行引擎：Cursor CLI / Claude Code / OpenAI 兼容接口等">
+                  后端引擎
+                </FieldLabel>
                 <FancySelect
                   testId="bot-backend"
                   value={botForm.backend}
@@ -2381,7 +2552,7 @@ function App() {
                 />
               </div>
               <div className="field">
-                <span className="field-label">入站模式</span>
+                <FieldLabel tip="消息如何进入桥接：WebSocket、Webhook 或两者">入站模式</FieldLabel>
                 <FancySelect
                   value={botForm.inbound_mode}
                   options={inboundOptions}
@@ -2391,16 +2562,19 @@ function App() {
               {botModal === "create" || !Array.isArray(selectedRoleConfig?.channels) ? (
                 <>
                   <div className="field">
-                    <span className="field-label">分组 Group</span>
+                    <FieldLabel tip="云之家通道分组标识，多通道时用于区分会话来源">
+                      分组 Group
+                    </FieldLabel>
                     <input
                       value={botForm.group}
                       onChange={(e) => setBotForm({ ...botForm, group: e.target.value })}
                       placeholder="如 workAssistant"
                     />
-                    <span className="field-hint">云之家通道分组标识，多通道时用于区分会话来源</span>
                   </div>
                   <div className="field full">
-                    <span className="field-label">发送地址 send_msg_url</span>
+                    <FieldLabel tip="云之家机器人 Webhook 发送 URL（含 yzjtoken）">
+                      发送地址 send_msg_url
+                    </FieldLabel>
                     <input
                       data-testid="bot-send-url"
                       className={botFieldErrors.send_msg_url ? "invalid" : undefined}
@@ -2415,27 +2589,30 @@ function App() {
                     />
                     {botFieldErrors.send_msg_url ? (
                       <span className="field-hint error">{botFieldErrors.send_msg_url}</span>
-                    ) : (
-                      <span className="field-hint">云之家机器人 Webhook 发送 URL（含 yzjtoken）</span>
-                    )}
+                    ) : null}
                   </div>
                 </>
               ) : null}
               <div className="field full">
-                <span className="field-label">启动工作目录 workspace</span>
+                <FieldLabel tip="机器人跑任务时的工作目录（cwd）；新建时默认 ~/.yzj-bridge/workspace/{ID}">
+                  启动工作目录 workspace
+                </FieldLabel>
                 <input
                   value={botForm.workspace}
-                  onChange={(e) => setBotForm({ ...botForm, workspace: e.target.value })}
-                  placeholder="本机路径或 ~ ；留空则用引擎/全局默认目录"
+                  onChange={(e) => {
+                    setBotWorkspaceTouched(true);
+                    setBotForm({ ...botForm, workspace: e.target.value });
+                  }}
+                  placeholder={defaultBotWorkspace(botForm.id || "your-id")}
                 />
-                <span className="field-hint">机器人跑任务时的工作目录（cwd）</span>
               </div>
               {botForm.backend === "openai" ? (
                 <>
                   <div className="field full field-switch">
                     <div className="field-switch-text">
-                      <strong>使用 AI 设置默认配置</strong>
-                      <span>统一控制 Base URL、API Key、模型是否取自「AI 设置」</span>
+                      <FieldLabel tip="开启后 Base URL、API Key、模型取自「AI 设置」；关闭后可为本机器人单独配置">
+                        使用 AI 设置默认配置
+                      </FieldLabel>
                     </div>
                     <Switch
                       testId="openai-use-defaults"
@@ -2490,7 +2667,7 @@ function App() {
                   ) : (
                     <>
                       <div className="field full">
-                        <span className="field-label">Base URL</span>
+                        <FieldLabel tip="OpenAI 兼容接口地址，通常以 /v1 结尾">Base URL</FieldLabel>
                         <input
                           data-testid="openai-base-url"
                           className={botFieldErrors.openai_base_url ? "invalid" : undefined}
@@ -2508,7 +2685,7 @@ function App() {
                         ) : null}
                       </div>
                       <div className="field full">
-                        <span className="field-label">API Key</span>
+                        <FieldLabel tip="调用该接口所需的 API Key">API Key</FieldLabel>
                         <SecretInput
                           testId="openai-api-key"
                           value={botForm.openai_api_key}
@@ -2524,7 +2701,9 @@ function App() {
                         ) : null}
                       </div>
                       <div className="field full">
-                        <span className="field-label">模型 Model</span>
+                        <FieldLabel tip="该机器人实际调用的大模型名称（如 gpt-4o-mini）">
+                          模型 Model
+                        </FieldLabel>
                         <div className="inline-field">
                           <FancySelect
                             testId="openai-model"
@@ -2566,68 +2745,93 @@ function App() {
                         </div>
                         {botFieldErrors.model ? (
                           <span className="field-hint error">{botFieldErrors.model}</span>
-                        ) : (
-                          <span className="field-hint">该机器人实际调用的大模型名称（如 gpt-4o-mini）</span>
-                        )}
+                        ) : null}
                       </div>
                     </>
                   )}
                 </>
               ) : (
                 <div className="field">
-                  <span className="field-label">模型 Model</span>
+                  <FieldLabel tip="指定本机器人使用的模型 ID；留空则回退到 AI 设置里的默认模型">
+                    模型 Model
+                  </FieldLabel>
                   <input
                     value={botForm.model}
                     onChange={(e) => setBotForm({ ...botForm, model: e.target.value })}
                     placeholder="可留空，使用 AI 设置中的默认模型"
                   />
-                  <span className="field-hint">
-                    指定本机器人使用的模型 ID；留空则回退到 AI 设置里的默认模型
-                  </span>
                 </div>
               )}
-              <div className="field full">
-                <span className="field-label">启用 Skills</span>
+              <div className="field full bot-skills-field" data-testid="bot-skills">
+                <div className="bot-skills-head">
+                  <div>
+                    <FieldLabel tip="按机器人白名单启用；OpenAI 加载说明，Cursor/Claude 物化到工作区">
+                      启用 Skills
+                    </FieldLabel>
+                  </div>
+                  {installedSkills.length > 0 ? (
+                    <span className="bot-skills-count">
+                      {botForm.skills.filter((id) => installedSkills.some((s) => s.id === id)).length}/
+                      {installedSkills.length}
+                    </span>
+                  ) : null}
+                </div>
                 {installedSkills.length === 0 ? (
-                  <span className="field-hint">暂无已安装 Skill，请先到「Skills」页安装</span>
+                  <div className="bot-skills-empty">
+                    <strong>暂无已安装 Skill</strong>
+                    <span>请先到「Skills」页导入后再勾选</span>
+                  </div>
                 ) : (
-                  <div className="skill-check-list" data-testid="bot-skills">
+                  <div className="bot-skills-list">
                     {installedSkills.map((sk) => {
                       const on = botForm.skills.includes(sk.id);
+                      const title = sk.name || sk.id;
+                      const showId = sk.id && sk.id !== title;
                       return (
-                        <label key={sk.id} className="skill-check">
-                          <input
-                            type="checkbox"
+                        <div
+                          key={sk.id}
+                          className={`bot-skill-row${on ? " on" : ""}`}
+                        >
+                          <div className="bot-skill-row-text">
+                            <strong>{title}</strong>
+                            {sk.description ? (
+                              <span>{sk.description}</span>
+                            ) : showId ? (
+                              <span className="bot-skill-id">{sk.id}</span>
+                            ) : (
+                              <span>启用后对本机器人生效</span>
+                            )}
+                          </div>
+                          <Switch
+                            testId={`bot-skill-${sk.id}`}
                             checked={on}
-                            onChange={() => {
+                            onChange={(v) => {
                               setBotForm((prev) => ({
                                 ...prev,
-                                skills: on
-                                  ? prev.skills.filter((x) => x !== sk.id)
-                                  : [...prev.skills, sk.id],
+                                skills: v
+                                  ? prev.skills.includes(sk.id)
+                                    ? prev.skills
+                                    : [...prev.skills, sk.id]
+                                  : prev.skills.filter((x) => x !== sk.id),
                               }));
                             }}
                           />
-                          <span>
-                            <strong>{sk.name || sk.id}</strong>
-                            <em>{sk.id}</em>
-                          </span>
-                        </label>
+                        </div>
                       );
                     })}
                   </div>
                 )}
-                <span className="field-hint">按机器人白名单启用；OpenAI 真执行，Cursor/Claude 物化到工作区</span>
               </div>
               <div className="field full">
-                <span className="field-label">系统提示词 System Prompt</span>
+                <FieldLabel tip="每次对话前注入给模型的角色说明与行为约束">
+                  系统提示词 System Prompt
+                </FieldLabel>
                 <textarea
                   rows={5}
                   value={botForm.system_prompt}
                   onChange={(e) => setBotForm({ ...botForm, system_prompt: e.target.value })}
                   placeholder="定义机器人人设、回答风格与约束"
                 />
-                <span className="field-hint">每次对话前注入给模型的角色说明与行为约束</span>
               </div>
             </div>
             <div className="modal-actions">
@@ -2669,14 +2873,18 @@ function App() {
             <div className="modal-scroll">
             <div className="form-grid">
               <div className="field">
-                <span className="field-label">自定义通道 ID（可选）</span>
+                <FieldLabel tip="可选；不填则按默认规则生成运行时通道 ID">
+                  自定义通道 ID（可选）
+                </FieldLabel>
                 <input
                   value={channelForm.id}
                   onChange={(e) => setChannelForm({ ...channelForm, id: e.target.value })}
                 />
               </div>
               <div className="field">
-                <span className="field-label">分组 Group</span>
+                <FieldLabel tip="通道分组标识，用于区分同一机器人下的不同会话入口">
+                  分组 Group
+                </FieldLabel>
                 <input
                   value={channelForm.group}
                   onChange={(e) => {
@@ -2685,10 +2893,11 @@ function App() {
                   }}
                   placeholder="如 workAssistant"
                 />
-                <span className="field-hint">通道分组标识，用于区分同一机器人下的不同会话入口</span>
               </div>
               <div className="field full">
-                <span className="field-label">发送地址 send_msg_url</span>
+                <FieldLabel tip="该通道对应的云之家机器人 Webhook 发送 URL">
+                  发送地址 send_msg_url
+                </FieldLabel>
                 <input
                   value={channelForm.send_msg_url}
                   onChange={(e) => {
@@ -2696,7 +2905,6 @@ function App() {
                     if (channelModalError) setChannelModalError(null);
                   }}
                 />
-                <span className="field-hint">该通道对应的云之家机器人 Webhook 发送 URL</span>
               </div>
               {String(selectedRoleConfig?.backend || "") === "openai" ? (
                 <div className="field full">

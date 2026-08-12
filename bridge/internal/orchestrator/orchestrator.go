@@ -1,8 +1,8 @@
 package orchestrator
 
 import (
-	"context"
 	"log"
+	"strings"
 	"unicode/utf8"
 
 	"yzj-bridge/internal/bot"
@@ -26,6 +26,23 @@ type DispatchResult struct {
 }
 
 func (o *Orchestrator) Dispatch(receiveBotID, content, openID, name string, overrides map[string]string) DispatchResult {
+	return o.dispatch(receiveBotID, content, openID, name, overrides, nil, nil)
+}
+
+// DispatchWithHistory is like Dispatch but injects prior turns into RunOpts.History
+// (used by GUI chat so OpenAI-compatible backends keep multi-turn context).
+func (o *Orchestrator) DispatchWithHistory(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn) DispatchResult {
+	return o.dispatch(receiveBotID, content, openID, name, overrides, history, nil)
+}
+
+// DispatchWithHistoryStream is like DispatchWithHistory but also forwards an
+// OnStream callback into RunOpts so backends that support streaming can emit
+// incremental reasoning/content/tool events. The callback may be nil.
+func (o *Orchestrator) DispatchWithHistoryStream(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn, onStream func(bot.StreamEvent)) DispatchResult {
+	return o.dispatch(receiveBotID, content, openID, name, overrides, history, onStream)
+}
+
+func (o *Orchestrator) dispatch(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn, onStream func(bot.StreamEvent)) DispatchResult {
 	if overrides == nil {
 		overrides = map[string]string{}
 	}
@@ -59,26 +76,37 @@ func (o *Orchestrator) Dispatch(receiveBotID, content, openID, name string, over
 	opts := bot.RunOpts{
 		Workspace: ws, Mode: mode, Skills: handler.Config.Skills,
 		Model: overrides["model"], OperatorOpenID: openID, OperatorName: name,
-		Overrides: overrides,
+		Overrides: overrides, History: history, OnStream: onStream,
 	}
 	if o.Skills != nil && len(handler.Config.Skills) > 0 {
 		pkgs, err := skills.Resolve(o.Skills, handler.Config.Skills)
 		if err != nil {
 			log.Printf("bot=%s skills resolve: %v", handlerID, err)
 		} else {
-			if err := skills.Materialize(pkgs, ws, handler.Config.Backend); err != nil {
+			backend := strings.ToLower(handler.Config.Backend)
+			if err := skills.Materialize(pkgs, ws, backend); err != nil {
 				log.Printf("bot=%s skills materialize: %v", handlerID, err)
 			}
-			opts.SkillPrompt = skills.PromptAppendix(pkgs)
-			for _, t := range skills.OpenAITools(pkgs) {
-				opts.SkillTools = append(opts.SkillTools, bot.ToolSpec{
-					Name: t.Name, Description: t.Description, Parameters: t.Parameters,
-				})
-			}
-			store := o.Skills
-			runner := &skills.Runner{}
-			opts.SkillDispatch = func(toolName, argsJSON, workspace string) string {
-				return runner.ExecByExportName(context.Background(), store, toolName, argsJSON, workspace)
+			switch backend {
+			case "openai", "opencode":
+				// OpenCode-style: advertise via skill tool; load full body on demand.
+				opts.SkillPrompt = skills.OpenAISkillSystemHint()
+				if tool, ok := skills.OpenAISkillTool(pkgs); ok {
+					opts.SkillTools = append(opts.SkillTools, bot.ToolSpec{
+						Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters,
+					})
+				}
+				store := o.Skills
+				runner := &skills.Runner{}
+				opts.SkillDispatch = func(toolName, argsJSON, _ string) string {
+					if toolName == "skill" {
+						return runner.LoadSkillTool(store, argsJSON)
+					}
+					return "unknown skill tool: " + toolName
+				}
+			default:
+				// Cursor / Claude: materialize + prompt appendix; client loads skills.
+				opts.SkillPrompt = skills.PromptAppendix(pkgs)
 			}
 		}
 	}

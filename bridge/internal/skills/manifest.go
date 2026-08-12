@@ -12,130 +12,115 @@ import (
 
 var idRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
-// Manifest is the on-disk SKILL.yaml schema.
+// Manifest mirrors Cursor / Agent Skills SKILL.md frontmatter.
+// See https://cursor.com/docs/skills
 type Manifest struct {
-	ID          string            `yaml:"id" json:"id"`
-	Name        string            `yaml:"name" json:"name"`
-	Version     string            `yaml:"version" json:"version"`
-	Description string            `yaml:"description" json:"description"`
-	Author      string            `yaml:"author" json:"author"`
-	Tags        []string          `yaml:"tags" json:"tags"`
-	Entry       Entry             `yaml:"entry" json:"entry"`
-	Tools       []ToolDef         `yaml:"tools" json:"tools"`
-	ClientSync  map[string]SyncDir `yaml:"client_sync" json:"client_sync"`
-	MCP         map[string]any    `yaml:"mcp,omitempty" json:"mcp,omitempty"`
-}
-
-type Entry struct {
-	Type       string   `yaml:"type" json:"type"` // shell | prompt_only | http
-	Command    string   `yaml:"command" json:"command"`
-	Args       []string `yaml:"args" json:"args"`
-	TimeoutSec int      `yaml:"timeout_sec" json:"timeout_sec"`
-}
-
-type ToolDef struct {
-	Name        string         `yaml:"name" json:"name"`
-	Description string         `yaml:"description" json:"description"`
-	Parameters  map[string]any `yaml:"parameters" json:"parameters"`
-}
-
-type SyncDir struct {
-	Path string `yaml:"path" json:"path"`
+	Name                     string         `yaml:"name" json:"name"`
+	Description              string         `yaml:"description" json:"description"`
+	Paths                    any            `yaml:"paths,omitempty" json:"paths,omitempty"`
+	DisableModelInvocation   bool           `yaml:"disable-model-invocation,omitempty" json:"disable_model_invocation,omitempty"`
+	Metadata                 map[string]any `yaml:"metadata,omitempty" json:"metadata,omitempty"`
+	ID                       string         `yaml:"-" json:"id"` // always equals Name after validate
 }
 
 // Package is an installed skill on disk.
 type Package struct {
 	Manifest Manifest
 	Dir      string
-	SkillMD  string
+	// SkillMD is the markdown body below frontmatter (agent instructions).
+	SkillMD string
 }
 
-func (p *Package) ToolExportName(toolName string) string {
-	return "skill_" + p.Manifest.ID + "__" + toolName
-}
-
-func ParseToolExportName(export string) (skillID, toolName string, ok bool) {
-	if !strings.HasPrefix(export, "skill_") {
-		return "", "", false
+// ParseSkillMarkdown splits Cursor/Claude-style SKILL.md into frontmatter + body.
+func ParseSkillMarkdown(raw string) (Manifest, string, error) {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	trimmed := strings.TrimSpace(raw)
+	var m Manifest
+	if !strings.HasPrefix(trimmed, "---") {
+		return m, strings.TrimSpace(raw), nil
 	}
-	rest := strings.TrimPrefix(export, "skill_")
-	i := strings.Index(rest, "__")
-	if i <= 0 || i >= len(rest)-2 {
-		return "", "", false
+	rest := strings.TrimPrefix(trimmed, "---")
+	rest = strings.TrimPrefix(rest, "\n")
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return m, "", fmt.Errorf("SKILL.md: missing closing frontmatter delimiter")
 	}
-	return rest[:i], rest[i+2:], true
+	fm := rest[:end]
+	body := strings.TrimSpace(rest[end+len("\n---"):])
+	if err := yaml.Unmarshal([]byte(fm), &m); err != nil {
+		return m, "", fmt.Errorf("parse SKILL.md frontmatter: %w", err)
+	}
+	return m, body, nil
 }
 
 func LoadDir(dir string) (*Package, error) {
 	dir = filepath.Clean(dir)
-	data, err := os.ReadFile(filepath.Join(dir, "SKILL.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
 	if err != nil {
-		return nil, fmt.Errorf("read SKILL.yaml: %w", err)
+		return nil, fmt.Errorf("skill package requires SKILL.md: %w", err)
 	}
-	var m Manifest
-	if err := yaml.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parse SKILL.yaml: %w", err)
+	m, body, err := ParseSkillMarkdown(string(data))
+	if err != nil {
+		return nil, err
 	}
 	if err := ValidateManifest(&m); err != nil {
 		return nil, err
 	}
-	base := filepath.Base(dir)
-	if base != m.ID {
-		return nil, fmt.Errorf("skill dir name %q must match id %q", base, m.ID)
-	}
-	pkg := &Package{Manifest: m, Dir: dir}
-	if md, err := os.ReadFile(filepath.Join(dir, "SKILL.md")); err == nil {
-		pkg.SkillMD = string(md)
-	}
-	return pkg, nil
+	// Source folder name need not match (e.g. zip/tgz extract temp dirs).
+	// InstallFromDir always copies into skills/<name>/.
+	return &Package{Manifest: m, Dir: dir, SkillMD: body}, nil
 }
 
 func ValidateManifest(m *Manifest) error {
 	if m == nil {
 		return fmt.Errorf("nil manifest")
 	}
-	if !idRe.MatchString(m.ID) {
-		return fmt.Errorf("invalid skill id %q", m.ID)
+	m.Name = strings.TrimSpace(m.Name)
+	m.Description = strings.TrimSpace(m.Description)
+	if !idRe.MatchString(m.Name) {
+		return fmt.Errorf("invalid skill name %q", m.Name)
 	}
-	if strings.TrimSpace(m.Name) == "" {
-		return fmt.Errorf("skill name required")
+	if m.Description == "" {
+		return fmt.Errorf("skill description required")
 	}
-	if m.Version == "" {
-		m.Version = "0.0.0"
-	}
-	t := strings.ToLower(strings.TrimSpace(m.Entry.Type))
-	if t == "" {
-		t = "prompt_only"
-		m.Entry.Type = t
-	}
-	switch t {
-	case "shell", "prompt_only", "http":
-	default:
-		return fmt.Errorf("invalid entry.type %q", m.Entry.Type)
-	}
-	if t == "shell" && strings.TrimSpace(m.Entry.Command) == "" {
-		return fmt.Errorf("entry.command required for shell skills")
-	}
-	if m.Entry.TimeoutSec <= 0 {
-		m.Entry.TimeoutSec = 120
-	}
-	seen := map[string]struct{}{}
-	for i, tool := range m.Tools {
-		name := strings.TrimSpace(tool.Name)
-		if name == "" {
-			return fmt.Errorf("tools[%d].name required", i)
-		}
-		if strings.Contains(name, "__") {
-			return fmt.Errorf("tool name %q must not contain __", name)
-		}
-		if _, dup := seen[name]; dup {
-			return fmt.Errorf("duplicate tool name %q", name)
-		}
-		seen[name] = struct{}{}
-		m.Tools[i].Name = name
-		if m.Tools[i].Parameters == nil {
-			m.Tools[i].Parameters = map[string]any{"type": "object", "properties": map[string]any{}}
-		}
-	}
+	m.ID = m.Name
 	return nil
+}
+
+// FormatSkillMarkdown renders official SKILL.md (frontmatter + body).
+func FormatSkillMarkdown(m Manifest, body string) (string, error) {
+	if err := ValidateManifest(&m); err != nil {
+		return "", err
+	}
+	out := struct {
+		Name                   string         `yaml:"name"`
+		Description            string         `yaml:"description"`
+		Paths                  any            `yaml:"paths,omitempty"`
+		DisableModelInvocation bool           `yaml:"disable-model-invocation,omitempty"`
+		Metadata               map[string]any `yaml:"metadata,omitempty"`
+	}{
+		Name:                   m.Name,
+		Description:            m.Description,
+		Paths:                  m.Paths,
+		DisableModelInvocation: m.DisableModelInvocation,
+		Metadata:               m.Metadata,
+	}
+	b, err := yaml.Marshal(&out)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.Write(b)
+	if !strings.HasSuffix(string(b), "\n") {
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("---\n")
+	body = strings.TrimSpace(body)
+	if body != "" {
+		sb.WriteByte('\n')
+		sb.WriteString(body)
+		sb.WriteByte('\n')
+	}
+	return sb.String(), nil
 }

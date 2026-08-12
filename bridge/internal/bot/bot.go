@@ -79,6 +79,33 @@ type RunOpts struct {
 	OperatorOpenID string
 	OperatorName   string
 	Overrides      map[string]string
+	// History is prior user/assistant turns (e.g. GUI chat). OpenAI injects them
+	// into the messages array; other backends may ignore.
+	History []HistoryTurn
+	// OnStream, when non-nil, lets a backend emit incremental updates
+	// (reasoning/content deltas, tool round markers, status, errors) as the
+	// model produces them. Backends that do not support streaming simply
+	// ignore this callback. The callback may be invoked from the same
+	// goroutine that calls Run, so it must not block Run indefinitely.
+	OnStream func(StreamEvent)
+}
+
+// StreamEvent is a single incremental update emitted through RunOpts.OnStream.
+// Type is one of: reasoning | content | tool_start | tool_result | status |
+// error | done. Text carries the human-readable delta for reasoning/content
+// or a clipped payload for tool_result. Name identifies a tool for
+// tool_start/tool_result. Round is the 1-based tool-loop iteration index.
+type StreamEvent struct {
+	Type  string `json:"type"`            // reasoning | content | tool_start | tool_result | status | error | done
+	Text  string `json:"text,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Round int    `json:"round,omitempty"`
+}
+
+// HistoryTurn is one prior chat message for multi-turn backends.
+type HistoryTurn struct {
+	Role    string
+	Content string
 }
 
 type RunResult struct {

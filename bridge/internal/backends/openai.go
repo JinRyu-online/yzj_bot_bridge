@@ -1,11 +1,13 @@
 package backends
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -43,11 +45,12 @@ func (o *OpenAIBackend) ClearSession(string) (string, error) {
 }
 
 type oaMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []oaToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
+	Role             string       `json:"role"`
+	Content          string       `json:"content,omitempty"`
+	ReasoningContent string       `json:"reasoning_content,omitempty"`
+	ToolCalls        []oaToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string       `json:"tool_call_id,omitempty"`
+	Name             string       `json:"name,omitempty"`
 }
 
 type oaToolCall struct {
@@ -72,6 +75,7 @@ type oaRequest struct {
 	Model    string      `json:"model"`
 	Messages []oaMessage `json:"messages"`
 	Tools    []oaTool    `json:"tools,omitempty"`
+	Stream   bool        `json:"stream,omitempty"`
 }
 
 type oaResponse struct {
@@ -101,7 +105,7 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	}
 	maxRounds := o.cfg.OpenAIMaxRounds
 	if maxRounds <= 0 {
-		maxRounds = 8
+		maxRounds = 24
 	}
 
 	system := o.cfg.SystemPrompt
@@ -118,6 +122,22 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	if system != "" {
 		messages = append(messages, oaMessage{Role: "system", Content: system})
 	}
+	const maxHistory = 40
+	hist := opts.History
+	if len(hist) > maxHistory {
+		hist = hist[len(hist)-maxHistory:]
+	}
+	for _, h := range hist {
+		role := strings.ToLower(strings.TrimSpace(h.Role))
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(h.Content)
+		if content == "" || strings.HasPrefix(content, "(空回复") {
+			continue
+		}
+		messages = append(messages, oaMessage{Role: role, Content: content})
+	}
 	messages = append(messages, oaMessage{Role: "user", Content: prompt})
 	tools := buildOATools(mode == "agent")
 	for _, st := range opts.SkillTools {
@@ -127,39 +147,101 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 
+	stream := opts.OnStream
+	emit := func(ev bot.StreamEvent) {
+		if stream != nil {
+			stream(ev)
+		}
+	}
+
 	var final string
+	var lastHadTools bool
+	roundsUsed := 0
 	for round := 0; round < maxRounds; round++ {
-		resp, err := o.chat(ctx, model, messages, tools)
+		roundsUsed = round + 1
+		emit(bot.StreamEvent{Type: "status", Text: "round", Round: roundsUsed})
+		var msg oaMessage
+		var err error
+		if stream != nil {
+			msg, err = o.chatStream(ctx, model, messages, tools, opts.OnStream, roundsUsed)
+		} else {
+			msg, err = o.chatOnce(ctx, model, messages, tools)
+		}
 		if err != nil {
+			emit(bot.StreamEvent{Type: "error", Text: err.Error()})
 			return bot.RunResult{Reply: "openai 调用失败: " + err.Error(), Status: "error"}
 		}
-		if len(resp.Choices) == 0 {
-			return bot.RunResult{Reply: "(空回复)", Status: "empty"}
+		if reasoning := strings.TrimSpace(msg.ReasoningContent); reasoning != "" {
+			log.Printf("openai reasoning bot=%s round=%d: %s", o.cfg.ID, roundsUsed, clipRunes(reasoning, 600))
 		}
-		msg := resp.Choices[0].Message
 		if len(msg.ToolCalls) == 0 {
 			final = strings.TrimSpace(msg.Content)
+			lastHadTools = false
 			break
 		}
-		messages = append(messages, msg)
+		lastHadTools = true
+		// Strip reasoning from the stored assistant tool-call message — some
+		// gateways reject reasoning_content on subsequent requests.
+		messages = append(messages, oaMessage{Role: msg.Role, Content: msg.Content, ToolCalls: msg.ToolCalls})
 		for _, tc := range msg.ToolCalls {
+			log.Printf("openai tool bot=%s round=%d name=%s args=%s", o.cfg.ID, roundsUsed, tc.Function.Name, clipRunes(tc.Function.Arguments, 300))
+			emit(bot.StreamEvent{Type: "tool_start", Name: tc.Function.Name, Round: roundsUsed})
 			out := o.execTool(tc.Function.Name, tc.Function.Arguments, opts.Workspace, mode, opts.SkillDispatch)
+			log.Printf("openai tool-result bot=%s name=%s: %s", o.cfg.ID, tc.Function.Name, clipRunes(out, 500))
+			emit(bot.StreamEvent{Type: "tool_result", Name: tc.Function.Name, Text: clipRunes(out, 800), Round: roundsUsed})
 			messages = append(messages, oaMessage{
 				Role: "tool", ToolCallID: tc.ID, Content: out, Name: tc.Function.Name,
 			})
 		}
 	}
+	// If we burned tool rounds without a final answer, force one text-only turn.
+	if final == "" && lastHadTools {
+		messages = append(messages, oaMessage{
+			Role:    "user",
+			Content: "请根据以上工具调用结果，用中文给出最终答复。不要再调用任何工具；若仍缺少信息，说明已完成的步骤与下一步需要用户做什么。",
+		})
+		emit(bot.StreamEvent{Type: "status", Text: "finalize", Round: roundsUsed})
+		var msg oaMessage
+		var err error
+		if stream != nil {
+			msg, err = o.chatStream(ctx, model, messages, nil, opts.OnStream, roundsUsed+1)
+		} else {
+			msg, err = o.chatOnce(ctx, model, messages, nil)
+		}
+		if err != nil {
+			log.Printf("openai finalize failed bot=%s: %v", o.cfg.ID, err)
+			emit(bot.StreamEvent{Type: "error", Text: err.Error()})
+		} else {
+			final = strings.TrimSpace(msg.Content)
+			if final == "" {
+				if r := strings.TrimSpace(msg.ReasoningContent); r != "" {
+					final = strings.TrimSpace(r)
+				}
+			}
+		}
+	}
 	if final == "" {
-		final = "(空回复)"
+		if lastHadTools || roundsUsed >= maxRounds {
+			final = fmt.Sprintf(
+				"(空回复: 已执行最多 %d 轮工具调用仍无最终文本。可在配置中增大 openai_max_tool_rounds，或到「运行日志」查看 tool / reasoning 记录)",
+				maxRounds,
+			)
+			log.Printf("openai empty after %d tool rounds bot=%s", maxRounds, o.cfg.ID)
+		} else {
+			final = "(空回复: 模型返回了空内容)"
+			log.Printf("openai empty content bot=%s", o.cfg.ID)
+		}
 	}
 	if key, ok := sessions.ResolveSessionKey(o.cfg, opts.OperatorOpenID); ok {
 		sessions.AppendConversation("", o.cfg.Group, o.cfg.ID, key, "user", prompt)
 		sessions.AppendConversation("", o.cfg.Group, o.cfg.ID, key, "assistant", final)
 	}
+	emit(bot.StreamEvent{Type: "done", Text: final})
 	return bot.RunResult{Reply: final, Status: "ok"}
 }
 
-func (o *OpenAIBackend) chat(ctx context.Context, model string, messages []oaMessage, tools []oaTool) (*oaResponse, error) {
+// chatOnce is the non-streaming path used by IM-style dispatch (no OnStream).
+func (o *OpenAIBackend) chatOnce(ctx context.Context, model string, messages []oaMessage, tools []oaTool) (oaMessage, error) {
 	reqBody := oaRequest{Model: model, Messages: messages}
 	if len(tools) > 0 {
 		reqBody.Tools = tools
@@ -167,7 +249,7 @@ func (o *OpenAIBackend) chat(ctx context.Context, model string, messages []oaMes
 	b, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base+"/chat/completions", bytes.NewReader(b))
 	if err != nil {
-		return nil, err
+		return oaMessage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if o.apiKey != "" {
@@ -175,21 +257,187 @@ func (o *OpenAIBackend) chat(ctx context.Context, model string, messages []oaMes
 	}
 	resp, err := o.client.Do(req)
 	if err != nil {
-		return nil, err
+		return oaMessage{}, err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	var out oaResponse
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("decode: %w body=%s", err, truncate(string(data), 300))
+		return oaMessage{}, fmt.Errorf("decode: %w body=%s", err, truncate(string(data), 300))
 	}
 	if out.Error != nil {
-		return nil, fmt.Errorf("%s", out.Error.Message)
+		return oaMessage{}, fmt.Errorf("%s", out.Error.Message)
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, truncate(string(data), 300))
+		return oaMessage{}, fmt.Errorf("http %d: %s", resp.StatusCode, truncate(string(data), 300))
 	}
-	return &out, nil
+	if len(out.Choices) == 0 {
+		return oaMessage{}, nil
+	}
+	return out.Choices[0].Message, nil
+}
+
+// chatStream POSTs with stream=true and parses the SSE response, calling
+// onStream for each reasoning/content delta. It returns the fully
+// assembled assistant message (Content, ReasoningContent, ToolCalls) in
+// the same shape chatOnce would have produced.
+//
+// Tool-call deltas are merged by index, matching the OpenAI streaming
+// tool_calls convention: the first delta carries id+function.name, and
+// subsequent deltas append to function.arguments.
+func (o *OpenAIBackend) chatStream(ctx context.Context, model string, messages []oaMessage, tools []oaTool, onStream func(bot.StreamEvent), round int) (oaMessage, error) {
+	reqBody := oaRequest{Model: model, Messages: messages, Stream: true}
+	if len(tools) > 0 {
+		reqBody.Tools = tools
+	}
+	b, _ := json.Marshal(reqBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base+"/chat/completions", bytes.NewReader(b))
+	if err != nil {
+		return oaMessage{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if o.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	}
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return oaMessage{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		return oaMessage{}, fmt.Errorf("http %d: %s", resp.StatusCode, truncate(string(data), 300))
+	}
+
+	var assembled oaMessage
+	toolCallsByIndex := map[int]*oaToolCall{}
+	toolCallOrder := []int{}
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				if len(bytes.TrimSpace(line)) > 0 {
+					_ = parseStreamLine(line, &assembled, toolCallsByIndex, &toolCallOrder, onStream, round)
+				}
+				break
+			}
+			return oaMessage{}, err
+		}
+		if err := parseStreamLine(line, &assembled, toolCallsByIndex, &toolCallOrder, onStream, round); err != nil {
+			return oaMessage{}, err
+		}
+	}
+	if assembled.Role == "" {
+		assembled.Role = "assistant"
+	}
+	if len(toolCallOrder) > 0 {
+		assembled.ToolCalls = make([]oaToolCall, 0, len(toolCallOrder))
+		for _, i := range toolCallOrder {
+			assembled.ToolCalls = append(assembled.ToolCalls, *toolCallsByIndex[i])
+		}
+	}
+	return assembled, nil
+}
+
+// parseStreamLine consumes one SSE line, mutating the assembled message
+// and tool-call slots. Returns a non-nil error only on a fatal stream
+// error payload; unparseable lines are ignored.
+func parseStreamLine(
+	line []byte,
+	assembled *oaMessage,
+	toolCallsByIndex map[int]*oaToolCall,
+	toolCallOrder *[]int,
+	onStream func(bot.StreamEvent),
+	round int,
+) error {
+	line = bytes.TrimRight(line, "\r\n")
+	if len(line) == 0 {
+		return nil
+	}
+	data := line
+	if bytes.HasPrefix(data, []byte("data:")) {
+		data = bytes.TrimPrefix(data, []byte("data:"))
+	} else {
+		// Non-data lines (event:, id:, comments ":stream") are ignored.
+		return nil
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return nil
+	}
+	if bytes.Equal(data, []byte("[DONE]")) {
+		return nil
+	}
+	var chunk struct {
+		Choices []struct {
+			Delta struct {
+				Role             string `json:"role"`
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls        []struct {
+					Index    int `json:"index"`
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"delta"`
+		} `json:"choices"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &chunk); err != nil {
+		// Skip unparseable keep-alive/comment lines rather than failing.
+		return nil
+	}
+	if chunk.Error != nil {
+		return fmt.Errorf("%s", chunk.Error.Message)
+	}
+	if len(chunk.Choices) == 0 {
+		return nil
+	}
+	d := chunk.Choices[0].Delta
+	if d.Role != "" && assembled.Role == "" {
+		assembled.Role = d.Role
+	}
+	if d.ReasoningContent != "" {
+		assembled.ReasoningContent += d.ReasoningContent
+		if onStream != nil {
+			onStream(bot.StreamEvent{Type: "reasoning", Text: d.ReasoningContent, Round: round})
+		}
+	}
+	if d.Content != "" {
+		assembled.Content += d.Content
+		if onStream != nil {
+			onStream(bot.StreamEvent{Type: "content", Text: d.Content, Round: round})
+		}
+	}
+	for _, tc := range d.ToolCalls {
+		slot, ok := toolCallsByIndex[tc.Index]
+		if !ok {
+			slot = &oaToolCall{}
+			toolCallsByIndex[tc.Index] = slot
+			*toolCallOrder = append(*toolCallOrder, tc.Index)
+		}
+		if tc.ID != "" {
+			slot.ID = tc.ID
+		}
+		if tc.Type == "" {
+			slot.Type = "function"
+		} else {
+			slot.Type = tc.Type
+		}
+		if tc.Function.Name != "" {
+			slot.Function.Name = tc.Function.Name
+		}
+		slot.Function.Arguments += tc.Function.Arguments
+	}
+	return nil
 }
 
 func buildOATools(full bool) []oaTool {
@@ -250,7 +498,7 @@ func oaToolFromSpec(st bot.ToolSpec) oaTool {
 }
 
 func (o *OpenAIBackend) execTool(name, argsJSON, workspace, mode string, skillDispatch func(string, string, string) string) string {
-	if strings.HasPrefix(name, "skill_") && skillDispatch != nil {
+	if name == "skill" && skillDispatch != nil {
 		return skillDispatch(name, argsJSON, workspace)
 	}
 	return o.execBuiltinTool(name, argsJSON, workspace, mode)

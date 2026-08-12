@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"yzj-bridge/internal/backends"
+	"yzj-bridge/internal/chatstore"
 	"yzj-bridge/internal/logbuf"
 	"yzj-bridge/internal/runtime"
 )
@@ -24,6 +25,12 @@ type Server struct {
 	Logs    *logbuf.Buffer
 	OnShutdown func()
 
+	// Chat is the lazily-initialized GUI chat test store. Leave nil to
+	// auto-create one at ChatPath (or the default path on first use).
+	Chat     *chatstore.Store
+	ChatPath string
+
+	chatOnce sync.Once
 	mu  sync.Mutex
 	srv *http.Server
 }
@@ -68,6 +75,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/backends/openai/probe", s.auth(s.openaiProbe))
 	mux.HandleFunc("/v1/skills", s.auth(s.skillsRoot))
 	mux.HandleFunc("/v1/skills/", s.auth(s.skillsRoot))
+	mux.HandleFunc("/v1/chat/sessions", s.auth(s.chatSessions))
+	mux.HandleFunc("/v1/chat/sessions/", s.auth(s.chatSessionsPath))
 
 	s.srv = &http.Server{Addr: s.Addr, Handler: mux}
 	path, _ := s.WriteTokenFile()

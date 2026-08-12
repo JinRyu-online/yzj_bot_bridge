@@ -137,14 +137,14 @@ async function installTauriMock(page: Page) {
           description: "样例 Skill",
         },
       ] as { id: string; name: string; version?: string; description?: string }[],
-      catalog: [
-        {
-          id: "hello-workspace",
-          name: "Hello Workspace",
-          description: "样例 Skill：回显参数",
-          version: "1.0.0",
-        },
-      ] as { id: string; name: string; description?: string; version?: string }[],
+      chatSessions: [] as {
+        id: string;
+        title: string;
+        bot_id: string;
+        updated_at: string;
+        messages: { role: string; content: string; bot_id?: string; ts: string }[];
+      }[],
+      chatSeq: 0,
       revealed: [] as string[],
     };
 
@@ -291,21 +291,15 @@ async function installTauriMock(page: Page) {
                 ],
               });
             }
-            if (path.startsWith("/v1/skills/catalog")) {
-              return JSON.stringify({ skills: state.catalog });
-            }
             if (path.startsWith("/v1/skills/install") && method === "POST") {
               const body = JSON.parse(bodyRaw || "{}") as {
                 source?: string;
-                catalog_id?: string;
                 path?: string;
               };
               const id =
-                body.catalog_id ||
-                (body.path ? String(body.path).split(/[/\\]/).pop() : "") ||
+                (body.path ? String(body.path).split(/[/\\]/).pop()?.replace(/\.(zip|tgz|tar\.gz|md)$/i, "") : "") ||
                 "imported";
-              const name =
-                state.catalog.find((c) => c.id === id)?.name || id;
+              const name = id;
               if (!state.skills.some((s) => s.id === id)) {
                 state.skills.push({
                   id,
@@ -329,6 +323,69 @@ async function installTauriMock(page: Page) {
             }
             if (path.startsWith("/v1/skills")) {
               return JSON.stringify({ skills: state.skills });
+            }
+            if (path === "/v1/chat/sessions" && method === "GET") {
+              return JSON.stringify({
+                sessions: state.chatSessions.map((s) => ({
+                  id: s.id,
+                  title: s.title,
+                  bot_id: s.bot_id,
+                  updated_at: s.updated_at,
+                  message_count: s.messages.length,
+                })),
+              });
+            }
+            if (path === "/v1/chat/sessions" && method === "POST") {
+              const body = JSON.parse(bodyRaw || "{}") as { bot_id?: string; title?: string };
+              state.chatSeq += 1;
+              const sess = {
+                id: `chat-${state.chatSeq}`,
+                title: body.title || "",
+                bot_id: body.bot_id || "",
+                updated_at: new Date().toISOString(),
+                messages: [] as { role: string; content: string; bot_id?: string; ts: string }[],
+              };
+              state.chatSessions.unshift(sess);
+              return JSON.stringify(sess);
+            }
+            if (path.startsWith("/v1/chat/sessions/")) {
+              const rest = path.slice("/v1/chat/sessions/".length);
+              const [id, sub] = rest.split("/");
+              const sess = state.chatSessions.find((s) => s.id === id);
+              if (!sess) throw new Error("session not found");
+              if (!sub && method === "GET") return JSON.stringify(sess);
+              if (!sub && method === "PATCH") {
+                const body = JSON.parse(bodyRaw || "{}") as { bot_id?: string; title?: string };
+                if (body.bot_id) sess.bot_id = body.bot_id;
+                if (body.title) sess.title = body.title;
+                sess.updated_at = new Date().toISOString();
+                return JSON.stringify(sess);
+              }
+              if (!sub && method === "DELETE") {
+                state.chatSessions = state.chatSessions.filter((s) => s.id !== id);
+                return JSON.stringify({ ok: true });
+              }
+              if (sub === "messages" && method === "POST") {
+                const body = JSON.parse(bodyRaw || "{}") as { content?: string };
+                const content = String(body.content || "").trim();
+                if (!content) throw new Error("content required");
+                const ts = new Date().toISOString();
+                sess.messages.push({ role: "user", content, bot_id: sess.bot_id, ts });
+                sess.messages.push({
+                  role: "assistant",
+                  content: `mock-reply: ${content}`,
+                  bot_id: sess.bot_id,
+                  ts,
+                });
+                if (!sess.title) sess.title = content.slice(0, 40);
+                sess.updated_at = ts;
+                return JSON.stringify({
+                  reply: `mock-reply: ${content}`,
+                  handler_bot_id: sess.bot_id,
+                  receive_bot_id: sess.bot_id,
+                  session: sess,
+                });
+              }
             }
             return JSON.stringify({ ok: true });
           }
@@ -357,6 +414,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("系统页：主题下拉可读、热重载按钮、路径可点", async ({ page }) => {
+  await page.getByTestId("nav-system").click();
   await expect(page.getByTestId("page-system")).toBeVisible();
   await expect(page.getByTestId("bridge-summary")).toContainText("通道");
   await page.getByTestId("theme-select").locator(".fancy-select-trigger").click();
@@ -392,6 +450,7 @@ test("系统页：主题下拉可读、热重载按钮、路径可点", async ({
 });
 
 test("系统页：关闭到托盘开关", async ({ page }) => {
+  await page.getByTestId("nav-system").click();
   const sw = page.getByTestId("close-to-tray-switch");
   await expect(sw).toHaveAttribute("aria-checked", "true");
   await sw.click();
@@ -433,6 +492,8 @@ test("帮助页含简介与 GitHub 入口", async ({ page }) => {
   await page.getByTestId("nav-help").click();
   await expect(page.getByTestId("page-help")).toBeVisible();
   await expect(page.getByText("YZJ Bridge 是什么")).toBeVisible();
+  await expect(page.getByTestId("help-flow")).toContainText("配置后端引擎");
+  await expect(page.getByTestId("help-flow")).toContainText("send_msg_url");
   await expect(page.getByTestId("developer-profile")).toBeVisible();
   await expect(page.getByTestId("developer-profile").locator("img")).toBeVisible();
   const link = page.getByTestId("github-link");
@@ -458,6 +519,26 @@ test("启动遮罩在桥就绪后消失", async ({ page }) => {
   await expect(page.getByTestId("bridge-status")).toContainText("桥已连接");
 });
 
+test("聊天菜单在首位且默认仍是机器人页", async ({ page }) => {
+  await expect(page.getByTestId("page-bots")).toBeVisible();
+  const nav = page.locator("aside .nav-btn");
+  await expect(nav.first()).toHaveAttribute("data-testid", "nav-chat");
+  await expect(nav.first()).toHaveText("聊天");
+  await expect(page.getByTestId("nav-bots")).toBeVisible();
+  await page.getByTestId("nav-chat").click();
+  await expect(page.getByTestId("page-chat")).toBeVisible();
+  await expect(page.getByTestId("chat-input")).toBeVisible();
+  await expect(page.getByTestId("chat-input")).toHaveAttribute(
+    "placeholder",
+    "输入消息… 使用 @ 指定机器人",
+  );
+  await expect(page.getByTestId("chat-history")).toBeVisible();
+  await page.getByTestId("chat-new").click();
+  await expect(page.getByTestId("chat-input")).toBeEnabled();
+  await page.getByTestId("chat-bot-trigger").click();
+  await expect(page.getByTestId("chat-bot-menu")).toBeVisible();
+});
+
 test("弹窗 X 关闭 + OpenAI 字段", async ({ page }) => {
   await page.getByTestId("nav-bots").click();
   await page.getByTestId("create-bot").click();
@@ -477,12 +558,14 @@ test("弹窗 X 关闭 + OpenAI 字段", async ({ page }) => {
   await expect(page.getByTestId("bot-modal")).toHaveCount(0);
 });
 
-test("Skills 页入口与 Catalog 区", async ({ page }) => {
+test("Skills 页入口与导入区", async ({ page }) => {
   await page.getByTestId("nav-skills").click();
   await expect(page.getByTestId("page-skills")).toBeVisible();
   await expect(page.getByTestId("skills-installed")).toBeVisible();
-  await expect(page.getByTestId("skills-catalog")).toBeVisible();
   await expect(page.getByTestId("skills-import")).toBeVisible();
+  await expect(page.getByTestId("skills-installed").getByText("Hello Workspace")).toBeVisible();
+  await expect(page.getByTestId("skill-browse-dir")).toBeVisible();
+  await expect(page.getByTestId("skills-catalog")).toHaveCount(0);
 });
 
 test("新建机器人可见 Skills 勾选区", async ({ page }) => {
