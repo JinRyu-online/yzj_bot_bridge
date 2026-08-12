@@ -1703,8 +1703,17 @@ textarea {
   overflow: auto;
 }
 
+.logs-page .logbox-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .logs-page .logbox {
   margin: 0;
+  flex: 1;
+  min-height: 0;
   border-radius: var(--radius);
   border: 1px solid var(--panel-border);
   background: rgba(0, 0, 0, 0.28);
@@ -2498,6 +2507,14 @@ textarea {
   opacity: 0.55;
 }
 
+.chat-messages-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
 .chat-messages {
   flex: 1;
   overflow: auto;
@@ -2505,6 +2522,33 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.chat-scroll-bottom,
+.scroll-to-bottom {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  z-index: 5;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--bg2) 88%, transparent);
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 18%, transparent);
+  backdrop-filter: blur(8px);
+  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+}
+
+.chat-scroll-bottom:hover,
+.scroll-to-bottom:hover {
+  transform: translateY(1px);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg2));
 }
 
 .chat-bubble {

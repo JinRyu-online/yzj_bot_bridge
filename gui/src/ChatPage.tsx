@@ -175,6 +175,9 @@ export function ChatPage({ api, bots, ready, active = true }: Props) {
   const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
   const botMenuRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
 
@@ -226,18 +229,43 @@ export function ChatPage({ api, bots, ready, active = true }: Props) {
     })();
   }, [ready, bootstrapped, activeId, loadSummaries, loadSession]);
 
+  const updateScrollBottomVisibility = useCallback(() => {
+    const el = messagesRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = dist <= 72;
+    nearBottomRef.current = near;
+    setShowScrollBottom(!near && el.scrollHeight > el.clientHeight + 8);
+  }, []);
+
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      bottomRef.current?.scrollIntoView({ block: "end", behavior });
+      nearBottomRef.current = true;
+      setShowScrollBottom(false);
+      window.requestAnimationFrame(updateScrollBottomVisibility);
+    },
+    [updateScrollBottomVisibility],
+  );
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
+    if (nearBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+    } else {
+      setShowScrollBottom(true);
+    }
   }, [session?.messages?.length, sending, streamContent, streamReasoning, streamTools.length]);
 
   // When switching back to the chat page, jump to the latest messages.
   useEffect(() => {
     if (!active) return;
     const id = window.requestAnimationFrame(() => {
+      nearBottomRef.current = true;
       bottomRef.current?.scrollIntoView({ block: "end" });
+      setShowScrollBottom(false);
     });
     return () => window.cancelAnimationFrame(id);
-  }, [active, session?.id, session?.messages?.length]);
+  }, [active, session?.id]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -655,7 +683,13 @@ export function ChatPage({ api, bots, ready, active = true }: Props) {
             </div>
           </div>
 
-          <div className="chat-messages" data-testid="chat-messages">
+          <div className="chat-messages-wrap">
+          <div
+            className="chat-messages"
+            data-testid="chat-messages"
+            ref={messagesRef}
+            onScroll={updateScrollBottomVisibility}
+          >
             {!session ? (
               <div className="empty chat-empty">点右上角 + 新建会话，或从历史打开</div>
             ) : session.messages?.length || sending ? (
@@ -731,6 +765,27 @@ export function ChatPage({ api, bots, ready, active = true }: Props) {
               </div>
             )}
             <div ref={bottomRef} />
+          </div>
+          {showScrollBottom ? (
+            <button
+              type="button"
+              className="chat-scroll-bottom"
+              data-testid="chat-scroll-bottom"
+              title="滚动到底部"
+              aria-label="滚动到底部"
+              onClick={() => scrollToBottom("smooth")}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M6 10l6 6 6-6"
+                  stroke="currentColor"
+                  strokeWidth="1.9"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          ) : null}
           </div>
 
           <div className="chat-composer">

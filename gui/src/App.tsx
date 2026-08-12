@@ -655,6 +655,10 @@ function App() {
   const [autostart, setAutostart] = useState(false);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const logSeqRef = useRef(0);
+  const logboxRef = useRef<HTMLPreElement>(null);
+  const logBottomRef = useRef<HTMLDivElement>(null);
+  const logNearBottomRef = useRef(true);
+  const [showLogScrollBottom, setShowLogScrollBottom] = useState(false);
   const [logBot, setLogBot] = useState("");
   const [selected, setSelected] = useState("");
   const [rawConfig, setRawConfig] = useState<Record<string, unknown> | null>(null);
@@ -1004,7 +1008,47 @@ function App() {
   useEffect(() => {
     setLogs([]);
     logSeqRef.current = 0;
+    logNearBottomRef.current = true;
+    setShowLogScrollBottom(false);
   }, [logBot]);
+
+  const updateLogScrollBottomVisibility = useCallback(() => {
+    const el = logboxRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = dist <= 72;
+    logNearBottomRef.current = near;
+    setShowLogScrollBottom(!near && el.scrollHeight > el.clientHeight + 8);
+  }, []);
+
+  const scrollLogsToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      logBottomRef.current?.scrollIntoView({ block: "end", behavior });
+      logNearBottomRef.current = true;
+      setShowLogScrollBottom(false);
+      window.requestAnimationFrame(updateLogScrollBottomVisibility);
+    },
+    [updateLogScrollBottomVisibility],
+  );
+
+  useEffect(() => {
+    if (page !== "logs") return;
+    if (logNearBottomRef.current) {
+      logBottomRef.current?.scrollIntoView({ block: "end" });
+    } else {
+      setShowLogScrollBottom(true);
+    }
+  }, [logs, page]);
+
+  useEffect(() => {
+    if (page !== "logs") return;
+    const id = window.requestAnimationFrame(() => {
+      logNearBottomRef.current = true;
+      logBottomRef.current?.scrollIntoView({ block: "end" });
+      setShowLogScrollBottom(false);
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [page]);
 
   useEffect(() => {
     if (!ready || page !== "logs") return;
@@ -2308,33 +2352,63 @@ function App() {
                   onClick={() => {
                     setLogs([]);
                     logSeqRef.current = 0;
+                    logNearBottomRef.current = true;
+                    setShowLogScrollBottom(false);
                   }}
                 >
                   清空视图
                 </button>
               </div>
             </header>
-            <pre className="logbox page-body" data-testid="logbox">
-              {logs.length ? (
-                logs.map((l) => {
-                  const formatted = formatLogLine(l);
-                  return (
-                    <div
-                      key={l.seq}
-                      className={`log-line${formatted.tag === "GUI" ? " gui" : formatted.tag ? " bot" : ""}`}
-                      data-source={formatted.tag === "GUI" ? "gui" : "bridge"}
-                    >
-                      <span className="log-time">{l.time}</span>{" "}
-                      <span className="log-level">[{l.level}]</span>{" "}
-                      {formatted.tag ? <span className="log-tag">{formatted.tag}</span> : null}{" "}
-                      {formatted.message}
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="empty">暂无日志</div>
-              )}
-            </pre>
+            <div className="logbox-wrap page-body">
+              <pre
+                className="logbox"
+                data-testid="logbox"
+                ref={logboxRef}
+                onScroll={updateLogScrollBottomVisibility}
+              >
+                {logs.length ? (
+                  logs.map((l) => {
+                    const formatted = formatLogLine(l);
+                    return (
+                      <div
+                        key={l.seq}
+                        className={`log-line${formatted.tag === "GUI" ? " gui" : formatted.tag ? " bot" : ""}`}
+                        data-source={formatted.tag === "GUI" ? "gui" : "bridge"}
+                      >
+                        <span className="log-time">{l.time}</span>{" "}
+                        <span className="log-level">[{l.level}]</span>{" "}
+                        {formatted.tag ? <span className="log-tag">{formatted.tag}</span> : null}{" "}
+                        {formatted.message}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="empty">暂无日志</div>
+                )}
+                <div ref={logBottomRef} />
+              </pre>
+              {showLogScrollBottom ? (
+                <button
+                  type="button"
+                  className="scroll-to-bottom"
+                  data-testid="log-scroll-bottom"
+                  title="滚动到底部"
+                  aria-label="滚动到底部"
+                  onClick={() => scrollLogsToBottom("smooth")}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      d="M6 10l6 6 6-6"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
           </section>
         )}
 
