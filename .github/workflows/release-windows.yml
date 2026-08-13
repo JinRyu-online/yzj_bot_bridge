@@ -54,7 +54,8 @@ jobs:
           go build -o bin/yzj-bridge.exe ./cmd/yzj-bridge
 
       - name: Prepare Tauri sidecar
-        run: powershell -File ./scripts/prepare-bundle.ps1
+        shell: pwsh
+        run: ./scripts/prepare-bundle.ps1
 
       - name: Install GUI dependencies
         working-directory: gui
@@ -65,7 +66,8 @@ jobs:
         run: npm run tauri -- build --target x86_64-pc-windows-msvc
 
       - name: Collect dist artifacts
-        run: powershell -File ./scripts/package-windows.ps1
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
 
       - name: Upload installer (workflow artifact)
         uses: actions/upload-artifact@v4

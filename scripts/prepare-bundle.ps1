@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $BridgeExe = Join-Path $Root "bridge\bin\yzj-bridge.exe"
 if (-not (Test-Path $BridgeExe)) {
-    throw "missing $BridgeExe — build the Go bridge first"
+    throw "missing $BridgeExe - build the Go bridge first"
 }
 $BinDir = Join-Path $Root "gui\src-tauri\binaries"
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
