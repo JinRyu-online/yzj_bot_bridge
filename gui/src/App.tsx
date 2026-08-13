@@ -29,6 +29,7 @@ type SkillInfo = {
   description?: string;
   author?: string;
   tags?: string[];
+  dir?: string;
 };
 
 type BotForm = {
@@ -169,6 +170,21 @@ async function openExternal(url: string) {
     await mod.openUrl(url);
   } catch {
     window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
+async function openLocalPath(path: string) {
+  try {
+    await invoke("open_path_default", { path });
+    return;
+  } catch {
+    /* fall through */
+  }
+  try {
+    const mod = await import("@tauri-apps/plugin-opener");
+    await mod.openPath(path);
+  } catch {
+    await invoke("reveal_path", { path });
   }
 }
 
@@ -641,6 +657,296 @@ function botUsesOpenaiDefaults(cfg: Record<string, unknown>): boolean {
   );
 }
 
+function NavIcon({ id }: { id: PageId }) {
+  const stroke = {
+    stroke: "currentColor",
+    strokeWidth: 1.7,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  return (
+    <svg className="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+      {id === "chat" ? (
+        <path
+          {...stroke}
+          d="M6.5 5.75h11a2.25 2.25 0 012.25 2.25v7a2.25 2.25 0 01-2.25 2.25H11.2L7 19.6v-2.35H6.5A2.25 2.25 0 014.25 15V8A2.25 2.25 0 016.5 5.75z"
+        />
+      ) : null}
+      {id === "bots" ? (
+        <>
+          <rect {...stroke} x="6.25" y="8" width="11.5" height="10.25" rx="3.2" />
+          <path {...stroke} d="M12 8V5.6" />
+          <circle cx="12" cy="4.7" r="1" stroke="currentColor" strokeWidth="1.5" />
+          <path {...stroke} d="M9.6 13.1h.01M14.4 13.1h.01" />
+        </>
+      ) : null}
+      {id === "settings" ? (
+        <>
+          <path
+            {...stroke}
+            d="M12 4.2l.95 3.55L16.5 8.7l-2.8 2.05.95 3.55L12 12.45 8.35 14.3l.95-3.55L6.5 8.7l3.55-.95L12 4.2z"
+          />
+          <path
+            {...stroke}
+            d="M18.35 14.35l.45 1.7 1.75.45-1.75.45-.45 1.7-.45-1.7-1.75-.45 1.75-.45.45-1.7z"
+          />
+        </>
+      ) : null}
+      {id === "skills" ? (
+        <>
+          <rect {...stroke} x="8.1" y="8.2" width="10.4" height="10.4" rx="2.1" />
+          <path
+            {...stroke}
+            d="M15.7 8.2V6.4A2.15 2.15 0 0013.55 4.25H7.4A2.15 2.15 0 005.25 6.4v6.15A2.15 2.15 0 007.4 14.7h1.7"
+          />
+        </>
+      ) : null}
+      {id === "logs" ? (
+        <>
+          <path
+            {...stroke}
+            d="M7.2 4.5h9.1A2.3 2.3 0 0118.6 6.8v10.4a2.3 2.3 0 01-2.3 2.3H7.2A2.2 2.2 0 015 17.3V6.7A2.2 2.2 0 017.2 4.5z"
+          />
+          <path {...stroke} d="M8.6 9.2h6.8M8.6 12.4h6.8M8.6 15.6h4.4" />
+        </>
+      ) : null}
+      {id === "help" ? (
+        <>
+          <circle {...stroke} cx="12" cy="12" r="8.15" />
+          <path {...stroke} d="M9.55 9.45a2.45 2.45 0 114.15 1.75c-.7.55-1.45 1-1.45 2.15" />
+          <path {...stroke} d="M12 16.85h.01" />
+        </>
+      ) : null}
+      {id === "system" ? (
+        <>
+          <circle {...stroke} cx="12" cy="12" r="3.05" />
+          <path
+            {...stroke}
+            d="M12 5.15v1.7M12 17.15v1.7M5.15 12h1.7M17.15 12h1.7M7.05 7.05l1.2 1.2M15.75 15.75l1.2 1.2M7.05 16.95l1.2-1.2M15.75 8.25l1.2-1.2"
+          />
+        </>
+      ) : null}
+    </svg>
+  );
+}
+
+function LogMinimap({
+  logs,
+  logboxRef,
+  theme,
+}: {
+  logs: LogLine[];
+  logboxRef: { current: HTMLPreElement | null };
+  theme: ThemeId;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  const [peek, setPeek] = useState(false);
+  const [slider, setSlider] = useState({ top: 0, height: 28 });
+  const dragRef = useRef<{ active: boolean; fromSlider: boolean; grab: number }>({
+    active: false,
+    fromSlider: false,
+    grab: 0,
+  });
+  const hoverRef = useRef(false);
+  const hideTimer = useRef<number | null>(null);
+  const sliderRef = useRef(slider);
+  sliderRef.current = slider;
+
+  const keepPeek = useCallback(() => {
+    setPeek(true);
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => {
+      if (!dragRef.current.active && !hoverRef.current) setPeek(false);
+    }, 900);
+  }, []);
+
+  const syncSlider = useCallback(() => {
+    const box = logboxRef.current;
+    if (!box) return;
+    const { scrollTop, scrollHeight, clientHeight } = box;
+    const hasOverflow = scrollHeight > clientHeight + 8 && logs.length > 0;
+    setOverflow(hasOverflow);
+    if (!hasOverflow) {
+      setPeek(false);
+      return;
+    }
+    const h = box.clientHeight;
+    const height = Math.max(22, (clientHeight / scrollHeight) * h);
+    const maxTop = Math.max(0, h - height);
+    const range = Math.max(1, scrollHeight - clientHeight);
+    const top = maxTop * (scrollTop / range);
+    setSlider({ top, height });
+  }, [logboxRef, logs.length]);
+
+  const paint = useCallback(() => {
+    const canvas = canvasRef.current;
+    const box = logboxRef.current;
+    if (!canvas || !box) return;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (w < 2 || h < 2) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!logs.length) return;
+
+    const cs = getComputedStyle(box);
+    const muted = cs.getPropertyValue("--muted").trim() || "#8eaea0";
+    const text = cs.getPropertyValue("--text").trim() || "#e7f5ee";
+    const accent = cs.getPropertyValue("--accent").trim() || "#3dd68c";
+    const accent2 = cs.getPropertyValue("--accent-2").trim() || accent;
+    const danger = cs.getPropertyValue("--danger").trim() || "#ff6b7a";
+    const row = h / logs.length;
+    const fontPx = Math.min(3.5, Math.max(1.35, row * 0.9));
+    ctx.font = `${fontPx}px ui-monospace, Consolas, "Cascadia Code", monospace`;
+    ctx.textBaseline = "top";
+
+    for (let i = 0; i < logs.length; i++) {
+      const l = logs[i];
+      const formatted = formatLogLine(l);
+      const lv = (l.level || "").toUpperCase();
+      if (lv === "ERROR" || lv === "FATAL") ctx.fillStyle = danger;
+      else if (lv === "WARN" || lv === "WARNING") ctx.fillStyle = accent2;
+      else if (formatted.tag === "GUI") ctx.fillStyle = accent;
+      else if (formatted.tag) ctx.fillStyle = text;
+      else ctx.fillStyle = muted;
+      const preview = `${l.time || ""} ${formatted.tag ? `${formatted.tag} ` : ""}${formatted.message}`.replace(
+        /\s+/g,
+        " ",
+      );
+      ctx.globalAlpha = 0.82;
+      ctx.fillText(preview.slice(0, 52), 3, i * row, w - 5);
+    }
+    ctx.globalAlpha = 1;
+  }, [logs, logboxRef, theme]);
+
+  const scrollToY = useCallback(
+    (clientY: number) => {
+      const track = trackRef.current;
+      const box = logboxRef.current;
+      if (!track || !box) return;
+      const rect = track.getBoundingClientRect();
+      const max = Math.max(0, box.scrollHeight - box.clientHeight);
+      if (max <= 0) return;
+      const drag = dragRef.current;
+      if (drag.fromSlider) {
+        const sh = sliderRef.current.height;
+        const maxTop = Math.max(1, rect.height - sh);
+        const top = Math.min(Math.max(clientY - rect.top - drag.grab, 0), maxTop);
+        box.scrollTop = (top / maxTop) * max;
+        return;
+      }
+      const y = Math.min(Math.max(clientY - rect.top, 0), rect.height);
+      box.scrollTop = (y / Math.max(1, rect.height)) * box.scrollHeight - box.clientHeight / 2;
+      if (box.scrollTop < 0) box.scrollTop = 0;
+      if (box.scrollTop > max) box.scrollTop = max;
+    },
+    [logboxRef],
+  );
+
+  useLayoutEffect(() => {
+    if (!overflow) return;
+    paint();
+    syncSlider();
+  }, [overflow, paint, syncSlider, logs]);
+
+  useEffect(() => {
+    const box = logboxRef.current;
+    if (!box) return;
+    const onUserScroll = () => keepPeek();
+    const onScroll = () => syncSlider();
+    box.addEventListener("wheel", onUserScroll, { passive: true });
+    box.addEventListener("touchmove", onUserScroll, { passive: true });
+    box.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(() => {
+      paint();
+      syncSlider();
+    });
+    ro.observe(box);
+    paint();
+    syncSlider();
+    return () => {
+      box.removeEventListener("wheel", onUserScroll);
+      box.removeEventListener("touchmove", onUserScroll);
+      box.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    };
+  }, [logboxRef, paint, syncSlider, keepPeek]);
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!dragRef.current.active) return;
+      scrollToY(e.clientY);
+    };
+    const onUp = () => {
+      if (!dragRef.current.active) return;
+      dragRef.current.active = false;
+      keepPeek();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [scrollToY, keepPeek]);
+
+  if (!overflow) return null;
+
+  return (
+    <div
+      ref={trackRef}
+      className={`log-minimap${peek ? " peek" : ""}`}
+      data-testid="log-minimap"
+      data-visible={peek ? "1" : "0"}
+      aria-hidden={peek ? "false" : "true"}
+      title="滚动预览"
+      onPointerEnter={() => {
+        hoverRef.current = true;
+        if (peek) keepPeek();
+      }}
+      onPointerLeave={() => {
+        hoverRef.current = false;
+        if (hideTimer.current) window.clearTimeout(hideTimer.current);
+        hideTimer.current = window.setTimeout(() => {
+          if (!dragRef.current.active && !hoverRef.current) setPeek(false);
+        }, 900);
+      }}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const sliderEl = e.currentTarget.querySelector(".log-minimap-slider") as HTMLElement | null;
+        const sliderRect = sliderEl?.getBoundingClientRect();
+        const fromSlider = !!(
+          sliderRect &&
+          e.clientY >= sliderRect.top &&
+          e.clientY <= sliderRect.bottom
+        );
+        dragRef.current = {
+          active: true,
+          fromSlider,
+          grab: fromSlider && sliderRect ? e.clientY - sliderRect.top : 0,
+        };
+        keepPeek();
+        scrollToY(e.clientY);
+      }}
+    >
+      <canvas ref={canvasRef} className="log-minimap-canvas" />
+      <div
+        className="log-minimap-slider"
+        style={{ transform: `translateY(${slider.top}px)`, height: slider.height }}
+      />
+    </div>
+  );
+}
+
 function App() {
   const [page, setPage] = useState<PageId>("bots");
   const [theme, setTheme] = useState<ThemeId>(() => {
@@ -924,6 +1230,26 @@ function App() {
     }
   }, []);
 
+  const openInstalledSkill = useCallback(async (sk: SkillInfo) => {
+    try {
+      let dir = (sk.dir || "").trim();
+      if (!dir) {
+        const raw = await api("GET", `/v1/skills/${encodeURIComponent(sk.id)}`);
+        const detail = JSON.parse(raw) as { dir?: string };
+        dir = (detail.dir || "").trim();
+      }
+      if (!dir) {
+        throw new Error(`找不到 Skill 目录：${sk.id}`);
+      }
+      await openLocalPath(dir);
+    } catch (e) {
+      setSkillsPageError((prev) => ({
+        text: String(e),
+        seq: (prev?.seq ?? 0) + 1,
+      }));
+    }
+  }, []);
+
   const installSkillFromPath = useCallback(
     async (rawPath: string) => {
       const p = rawPath.trim();
@@ -1021,34 +1347,50 @@ function App() {
     setShowLogScrollBottom(!near && el.scrollHeight > el.clientHeight + 8);
   }, []);
 
+  const jumpLogsToBottom = useCallback(() => {
+    const el = logboxRef.current;
+    if (!el) {
+      logBottomRef.current?.scrollIntoView({ block: "end" });
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
   const scrollLogsToBottom = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
-      logBottomRef.current?.scrollIntoView({ block: "end", behavior });
       logNearBottomRef.current = true;
       setShowLogScrollBottom(false);
-      window.requestAnimationFrame(updateLogScrollBottomVisibility);
+      if (behavior === "auto") {
+        jumpLogsToBottom();
+      } else {
+        logBottomRef.current?.scrollIntoView({ block: "end", behavior });
+      }
     },
-    [updateLogScrollBottomVisibility],
+    [jumpLogsToBottom],
   );
 
   useEffect(() => {
     if (page !== "logs") return;
     if (logNearBottomRef.current) {
-      logBottomRef.current?.scrollIntoView({ block: "end" });
+      jumpLogsToBottom();
     } else {
       setShowLogScrollBottom(true);
     }
-  }, [logs, page]);
+  }, [logs, page, jumpLogsToBottom]);
 
   useEffect(() => {
     if (page !== "logs") return;
-    const id = window.requestAnimationFrame(() => {
-      logNearBottomRef.current = true;
-      logBottomRef.current?.scrollIntoView({ block: "end" });
-      setShowLogScrollBottom(false);
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [page]);
+    logNearBottomRef.current = true;
+    setShowLogScrollBottom(false);
+    const jump = () => jumpLogsToBottom();
+    jump();
+    const id = window.requestAnimationFrame(jump);
+    const t = window.setTimeout(jump, 80);
+    return () => {
+      window.cancelAnimationFrame(id);
+      window.clearTimeout(t);
+    };
+  }, [page, jumpLogsToBottom]);
 
   useEffect(() => {
     if (!ready || page !== "logs") return;
@@ -1615,7 +1957,8 @@ function App() {
               if (id === "skills") void refreshSkills();
             }}
           >
-            {label}
+            <NavIcon id={id} />
+            <span>{label}</span>
           </button>
         ))}
         <div className="nav-foot">
@@ -1661,14 +2004,13 @@ function App() {
                 <div className="row">
                   <div className="row-text">
                     <strong>开机自启</strong>
-                    <span>写入当前用户 Run 注册表（无控制台闪烁）</span>
                   </div>
                   <Switch checked={autostart} loading={loadingAuto} onChange={toggleAutostart} />
                 </div>
                 <div className="row">
                   <div className="row-text">
                     <strong>热重载配置</strong>
-                    <span>从磁盘重新加载 config.yaml，并尽量保留 WSS 启停状态</span>
+                    <span>从磁盘重新加载 config.yaml</span>
                   </div>
                   <button
                     type="button"
@@ -2059,7 +2401,7 @@ function App() {
                 <div className="skills-panel-head">
                   <div>
                     <h3 className="section-inline">已安装</h3>
-                    <p className="group-desc">当前桥接可用的 Skill 包，可在机器人编辑页勾选启用</p>
+                    <p className="group-desc">点击条目用系统默认方式打开；可在机器人编辑页勾选启用</p>
                   </div>
                   <span className="skills-count">{installedSkills.length}</span>
                 </div>
@@ -2073,11 +2415,19 @@ function App() {
                     {installedSkills.map((sk) => (
                       <div key={sk.id} className="skill-row">
                         <div className="skill-row-main">
-                          <div className="skill-row-title">
-                            <strong>{sk.name || sk.id}</strong>
-                            <span className="skill-id-chip">{sk.id}</span>
-                          </div>
-                          {sk.description ? <p className="skill-desc">{sk.description}</p> : null}
+                          <button
+                            type="button"
+                            className="skill-row-open"
+                            title="用系统默认方式打开"
+                            data-testid={`skill-open-${sk.id}`}
+                            onClick={() => void openInstalledSkill(sk)}
+                          >
+                            <div className="skill-row-title">
+                              <strong>{sk.name || sk.id}</strong>
+                              <span className="skill-id-chip">{sk.id}</span>
+                            </div>
+                            {sk.description ? <p className="skill-desc">{sk.description}</p> : null}
+                          </button>
                         </div>
                         <button
                           type="button"
@@ -2388,6 +2738,7 @@ function App() {
                 )}
                 <div ref={logBottomRef} />
               </pre>
+              <LogMinimap logs={logs} logboxRef={logboxRef} theme={theme} />
               {showLogScrollBottom ? (
                 <button
                   type="button"
@@ -2442,7 +2793,7 @@ function App() {
                     <div>
                       <strong>创建云之家机器人</strong>
                       <em>
-                        在云之家群组中新建机器人，或前往{" "}
+                        在云之家群组中新建通知型机器人，或前往{" "}
                         <a
                           href="https://yunzhijia.com/im/personalRobotCreate"
                           onClick={(e) => {
@@ -2500,8 +2851,7 @@ function App() {
                     <h2>{DEVELOPER_NAME}</h2>
                     <p className="help-handle">@{DEVELOPER_HANDLE}</p>
                     <p className="help-lead help-dev-bio">
-                      独立开发者 · 维护 YZJ Bridge。源码、Issue 与发布说明开源在 GitHub，欢迎 Star
-                      与贡献。
+                      源码、Issue 与发布说明开源在 GitHub，欢迎 Star 与贡献。
                     </p>
                   </div>
                 </div>

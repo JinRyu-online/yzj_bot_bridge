@@ -175,6 +175,9 @@ textarea {
 }
 
 .nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   text-align: left;
   border: 0;
   background: transparent;
@@ -183,6 +186,17 @@ textarea {
   border-radius: 12px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+}
+
+.nav-icon {
+  flex-shrink: 0;
+  opacity: 0.72;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.nav-btn:hover .nav-icon,
+.nav-btn.active .nav-icon {
+  opacity: 1;
 }
 
 .nav-btn:hover {
@@ -713,6 +727,24 @@ textarea {
 .skill-row-main {
   min-width: 0;
   flex: 1;
+}
+
+.skill-row-open {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.skill-row-open:hover .skill-row-title strong,
+.skill-row-open:focus-visible .skill-row-title strong {
+  color: color-mix(in srgb, var(--accent) 80%, var(--text));
 }
 
 .skill-row-title {
@@ -1726,6 +1758,78 @@ textarea {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.log-minimap {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  bottom: 8px;
+  width: 52px;
+  z-index: 3;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  background: color-mix(in srgb, var(--bg2) 55%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 22px color-mix(in srgb, #000 16%, transparent);
+  overflow: hidden;
+  cursor: ns-resize;
+  user-select: none;
+  isolation: isolate;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0s linear 0.2s;
+}
+
+.log-minimap.peek {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0s linear 0s;
+}
+
+.log-minimap-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.92;
+}
+
+.log-minimap-slider {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 0;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #fff 6%, transparent) inset;
+  pointer-events: none;
+}
+
+.log-minimap:hover .log-minimap-slider {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--panel-border));
+}
+
+[data-theme="ice"] .log-minimap {
+  background: color-mix(in srgb, #f7fbff 86%, transparent);
+  border-color: rgba(110, 150, 190, 0.32);
+  box-shadow: 0 8px 22px rgba(40, 80, 120, 0.12);
+}
+
+[data-theme="ice"] .log-minimap-slider {
+  background: rgba(61, 143, 209, 0.14);
+  border-color: rgba(61, 143, 209, 0.32);
+}
+
+[data-theme="ice"] .log-minimap:hover .log-minimap-slider {
+  background: rgba(61, 143, 209, 0.22);
+  border-color: rgba(61, 143, 209, 0.46);
 }
 
 [data-theme="ice"] .logs-page .logbox {

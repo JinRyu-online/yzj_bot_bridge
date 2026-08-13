@@ -43,6 +43,7 @@ func (s *Server) skillsList(w http.ResponseWriter, _ *http.Request) {
 		items = append(items, map[string]any{
 			"id": p.Manifest.ID, "name": p.Manifest.Name,
 			"description": p.Manifest.Description,
+			"dir": p.Dir,
 		})
 	}
 	writeJSON(w, map[string]any{"skills": items})

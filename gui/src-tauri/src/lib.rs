@@ -481,6 +481,13 @@ async fn reveal_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn open_path_default(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_path_default_sync(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn get_close_to_tray() -> bool {
     tauri::async_runtime::spawn_blocking(|| load_gui_prefs().close_to_tray)
         .await
@@ -537,6 +544,39 @@ fn reveal_path_sync(path: &str) -> Result<(), String> {
     }
 }
 
+fn open_path_default_sync(path: &str) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("路径为空".into());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        Command::new("cmd")
+            .args(["/C", "start", "", path])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        Command::new(opener)
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
 fn remove_autostart_cmd() -> Result<(), String> {
     if let Some(path) = autostart_cmd_path() {
         if path.exists() {
@@ -585,6 +625,7 @@ pub fn run() {
             get_autostart,
             set_autostart,
             reveal_path,
+            open_path_default,
             get_close_to_tray,
             set_close_to_tray
         ])

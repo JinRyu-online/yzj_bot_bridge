@@ -243,7 +243,9 @@ export function ChatPage({ api, bots, ready, active = true }: Props) {
       bottomRef.current?.scrollIntoView({ block: "end", behavior });
       nearBottomRef.current = true;
       setShowScrollBottom(false);
-      window.requestAnimationFrame(updateScrollBottomVisibility);
+      if (behavior === "auto") {
+        window.requestAnimationFrame(updateScrollBottomVisibility);
+      }
     },
     [updateScrollBottomVisibility],
   );

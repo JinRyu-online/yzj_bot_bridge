@@ -6,7 +6,7 @@ async function installTauriMock(page: Page) {
     type Bot = Record<string, unknown>;
     const state = {
       autostart: false,
-      seq: 3,
+      seq: 65,
       config: {
         defaults: {
           cursor_bin: "agent",
@@ -128,6 +128,13 @@ async function installTauriMock(page: Page) {
           level: "INFO",
           message: "super_long_line_" + "x".repeat(240) + "_end",
         },
+        ...Array.from({ length: 60 }, (_, i) => ({
+          seq: 6 + i,
+          time: "12:01:00",
+          level: "INFO" as const,
+          bot: "fairy__workAssistant",
+          message: `bot=fairy__workAssistant filler ${i + 1} ` + "n".repeat(48),
+        })),
       ],
       skills: [
         {
@@ -135,9 +142,23 @@ async function installTauriMock(page: Page) {
           name: "Hello Workspace",
           version: "1.0.0",
           description: "样例 Skill",
+          dir: "C:\\\\Users\\\\mock\\\\.yzj-bridge\\\\skills\\\\hello-workspace",
         },
-      ] as { id: string; name: string; version?: string; description?: string }[],
-      chatSessions: [] as {
+      ] as { id: string; name: string; version?: string; description?: string; dir?: string }[],
+      chatSessions: [
+        {
+          id: "chat-seed",
+          title: "seed session",
+          bot_id: "fairy",
+          updated_at: "2026-08-12T00:00:00Z",
+          messages: Array.from({ length: 20 }, (_, i) => ({
+            role: i % 2 === 0 ? "user" : "assistant",
+            content: `seed message ${i + 1} ` + "hello ".repeat(6),
+            bot_id: "fairy",
+            ts: "2026-08-12T00:00:00Z",
+          })),
+        },
+      ] as {
         id: string;
         title: string;
         bot_id: string;
@@ -146,6 +167,7 @@ async function installTauriMock(page: Page) {
       }[],
       chatSeq: 0,
       revealed: [] as string[],
+      opened: [] as string[],
     };
 
     const rebuildStatus = () => {
@@ -201,6 +223,12 @@ async function installTauriMock(page: Page) {
             return state.autostart;
           case "reveal_path":
             state.revealed.push(String(args.path || ""));
+            return null;
+          case "open_path_default":
+            state.opened.push(String(args.path || ""));
+            return null;
+          case "plugin:opener|open_path":
+            state.opened.push(String(args.path || ""));
             return null;
           case "bridge_fetch": {
             const method = String(args.method || "GET");
@@ -447,6 +475,13 @@ test("系统页：主题下拉可读、热重载按钮、路径可点", async ({
   await page.getByTestId("open-config-path").click();
   const revealed = await page.evaluate(() => (window as any).__E2E_STATE__.revealed);
   expect(revealed.length).toBeGreaterThan(0);
+
+  const system = page.getByTestId("page-system");
+  await expect(system).toContainText("开机自启");
+  await expect(system).not.toContainText("Run 注册表");
+  await expect(system).not.toContainText("无控制台闪烁");
+  await expect(system).toContainText("从磁盘重新加载 config.yaml");
+  await expect(system).not.toContainText("WSS 启停状态");
 });
 
 test("系统页：关闭到托盘开关", async ({ page }) => {
@@ -501,6 +536,10 @@ test("帮助页含简介与 GitHub 入口", async ({ page }) => {
   await expect(link).toHaveAttribute("href", "https://github.com/JinRyu-online/yzj_bot_bridge");
   await expect(page.getByTestId("page-help")).not.toContainText("配置目录");
   await expect(page.getByTestId("page-help")).not.toContainText("控制 API");
+  await expect(page.getByTestId("page-help")).not.toContainText("独立开发者");
+  await expect(page.getByTestId("page-help")).toContainText(
+    "源码、Issue 与发布说明开源在 GitHub，欢迎 Star 与贡献。",
+  );
 });
 
 test("保存设置写入 GUI 运行日志", async ({ page }) => {
@@ -566,6 +605,9 @@ test("Skills 页入口与导入区", async ({ page }) => {
   await expect(page.getByTestId("skills-installed").getByText("Hello Workspace")).toBeVisible();
   await expect(page.getByTestId("skill-browse-dir")).toBeVisible();
   await expect(page.getByTestId("skills-catalog")).toHaveCount(0);
+  await page.getByTestId("skill-open-hello-workspace").click();
+  const opened = await page.evaluate(() => (window as any).__E2E_STATE__.opened);
+  expect(opened.some((p: string) => p.includes("hello-workspace"))).toBeTruthy();
 });
 
 test("新建机器人可见 Skills 勾选区", async ({ page }) => {
@@ -607,9 +649,70 @@ test("设置页分组、密钥小眼睛、OpenAI 模型", async ({ page }) => {
 });
 
 test("主题下拉冰蓝白排第一", async ({ page }) => {
+  await page.getByTestId("nav-system").click();
   await page.getByTestId("theme-select").locator(".fancy-select-trigger").click();
   const first = page.getByTestId("theme-select-menu").locator(".fancy-option").first();
   await expect(first).toHaveText("冰蓝白");
+});
+
+test("侧栏菜单带统一图标", async ({ page }) => {
+  for (const id of ["chat", "bots", "settings", "skills", "logs", "help", "system"]) {
+    await expect(page.getByTestId(`nav-${id}`).locator(".nav-icon")).toBeVisible();
+  }
+});
+
+test("运行日志：进入时在底部，滚动条仅滚动时浮现", async ({ page }) => {
+  await page.getByTestId("nav-logs").click();
+  const box = page.getByTestId("logbox");
+  await expect(box).toBeVisible();
+  await expect(box).toContainText("filler 60");
+  await expect.poll(async () =>
+    box.evaluate((el) => el.scrollHeight > el.clientHeight + 8),
+  ).toBeTruthy();
+  const atBottom = await box.evaluate(
+    (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 24,
+  );
+  expect(atBottom).toBeTruthy();
+  const minimap = page.getByTestId("log-minimap");
+  await expect(minimap).toHaveCount(1);
+  await expect(minimap).toHaveAttribute("data-visible", "0");
+  await expect(minimap).not.toHaveClass(/peek/);
+  const peekStyle = await minimap.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { opacity: s.opacity, visibility: s.visibility, pointerEvents: s.pointerEvents };
+  });
+  expect(Number(peekStyle.opacity)).toBe(0);
+  expect(peekStyle.visibility).toBe("hidden");
+  expect(peekStyle.pointerEvents).toBe("none");
+  await expect(page.getByTestId("log-scroll-bottom")).toHaveCount(0);
+  await box.evaluate((el) => {
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: -240, bubbles: true }));
+    el.scrollTop = Math.max(0, el.scrollTop - 240);
+    el.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect(minimap).toHaveAttribute("data-visible", "1");
+  await expect(minimap).toHaveClass(/peek/);
+  await expect(page.getByTestId("log-scroll-bottom")).toBeVisible();
+  await page.getByTestId("log-scroll-bottom").click();
+  await expect(page.getByTestId("log-scroll-bottom")).toHaveCount(0);
+});
+
+test("聊天页上滑后出现滚到底部按钮", async ({ page }) => {
+  await page.getByTestId("nav-chat").click();
+  await expect(page.getByTestId("page-chat")).toBeVisible();
+  const messages = page.getByTestId("chat-messages");
+  await expect(messages).toContainText("seed message");
+  await messages.evaluate((el) => {
+    (el as HTMLElement).style.maxHeight = "120px";
+    (el as HTMLElement).style.height = "120px";
+  });
+  await messages.evaluate((el) => {
+    el.scrollTop = 0;
+    el.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect(page.getByTestId("chat-scroll-bottom")).toBeVisible();
+  await page.getByTestId("chat-scroll-bottom").click();
+  await expect(page.getByTestId("chat-scroll-bottom")).toHaveCount(0);
 });
 
 test("通道级日志过滤互不串扰", async ({ page }) => {
