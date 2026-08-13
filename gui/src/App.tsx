@@ -657,6 +657,43 @@ function botUsesOpenaiDefaults(cfg: Record<string, unknown>): boolean {
   );
 }
 
+function BrandMark() {
+  return (
+    <svg
+      className="brand-mark"
+      width="28"
+      height="18"
+      viewBox="0 0 36 22"
+      fill="none"
+      aria-hidden
+      data-testid="brand-mark"
+    >
+      <g stroke="currentColor" strokeLinejoin="miter">
+        <path d="M1.4 20.6h33.2" strokeWidth="1.45" strokeLinecap="square" />
+        <path
+          d="M3 20.6V5.4H2.15V3.65h2.15V4.7h1.55V3.65h2.15V5.4H7.15V20.6"
+          strokeWidth="1.45"
+          strokeLinecap="square"
+        />
+        <path
+          d="M28.85 20.6V5.4h.85V3.65h2.15V4.7h1.55V3.65h2.15V5.4H33V20.6"
+          strokeWidth="1.45"
+          strokeLinecap="square"
+        />
+        <path d="M5.1 8.35v2.15M30.9 8.35v2.15" strokeWidth="1.35" strokeLinecap="square" />
+        <path d="M7.15 13.85h21.7M7.15 14.9h21.7" strokeWidth="1.35" strokeLinecap="square" />
+        <path d="M5.1 5.4Q18 20.2 30.9 5.4" strokeWidth="1.25" strokeLinecap="round" />
+        <path d="M5.1 6.35Q18 19.35 30.9 6.35" strokeWidth="1.1" strokeLinecap="round" />
+        <path
+          d="M10 9.96v3.89M14 12.09v1.76M18 12.8v1.05M22 12.09v1.76M26 9.96v3.89"
+          strokeWidth="1.05"
+          strokeLinecap="square"
+        />
+      </g>
+    </svg>
+  );
+}
+
 function NavIcon({ id }: { id: PageId }) {
   const stroke = {
     stroke: "currentColor",
@@ -1929,8 +1966,8 @@ function App() {
       )}
       <aside className="nav">
         <div className="brand">
-          <span className="brand-mark" />
-          YZJ Bridge
+          <BrandMark />
+          <span className="brand-title">YZJ Bridge</span>
           {import.meta.env.DEV ? (
             <span className="dev-badge" title="正在连接 Vite 开发服（可热更新）">
               DEV

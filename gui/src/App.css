@@ -149,17 +149,24 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-weight: 650;
+  letter-spacing: 0.08em;
   margin: 4px 8px 18px;
 }
 
+.brand-title {
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
 .brand-mark {
-  width: 12px;
-  height: 12px;
-  border-radius: 4px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent);
+  width: 28px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--accent);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 42%, transparent));
 }
 
 .dev-badge {

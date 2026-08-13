@@ -656,6 +656,7 @@ test("主题下拉冰蓝白排第一", async ({ page }) => {
 });
 
 test("侧栏菜单带统一图标", async ({ page }) => {
+  await expect(page.getByTestId("brand-mark")).toBeVisible();
   for (const id of ["chat", "bots", "settings", "skills", "logs", "help", "system"]) {
     await expect(page.getByTestId(`nav-${id}`).locator(".nav-icon")).toBeVisible();
   }
