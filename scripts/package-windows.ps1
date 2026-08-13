@@ -6,12 +6,26 @@ $TauriConf = Get-Content $TauriConfPath -Raw | ConvertFrom-Json
 $Ver = [string]$TauriConf.version
 if (-not $Ver) { throw "tauri.conf.json missing version" }
 
-$NsisDir = Join-Path $Root "gui\src-tauri\target\release\bundle\nsis"
-$Setup = Get-ChildItem $NsisDir -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
+$TargetRoot = Join-Path $Root "gui\src-tauri\target"
+$ReleaseDirs = @(
+    (Join-Path $TargetRoot "release"),
+    (Join-Path $TargetRoot "x86_64-pc-windows-msvc\release"),
+    (Join-Path $TargetRoot "x86_64-pc-windows-gnu\release")
+) | Where-Object { Test-Path $_ }
+
+$Setup = $null
+foreach ($rel in $ReleaseDirs) {
+    $nsis = Join-Path $rel "bundle\nsis"
+    $found = Get-ChildItem $nsis -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($found) {
+        $Setup = $found
+        break
+    }
+}
 if (-not $Setup) {
-    throw "NSIS installer not found in $NsisDir"
+    throw "NSIS installer not found under $TargetRoot"
 }
 
 $Dist = Join-Path $Root "dist"
@@ -23,17 +37,21 @@ Copy-Item -Force $Setup.FullName $Latest
 
 $Portable = Join-Path $Dist "YZJBridge"
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
-$ReleaseDir = Join-Path $Root "gui\src-tauri\target\release"
-$GuiExe = @(
-    (Join-Path $ReleaseDir "YZJBridge.exe"),
-    (Join-Path $ReleaseDir "gui.exe")
-) | Where-Object { Test-Path $_ } | Select-Object -First 1
+$GuiExe = $null
+$Dll = $null
+foreach ($rel in $ReleaseDirs) {
+    foreach ($name in @("YZJBridge.exe", "gui.exe")) {
+        $p = Join-Path $rel $name
+        if ((-not $GuiExe) -and (Test-Path $p)) { $GuiExe = $p }
+    }
+    $dllPath = Join-Path $rel "WebView2Loader.dll"
+    if ((-not $Dll) -and (Test-Path $dllPath)) { $Dll = $dllPath }
+}
 if (-not $GuiExe) {
-    throw "missing GUI exe in $ReleaseDir"
+    throw "missing GUI exe under $TargetRoot"
 }
 Copy-Item -Force $GuiExe (Join-Path $Portable "YZJBridge.exe")
-$Dll = Join-Path $ReleaseDir "WebView2Loader.dll"
-if (Test-Path $Dll) {
+if ($Dll) {
     Copy-Item -Force $Dll (Join-Path $Portable "WebView2Loader.dll")
 }
 Copy-Item -Force (Join-Path $Root "bridge\bin\yzj-bridge.exe") (Join-Path $Portable "yzj-bridge.exe")
