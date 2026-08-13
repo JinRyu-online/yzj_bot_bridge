@@ -27,7 +27,7 @@ gui/ (Tauri) 托盘 + 设置 UI
 ## 构建与运行
 
 ```powershell
-# 一键构建（产出 dist/YZJBridge/）
+# 一键构建：NSIS 安装包 + 便携目录
 .\build_all.ps1
 
 # 仅桥（无 UI）
@@ -41,10 +41,39 @@ npm install
 npm run tauri dev
 ```
 
+产物：
+
+| 文件 | 用途 |
+|------|------|
+| `dist/YZJBridge-<version>-Windows-x64-setup.exe` | **给别人用的安装包**（开始菜单 + 可选桌面快捷方式） |
+| `dist/YZJBridge-Windows-x64-setup.exe` | 同上，不带版本号的副本 |
+| `dist/YZJBridge/` | 便携目录（必须整夹分发：exe + `WebView2Loader.dll` + `yzj-bridge.exe`） |
+
+安装包会写入当前用户目录、创建「YZJ Bridge」快捷方式；若系统没有 WebView2，安装器会静默补装运行时。不要只发单个 `YZJBridge.exe`。
+
 Windows 若 `cargo` 报 `link.exe` 参数错误，多半是 PATH 里的 coreutils `link.exe` 抢占了 MSVC 链接器。可改用：
 
 ```powershell
 rustup default stable-x86_64-pc-windows-gnu
+```
+
+## GitHub Release
+
+1. 把 `gui/src-tauri/tauri.conf.json` 里的 `version` 改成新版本（例如 `0.2.1`）。
+2. 提交后打 tag 并推送：
+
+```powershell
+git tag v0.2.1
+git push origin v0.2.1
+```
+
+3. GitHub Actions（`.github/workflows/release-windows.yml`）会构建 NSIS 安装包，并挂到该 tag 的 Release 上，资产名为 `YZJBridge-<version>-Windows-x64-setup.exe`。
+
+本地打好包后也可以手动发版：
+
+```powershell
+.\build_all.ps1
+gh release create v0.2.1 dist/YZJBridge-0.2.1-Windows-x64-setup.exe --title "YZJ Bridge v0.2.1" --generate-notes
 ```
 
 配置文件：`~/.yzj-bridge/config.yaml`（首次从仓库 `config.default.yaml` 初始化）。本地真实密钥写在用户目录配置里，**不要**提交 `config.yaml`。
@@ -105,5 +134,7 @@ bots:
 | `gui/` | Tauri 控制面板 |
 | `docs/skills.md` | 统一 Skills 格式与 API |
 | `config.default.yaml` | 默认配置模板（首次初始化用） |
-| `build_all.ps1` | Windows 一键构建 |
+| `build_all.ps1` | Windows 一键构建安装包 |
+| `scripts/` | 打包辅助：sidecar 准备、收集 dist |
+| `.github/workflows/release-windows.yml` | tag `v*` 时构建并发布 GitHub Release |
 | `deploy/linux/` | systemd 示例 |

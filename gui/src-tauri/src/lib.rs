@@ -97,11 +97,13 @@ fn find_bridge_bin(app: &AppHandle) -> Option<PathBuf> {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("yzj-bridge.exe"));
             candidates.push(dir.join("yzj-bridge"));
+            candidates.push(dir.join("binaries").join("yzj-bridge.exe"));
             candidates.push(dir.join("bridge").join("yzj-bridge.exe"));
         }
     }
     if let Ok(res) = app.path().resource_dir() {
         candidates.push(res.join("yzj-bridge.exe"));
+        candidates.push(res.join("binaries").join("yzj-bridge.exe"));
         candidates.push(res.join("bridge").join("yzj-bridge.exe"));
     }
     candidates.push(PathBuf::from("binaries/yzj-bridge.exe"));
