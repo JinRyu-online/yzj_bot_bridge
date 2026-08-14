@@ -100,3 +100,11 @@ func FormatCompletionReply(body, openID, name string, mention bool) string {
 func FormatPendingAck() string {
 	return "正在处理中…"
 }
+
+// FormatQueuePosition tells a waiting user where they stand (1-based).
+func FormatQueuePosition(position int) string {
+	if position < 1 {
+		position = 1
+	}
+	return fmt.Sprintf("正在处理之前的问题，你的问题排在第%d位", position)
+}

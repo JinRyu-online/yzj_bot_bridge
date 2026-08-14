@@ -22,8 +22,9 @@ defaults:
   claude_bin: "claude"                  # Windows 建议 claude.exe（勿用 claude.cmd）
   cursor_model: ""
   claude_model: ""
-  session_mode: "per_user"              # per_user | shared | oneshot
-  allow_users: []
+	session_mode: "per_user"              # per_user | shared | oneshot。shared=同通道共享上下文，且通道内排队
+	job_queue: ""                         # 空=shared 时 channel，否则 user；也可显式 user | channel
+	allow_users: []
   cursor_timeout: 600
   ack_pending: true
   mention_on_reply: true

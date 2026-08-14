@@ -124,7 +124,9 @@ bots:
 - `defaults` + `bots` + 可选 `channels` 多群展开（runtime id：`{role}__{group}`）
 - `bots[].skills`：已安装 Skill 的 id 白名单（跨 OpenAI / Cursor / Claude）
 - `inbound_mode`: `websocket` | `webhook` | `both`
-- 会话：`sessions.json` v3；WSS 启停记忆：`wss_enabled.json`
+- 会话：`session_mode` 为 `per_user`（默认，按人隔离）| `shared`（同通道共享上下文，且通道内排队）| `oneshot`
+- `job_queue`：空则 `shared` 用通道排队、其它用按人排队；也可显式 `user` / `channel`。通道排队时后来者会收到「排在第 N 位」，每次答完更新剩余排位
+- 会话文件：`sessions.json` v3；WSS 启停记忆：`wss_enabled.json`
 - 参考模板：`config.default.yaml`（占位符，无真实密钥；首次启动会复制到用户目录）
 
 ## 目录

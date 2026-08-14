@@ -23,7 +23,7 @@ type File struct {
 func defaultMap() map[string]any {
 	return map[string]any{
 		"cursor_api_key": "", "anthropic_api_key": "", "workspace": "~",
-		"cursor_bin": "agent", "cursor_model": "", "claude_model": "", "session_mode": "per_user",
+		"cursor_bin": "agent", "cursor_model": "", "claude_model": "", "session_mode": "per_user", "job_queue": "",
 		"allow_openids": []any{}, "allow_users": []any{},
 		"cursor_timeout": 600, "ack_pending": true, "mention_on_reply": true,
 		"cursor_sandbox": "disabled", "cursor_force": true,
@@ -165,6 +165,9 @@ func DeriveWSURL(sendMsgURL string) (string, error) {
 func ExpandBots(f *File) ([]bot.Config, error) {
 	defs := f.MergedDefaults()
 	seen := map[string]struct{}{}
+	seenToken := map[string]string{}
+	seenURL := map[string]string{}
+	seenPath := map[string]string{}
 	var out []bot.Config
 	for _, item := range f.Bots {
 		roleID := asString(item["id"])
@@ -230,10 +233,38 @@ func ExpandBots(f *File) ([]bot.Config, error) {
 				return nil, fmt.Errorf("invalid inbound_mode for %s", runtimeID)
 			}
 			cfg.InboundMode = mode
+			if err := checkWebhookUnique(runtimeID, sendURL, cfg.WebhookPath, seenToken, seenURL, seenPath); err != nil {
+				return nil, err
+			}
 			out = append(out, cfg)
 		}
 	}
 	return out, nil
+}
+
+func checkWebhookUnique(runtimeID, sendURL, webhookPath string, seenToken, seenURL, seenPath map[string]string) error {
+	urlKey := normalizeSendURL(sendURL)
+	if owner, ok := seenURL[urlKey]; ok {
+		return fmt.Errorf("send_msg_url 已被通道 %s 使用，不能再分配给 %s", owner, runtimeID)
+	}
+	seenURL[urlKey] = runtimeID
+
+	tok := extractYZJToken(sendURL)
+	if !placeholderToken(tok) {
+		if owner, ok := seenToken[tok]; ok {
+			return fmt.Errorf("yzjtoken 已被通道 %s 使用，不能再用于 %s", owner, runtimeID)
+		}
+		seenToken[tok] = runtimeID
+	}
+
+	pathKey := normalizeWebhookPath(webhookPath)
+	if pathKey != "" {
+		if owner, ok := seenPath[pathKey]; ok {
+			return fmt.Errorf("webhook_path %s 已被 %s 使用，不能再用于 %s", pathKey, owner, runtimeID)
+		}
+		seenPath[pathKey] = runtimeID
+	}
+	return nil
 }
 
 func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride string) bot.Config {
@@ -286,6 +317,7 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		OpenAICompactAfterTurns: asInt(m["openai_compact_after_turns"], 0),
 		OpenAICompactAfterRunes: asInt(m["openai_compact_after_runes"], 0),
 		SessionMode:             firstNonEmpty(asString(m["session_mode"]), "per_user"),
+		JobQueue:                strings.ToLower(strings.TrimSpace(asString(m["job_queue"]))),
 		SharedSessionKey:        firstNonEmpty(asString(m["shared_session_key"]), "__shared__"),
 		AckPending:              asBool(m["ack_pending"], true), MentionOnReply: asBool(m["mention_on_reply"], true),
 		CommandsEnabled: asBool(m["commands_enabled"], true),

@@ -3,6 +3,7 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { ChatPage } from "./ChatPage";
+import { findWebhookConflict } from "./webhookUnique";
 import "./App.css";
 
 type StatusItem = {
@@ -1694,6 +1695,17 @@ function App() {
       botModal === "create" || !Array.isArray(selectedRoleConfig?.channels);
     if (needChannelFields && !botForm.send_msg_url.trim()) {
       fieldErrs.send_msg_url = "请填写云之家 send_msg_url（含 yzjtoken）";
+    } else if (needChannelFields && botForm.send_msg_url.trim()) {
+      const skip =
+        botModal === "edit" && selectedRoleId
+          ? { botId: selectedRoleId, root: true }
+          : undefined;
+      const conflict = findWebhookConflict(
+        (rawConfig.bots as Record<string, unknown>[]) || [],
+        botForm.send_msg_url,
+        skip,
+      );
+      if (conflict) fieldErrs.send_msg_url = conflict;
     }
     if (botForm.backend === "openai") {
       if (botForm.openai_use_defaults) {
@@ -1835,6 +1847,17 @@ function App() {
     if (!rawConfig || !selectedRoleConfig) return;
     if (!channelForm.group.trim() || !channelForm.send_msg_url.trim()) {
       flashChannelModalError("通道 group / send_msg_url 不能为空");
+      return;
+    }
+    const conflict = findWebhookConflict(
+      (rawConfig.bots as Record<string, unknown>[]) || [],
+      channelForm.send_msg_url,
+      selectedRoleId && editingChannelIdx !== null
+        ? { botId: selectedRoleId, channelIndex: editingChannelIdx }
+        : undefined,
+    );
+    if (conflict) {
+      flashChannelModalError(conflict);
       return;
     }
     setChannelModalError(null);

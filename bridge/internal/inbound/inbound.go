@@ -19,14 +19,14 @@ import (
 )
 
 type Normalized struct {
-	OpenID     string
-	Name       string
-	MsgID      string
-	Content    string
-	RobotID    string
-	RobotName  string
-	GroupType  int
-	Raw        map[string]any
+	OpenID    string
+	Name      string
+	MsgID     string
+	Content   string
+	RobotID   string
+	RobotName string
+	GroupType int
+	Raw       map[string]any
 }
 
 type Dispatcher struct {
@@ -35,6 +35,14 @@ type Dispatcher struct {
 	Dedupe *dedupe.Store
 	Jobs   *jobs.Manager
 	Store  *sessions.Store
+	// SendText, when set, replaces yzjout.SendText (tests).
+	SendText func(sendURL, content, openID string, reply *yzjout.ReplyMeta) error
+}
+
+type queuedJob struct {
+	Bot *bot.Bot
+	N   Normalized
+	Cmd commands.Result
 }
 
 func firstString(m map[string]any, keys ...string) string {
@@ -80,12 +88,12 @@ func Normalize(raw map[string]any) (Normalized, bool) {
 	n := Normalized{
 		OpenID: firstString(msg, "operatorOpenid", "operatorOpenId", "operator_openid", "openId", "openid",
 			"fromOpenId", "fromOpenid", "senderOpenId", "senderOpenid", "userId", "userid", "uid"),
-		Name: firstString(msg, "operatorName", "operator_name", "fromName", "senderName", "userName", "name", "nickName", "nickname"),
-		MsgID: firstString(msg, "msgId", "msgid", "messageId", "id"),
-		Content: content,
-		RobotID: firstString(msg, "robotId", "robot_id", "botId"),
+		Name:      firstString(msg, "operatorName", "operator_name", "fromName", "senderName", "userName", "name", "nickName", "nickname"),
+		MsgID:     firstString(msg, "msgId", "msgid", "messageId", "id"),
+		Content:   content,
+		RobotID:   firstString(msg, "robotId", "robot_id", "botId"),
 		RobotName: firstString(msg, "robotName", "robot_name", "botName"),
-		Raw: msg,
+		Raw:       msg,
 	}
 	if gt := firstString(msg, "groupType", "group_type"); gt != "" {
 		fmt.Sscanf(gt, "%d", &n.GroupType)
@@ -133,6 +141,17 @@ func ClassifyWS(raw map[string]any) ClassifyResult {
 	return ClassifyResult{Kind: "invalid"}
 }
 
+func (d *Dispatcher) send(sendURL, content, openID string, reply *yzjout.ReplyMeta) error {
+	if d.SendText != nil {
+		return d.SendText(sendURL, content, openID, reply)
+	}
+	return yzjout.SendText(sendURL, content, openID, reply)
+}
+
+func (d *Dispatcher) queueScope(b *bot.Bot, openID string) string {
+	return jobs.Scope(b.Config.ID, openID, jobs.UseChannelQueue(b.Config.SessionMode, b.Config.JobQueue))
+}
+
 func (d *Dispatcher) Handle(botID string, n Normalized) {
 	b := d.Reg.Get(botID)
 	if b == nil {
@@ -146,7 +165,7 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 		return
 	}
 	if !commands.Allowed(b.Config, n.OpenID, n.Name) {
-		_ = yzjout.SendText(b.Config.SendMsgURL, "你不在白名单中", n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		_ = d.send(b.Config.SendMsgURL, "你不在白名单中", n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
 	clean := commands.StripBotMention(n.Content, b, d.Reg.Names(), true)
@@ -154,24 +173,56 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 	if cmdRes.Handled && strings.TrimSpace(cmdRes.RestText) == "" {
 		body := strings.TrimSpace(cmdRes.Reply)
 		body = yzjout.FormatCompletionReply(body, n.OpenID, n.Name, b.Config.MentionOnReply)
-		_ = yzjout.SendText(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
-	status := d.Jobs.TryAccept(botID, n.OpenID, cmdRes.RestText)
-	if status == "merged" {
+	scope := d.queueScope(b, n.OpenID)
+	res := d.Jobs.TryAccept(scope, n.OpenID, n.Name, cmdRes.RestText, queuedJob{Bot: b, N: n, Cmd: cmdRes})
+	switch res.Status {
+	case jobs.StatusMerged:
 		if b.Config.AckPending {
-			_ = yzjout.SendText(b.Config.SendMsgURL, "已合并补充内容，稍后一并处理", n.OpenID, nil)
+			_ = d.send(b.Config.SendMsgURL, "已合并补充内容，稍后一并处理", n.OpenID, nil)
 		}
 		return
+	case jobs.StatusQueued:
+		_ = d.send(b.Config.SendMsgURL, yzjout.FormatQueuePosition(res.Position), n.OpenID, nil)
+		return
 	}
-	if b.Config.AckPending {
-		_ = yzjout.SendText(b.Config.SendMsgURL, yzjout.FormatPendingAck(), n.OpenID, nil)
+	d.startJob(b, n, cmdRes, true)
+}
+
+func (d *Dispatcher) startJob(b *bot.Bot, n Normalized, cmdRes commands.Result, ack bool) {
+	if ack && b.Config.AckPending {
+		_ = d.send(b.Config.SendMsgURL, yzjout.FormatPendingAck(), n.OpenID, nil)
 	}
 	go d.runJob(b, n, cmdRes)
 }
 
+func (d *Dispatcher) notifyQueue(b *bot.Bot, notices []jobs.Notice) {
+	for _, n := range notices {
+		_ = d.send(b.Config.SendMsgURL, yzjout.FormatQueuePosition(n.Position), n.OpenID, nil)
+	}
+}
+
 func (d *Dispatcher) runJob(b *bot.Bot, n Normalized, cmdRes commands.Result) {
-	defer d.Jobs.Done(b.Config.ID, n.OpenID)
+	scope := d.queueScope(b, n.OpenID)
+	defer func() {
+		next, notices := d.Jobs.Finish(scope, n.OpenID)
+		d.notifyQueue(b, notices)
+		if next == nil {
+			return
+		}
+		job, _ := next.Payload.(queuedJob)
+		if job.Bot == nil {
+			job.Bot = b
+		}
+		job.N.OpenID = next.OpenID
+		if next.Name != "" {
+			job.N.Name = next.Name
+		}
+		job.Cmd.RestText = next.Content
+		d.startJob(job.Bot, job.N, job.Cmd, true)
+	}()
 	content := cmdRes.RestText
 	overrides := cmdRes.Overrides
 	var parts []string
@@ -188,12 +239,12 @@ func (d *Dispatcher) runJob(b *bot.Bot, n Normalized, cmdRes commands.Result) {
 			mention = handler.Config.MentionOnReply
 		}
 		body := yzjout.FormatCompletionReply(dr.Reply, n.OpenID, n.Name, mention)
-		if err := yzjout.SendText(sendURL, body, n.OpenID, &yzjout.ReplyMeta{
+		if err := d.send(sendURL, body, n.OpenID, &yzjout.ReplyMeta{
 			MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content,
 		}); err != nil {
 			log.Printf("outbound error bot=%s: %v", b.Config.ID, err)
 		}
-		extra := d.Jobs.DrainExtra(b.Config.ID, n.OpenID)
+		extra := d.Jobs.DrainExtra(scope, n.OpenID)
 		if extra == "" {
 			break
 		}

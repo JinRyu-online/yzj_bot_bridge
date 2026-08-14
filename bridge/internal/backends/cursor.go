@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -36,16 +35,14 @@ func (c *Cursor) bin() string {
 
 func (c *Cursor) CreateSession() (string, error) {
 	bin := c.bin()
-	cmd := exec.Command(bin, "create-chat")
+	cmd := cursorCommand(nil, bin, "create-chat")
 	processutil.HideWindow(cmd)
 	env := os.Environ()
 	if c.cfg.CursorAPIKey != "" {
 		env = append(env, "CURSOR_API_KEY="+c.cfg.CursorAPIKey)
 	}
 	cmd.Env = env
-	if c.cfg.Workspace != "" {
-		cmd.Dir = c.cfg.Workspace
-	}
+	ensureCmdDir(cmd, c.cfg.Workspace)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("create-chat: %w (%s)", err, string(out))
@@ -140,9 +137,9 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	defer cancel()
 
 	tSpawn := time.Now()
-	cmd := exec.CommandContext(ctx, c.bin(), args...)
+	cmd := cursorCommand(ctx, c.bin(), args...)
 	processutil.HideWindow(cmd)
-	cmd.Dir = opts.Workspace
+	ensureCmdDir(cmd, opts.Workspace)
 	env := os.Environ()
 	if c.cfg.CursorAPIKey != "" {
 		env = append(env, "CURSOR_API_KEY="+c.cfg.CursorAPIKey)
@@ -352,16 +349,14 @@ func ListCursorModels(bin, apiKey, workDir string) ([]ModelInfo, error) {
 		bin = "agent"
 	}
 	bin = resolveWindowsBin(bin, "agent.exe", "cursor-agent.exe")
-	cmd := exec.Command(bin, "models")
+	cmd := cursorCommand(nil, bin, "models")
 	processutil.HideWindow(cmd)
 	env := os.Environ()
 	if apiKey != "" {
 		env = append(env, "CURSOR_API_KEY="+apiKey)
 	}
 	cmd.Env = env
-	if workDir != "" {
-		cmd.Dir = workDir
-	}
+	ensureCmdDir(cmd, workDir)
 	out, err := cmd.CombinedOutput()
 	models := parseAgentModelsOutput(string(out))
 	if len(models) > 0 {

@@ -63,9 +63,9 @@ func TestResolveModelByBackend(t *testing.T) {
 			"model":        "gpt-4o", // 旧共享字段，不应污染 cursor/claude
 		},
 		Bots: []map[string]any{
-			{"id": "c", "backend": "cursor_cli", "group": "g", "send_msg_url": "https://h/x?yzjtoken=t"},
-			{"id": "a", "backend": "claude_code", "group": "g", "send_msg_url": "https://h/x?yzjtoken=t"},
-			{"id": "o", "backend": "openai", "group": "g", "send_msg_url": "https://h/x?yzjtoken=t"},
+			{"id": "c", "backend": "cursor_cli", "group": "g", "send_msg_url": "https://h/x?yzjtoken=tc"},
+			{"id": "a", "backend": "claude_code", "group": "g", "send_msg_url": "https://h/x?yzjtoken=ta"},
+			{"id": "o", "backend": "openai", "group": "g", "send_msg_url": "https://h/x?yzjtoken=to"},
 		},
 	}
 	bots, err := ExpandBots(f)
@@ -108,6 +108,28 @@ func TestOpenAICompactDefaultsOn(t *testing.T) {
 	}
 	if bots[0].ConversationsDir != "logs/conversations" {
 		t.Fatalf("conversations_dir=%q", bots[0].ConversationsDir)
+	}
+}
+
+func TestJobQueueAndSharedSession(t *testing.T) {
+	f := &File{
+		Bots: []map[string]any{
+			{"id": "s", "backend": "openai", "session_mode": "shared", "group": "g", "send_msg_url": "https://h/x?yzjtoken=ts"},
+			{"id": "p", "backend": "openai", "job_queue": "channel", "group": "g", "send_msg_url": "https://h/x?yzjtoken=tp"},
+		},
+	}
+	bots, err := ExpandBots(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bots) != 2 {
+		t.Fatalf("len=%d", len(bots))
+	}
+	if bots[0].SessionMode != "shared" {
+		t.Fatalf("session=%q", bots[0].SessionMode)
+	}
+	if bots[1].JobQueue != "channel" {
+		t.Fatalf("job_queue=%q", bots[1].JobQueue)
 	}
 }
 
