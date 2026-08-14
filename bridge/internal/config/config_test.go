@@ -90,6 +90,27 @@ func TestResolveModelByBackend(t *testing.T) {
 	}
 }
 
+func TestOpenAICompactDefaultsOn(t *testing.T) {
+	f := &File{
+		Bots: []map[string]any{
+			{"id": "o", "backend": "openai", "group": "g", "send_msg_url": "https://h/x?yzjtoken=t"},
+		},
+	}
+	bots, err := ExpandBots(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bots) != 1 || !bots[0].OpenAICompact {
+		t.Fatalf("openai_compact default %+v", bots)
+	}
+	if bots[0].OpenAICompactKeep != 6 || bots[0].OpenAICompactAfterTurns != 10 || bots[0].OpenAICompactAfterRunes != 8000 {
+		t.Fatalf("compact thresholds %+v", bots[0])
+	}
+	if bots[0].ConversationsDir != "logs/conversations" {
+		t.Fatalf("conversations_dir=%q", bots[0].ConversationsDir)
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

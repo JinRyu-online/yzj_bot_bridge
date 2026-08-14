@@ -9,6 +9,10 @@ defaults:
   openai_model: ""
   openai_timeout: 120
   openai_max_tool_rounds: 8
+  openai_compact: true                 # 仅 openai：多轮过长时自动摘要压缩
+  openai_compact_keep: 6               # 保留最近几条原文（3 轮问答）
+  openai_compact_after_turns: 10       # 超过该条数才压缩
+  openai_compact_after_runes: 8000     # 或历史总字数超过该值（DeepSeek Flash 按字数早压，不靠 1M 窗口）
   workspace: "~"
   cursor_workspace: "~/.yzj-bridge/workspace/cursor_cli"
   claude_workspace: "~/.yzj-bridge/workspace/claude_code"
@@ -53,7 +57,9 @@ bots:
     # 也可改为 openai，并设置 model / openai_base_url / openai_api_key
     system_prompt: |
       你是 Fairy，本地编程与排障助手。
-      回答简洁，需要强调时只用 **粗体**。
+      云之家群聊只显示纯文本，禁止 Markdown：不要用星号加粗、反引号、井号标题、表格语法、方括号链接。
+      用【小节名】作标题；列表用 1. 2. 或 · ；字段写成 名称：值；链接单独占一行。
+      回答简洁。
     skills: []                          # 桥管 Skill id 白名单，见 docs/skills.md / GUI「Skills」
     workspace: "~"                      # 留空则回退引擎/全局默认目录
     allow_users: []

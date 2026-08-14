@@ -92,6 +92,7 @@ bots:
     openai_api_key: ""          # 填真实 Key；勿提交到 Git
     openai_timeout: 120
     openai_max_tool_rounds: 8
+    openai_compact: true            # 多轮自动摘要；仅 openai。阈值按 DeepSeek V4 Flash 0731 早压上下文
     group: default
     send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_ME"
 ```

@@ -21,11 +21,12 @@ import (
 )
 
 type OpenAIBackend struct {
-	cfg    bot.Config
-	store  *sessions.Store
-	client *http.Client
-	base   string
-	apiKey string
+	cfg       bot.Config
+	store     *sessions.Store
+	client    *http.Client
+	base      string
+	apiKey    string
+	summarize func(oldSummary string, prefix []bot.HistoryTurn) (string, error)
 }
 
 func NewOpenAI(cfg bot.Config, store *sessions.Store) *OpenAIBackend {
@@ -46,7 +47,7 @@ func (o *OpenAIBackend) ClearSession(string) (string, error) {
 
 type oaMessage struct {
 	Role             string       `json:"role"`
-	Content          string       `json:"content,omitempty"`
+	Content          string       `json:"content"`
 	ReasoningContent string       `json:"reasoning_content,omitempty"`
 	ToolCalls        []oaToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string       `json:"tool_call_id,omitempty"`
@@ -71,11 +72,16 @@ type oaTool struct {
 	} `json:"function"`
 }
 
+type oaThinking struct {
+	Type string `json:"type"`
+}
+
 type oaRequest struct {
 	Model    string      `json:"model"`
 	Messages []oaMessage `json:"messages"`
 	Tools    []oaTool    `json:"tools,omitempty"`
 	Stream   bool        `json:"stream,omitempty"`
+	Thinking *oaThinking `json:"thinking,omitempty"`
 }
 
 type oaResponse struct {
@@ -122,22 +128,13 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	if system != "" {
 		messages = append(messages, oaMessage{Role: "system", Content: system})
 	}
-	const maxHistory = 40
-	hist := opts.History
-	if len(hist) > maxHistory {
-		hist = hist[len(hist)-maxHistory:]
+	sessionKey := ""
+	if key, ok := sessions.ResolveSessionKey(o.cfg, opts.OperatorOpenID); ok {
+		sessionKey = key
 	}
-	for _, h := range hist {
-		role := strings.ToLower(strings.TrimSpace(h.Role))
-		if role != "user" && role != "assistant" {
-			continue
-		}
-		content := strings.TrimSpace(h.Content)
-		if content == "" || strings.HasPrefix(content, "(空回复") {
-			continue
-		}
-		messages = append(messages, oaMessage{Role: role, Content: content})
-	}
+	hist := o.resolveHistory(opts)
+	summary, recent := o.applyCompact(hist, sessionKey, model)
+	messages = appendHistoryMessages(messages, summary, recent)
 	messages = append(messages, oaMessage{Role: "user", Content: prompt})
 	tools := buildOATools(mode == "agent")
 	for _, st := range opts.SkillTools {
@@ -233,8 +230,8 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		}
 	}
 	if key, ok := sessions.ResolveSessionKey(o.cfg, opts.OperatorOpenID); ok {
-		sessions.AppendConversation("", o.cfg.Group, o.cfg.ID, key, "user", prompt)
-		sessions.AppendConversation("", o.cfg.Group, o.cfg.ID, key, "assistant", final)
+		sessions.AppendConversation(o.cfg.ConversationsDir, o.cfg.Group, o.cfg.ID, key, "user", prompt)
+		sessions.AppendConversation(o.cfg.ConversationsDir, o.cfg.Group, o.cfg.ID, key, "assistant", final)
 	}
 	emit(bot.StreamEvent{Type: "done", Text: final})
 	return bot.RunResult{Reply: final, Status: "ok"}
@@ -246,6 +243,10 @@ func (o *OpenAIBackend) chatOnce(ctx context.Context, model string, messages []o
 	if len(tools) > 0 {
 		reqBody.Tools = tools
 	}
+	return o.postChat(ctx, reqBody)
+}
+
+func (o *OpenAIBackend) postChat(ctx context.Context, reqBody oaRequest) (oaMessage, error) {
 	b, _ := json.Marshal(reqBody)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base+"/chat/completions", bytes.NewReader(b))
 	if err != nil {
@@ -377,7 +378,7 @@ func parseStreamLine(
 				Content          string `json:"content"`
 				ReasoningContent string `json:"reasoning_content"`
 				ToolCalls        []struct {
-					Index    int `json:"index"`
+					Index    int    `json:"index"`
 					ID       string `json:"id"`
 					Type     string `json:"type"`
 					Function struct {
@@ -476,7 +477,7 @@ func buildOATools(full bool) []oaTool {
 				"required": []string{"path", "content"},
 			}),
 			mk("run_command", "Run a shell command in workspace (timeout 60s)", map[string]any{
-				"type": "object",
+				"type":       "object",
 				"properties": map[string]any{"command": map[string]any{"type": "string"}},
 				"required":   []string{"command"},
 			}),
@@ -644,11 +645,11 @@ func truncate(s string, n int) string {
 }
 
 type OpenAIProbeResult struct {
-	OK        bool             `json:"ok"`
-	LatencyMS int64            `json:"latency_ms"`
-	Models    []ModelInfo      `json:"models"`
-	Error     string           `json:"error,omitempty"`
-	Endpoint  string           `json:"endpoint"`
+	OK        bool        `json:"ok"`
+	LatencyMS int64       `json:"latency_ms"`
+	Models    []ModelInfo `json:"models"`
+	Error     string      `json:"error,omitempty"`
+	Endpoint  string      `json:"endpoint"`
 }
 
 // ProbeOpenAI 请求 GET {base}/models，校验连通性并返回模型列表。

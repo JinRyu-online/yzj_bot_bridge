@@ -17,13 +17,21 @@ type HistoryItem struct {
 	Name      string `json:"name,omitempty"`
 }
 
+// CompactState is the persisted rolling summary for OpenAI multi-turn chats.
+type CompactState struct {
+	Summary string `json:"summary,omitempty"`
+	Count   int    `json:"count,omitempty"`
+	Hash    string `json:"hash,omitempty"`
+}
+
 type Entry struct {
-	Current     string        `json:"current"`
-	Name        string        `json:"name,omitempty"`
-	History     []HistoryItem `json:"history,omitempty"`
-	ProjectName string        `json:"project_name,omitempty"`
-	ProjectPath string        `json:"project_path,omitempty"`
-	AgentCWD    string        `json:"agent_cwd,omitempty"`
+	Current       string        `json:"current"`
+	Name          string        `json:"name,omitempty"`
+	History       []HistoryItem `json:"history,omitempty"`
+	ProjectName   string        `json:"project_name,omitempty"`
+	ProjectPath   string        `json:"project_path,omitempty"`
+	AgentCWD      string        `json:"agent_cwd,omitempty"`
+	OpenAICompact CompactState  `json:"openai_compact,omitempty"`
 }
 
 type Store struct {
@@ -113,13 +121,16 @@ func (s *Store) getUsers(botID string) map[string]any {
 
 func entryFromAny(v any) Entry {
 	switch t := v.(type) {
+	case Entry:
+		return t
 	case string:
 		return Entry{Current: t}
 	case map[string]any:
 		e := Entry{
 			Current: asStr(t["current"]), Name: asStr(t["name"]),
 			ProjectName: asStr(t["project_name"]), ProjectPath: asStr(t["project_path"]),
-			AgentCWD: asStr(t["agent_cwd"]),
+			AgentCWD:      asStr(t["agent_cwd"]),
+			OpenAICompact: compactFromAny(t["openai_compact"]),
 		}
 		if e.Current == "" {
 			e.Current = asStr(t["chat_id"])
@@ -127,6 +138,26 @@ func entryFromAny(v any) Entry {
 		return e
 	default:
 		return Entry{}
+	}
+}
+
+func compactFromAny(v any) CompactState {
+	switch t := v.(type) {
+	case CompactState:
+		return t
+	case map[string]any:
+		c := CompactState{Summary: asStr(t["summary"]), Hash: asStr(t["hash"])}
+		switch n := t["count"].(type) {
+		case int:
+			c.Count = n
+		case int64:
+			c.Count = int(n)
+		case float64:
+			c.Count = int(n)
+		}
+		return c
+	default:
+		return CompactState{}
 	}
 }
 
@@ -160,6 +191,22 @@ func (s *Store) ClearSession(botID, userKey string) {
 		})
 	}
 	e.Current = ""
+	e.OpenAICompact = CompactState{}
+	users[userKey] = e
+}
+
+func (s *Store) OpenAICompact(botID, userKey string) CompactState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return entryFromAny(s.getUsers(botID)[userKey]).OpenAICompact
+}
+
+func (s *Store) SetOpenAICompact(botID, userKey string, c CompactState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users := s.getUsers(botID)
+	e := entryFromAny(users[userKey])
+	e.OpenAICompact = c
 	users[userKey] = e
 }
 
@@ -172,14 +219,6 @@ func (s *Store) SetProject(botID, userKey, name, path string) {
 	e.ProjectPath = path
 	e.AgentCWD = path
 	users[userKey] = e
-}
-
-func (s *Store) HistoryMessages(botID, userKey string, limit int) []map[string]string {
-	// Lightweight: stored separately in conversations; for openai we keep recent in Raw via conversation append.
-	_ = botID
-	_ = userKey
-	_ = limit
-	return nil
 }
 
 func ResolveAgentWorkspace(cfg bot.Config, openID string, store *Store, globalWorkspace string) string {
@@ -206,14 +245,10 @@ func ResolveAgentWorkspace(cfg bot.Config, openID string, store *Store, globalWo
 }
 
 func AppendConversation(dir, group, botID, openID, role, content string) {
-	if dir == "" {
-		dir = filepath.Join(paths.UserDataDir(), "logs", "conversations")
-	} else if !filepath.IsAbs(dir) {
-		dir = filepath.Join(paths.UserDataDir(), dir)
-	}
+	dir = ResolveConversationsDir(dir)
 	_ = os.MkdirAll(dir, 0o755)
 	day := time.Now().Format("2006-01-02")
-	name := day + "_" + sanitize(group) + "_" + sanitize(botID) + "_" + sanitize(openID) + ".jsonl"
+	name := ConversationFileName(day, group, botID, openID)
 	path := filepath.Join(dir, name)
 	rec, _ := json.Marshal(map[string]any{
 		"ts": time.Now().Format(time.RFC3339), "role": role, "content": content,
