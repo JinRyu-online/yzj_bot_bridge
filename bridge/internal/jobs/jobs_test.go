@@ -79,6 +79,62 @@ func TestChannelQueueMergesRunningUserAndQueuedUser(t *testing.T) {
 	}
 }
 
+func TestSnapshotListsCurrentAndQueue(t *testing.T) {
+	m := New()
+	s := Scope("bot", "a", true)
+	if got := m.Snapshot(s); got.Current.OpenID != "" {
+		t.Fatalf("idle snapshot %+v", got)
+	}
+	_ = m.TryAccept(s, "a", "甲", "问A", 1)
+	_ = m.TryAccept(s, "a", "甲", "补充A", 11)
+	_ = m.TryAccept(s, "b", "乙", "问B", 2)
+	_ = m.TryAccept(s, "c", "丙", "问C", 3)
+	got := m.Snapshot(s)
+	if got.Current.OpenID != "a" || got.Current.Name != "甲" || got.Current.Content != "问A" {
+		t.Fatalf("current %+v", got.Current)
+	}
+	if got.Extra != "补充A" {
+		t.Fatalf("extra=%q", got.Extra)
+	}
+	if len(got.Queue) != 2 || got.Queue[0].OpenID != "b" || got.Queue[1].Content != "问C" {
+		t.Fatalf("queue %+v", got.Queue)
+	}
+	got.Queue[0].Content = "mutated"
+	if m.Snapshot(s).Queue[0].Content != "问B" {
+		t.Fatal("snapshot queue should be a copy")
+	}
+}
+
+func TestCancelAbortsRunningContext(t *testing.T) {
+	m := New()
+	s := Scope("bot", "a", true)
+	if r := m.TryAccept(s, "a", "A", "q", nil); r.Status != StatusAccepted {
+		t.Fatalf("%+v", r)
+	}
+	ctx := m.Context(s)
+	if !m.Busy(s) {
+		t.Fatal("expected busy")
+	}
+	if !m.Cancel(s) {
+		t.Fatal("first cancel should succeed")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("context was not cancelled")
+	}
+	if m.Cancel(s) {
+		t.Fatal("second cancel should be a no-op")
+	}
+	if !m.Busy(s) {
+		t.Fatal("cancel must not clear the running slot")
+	}
+	next, _ := m.Finish(s, "a")
+	if next != nil {
+		t.Fatalf("expected idle after finish, next=%+v", next)
+	}
+}
+
 func TestUseChannelQueue(t *testing.T) {
 	if !UseChannelQueue("shared", "") {
 		t.Fatal("shared should default to channel queue")

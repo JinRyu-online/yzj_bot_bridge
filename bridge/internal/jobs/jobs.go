@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"strings"
 	"sync"
 )
@@ -31,9 +32,20 @@ type Item struct {
 }
 
 type slot struct {
-	busyOpenID string
-	extra      string
-	queue      []Item
+	busyOpenID  string
+	busyName    string
+	busyContent string
+	extra       string
+	queue       []Item
+	ctx         context.Context
+	cancel      context.CancelFunc
+}
+
+// Snapshot is a point-in-time view of the running job and waiters in one scope.
+type Snapshot struct {
+	Current Item // OpenID empty if idle
+	Extra   string
+	Queue   []Item
 }
 
 type Manager struct {
@@ -81,6 +93,9 @@ func (m *Manager) TryAccept(scope, openID, name, content string, payload any) Re
 	s := m.slot(scope)
 	if s.busyOpenID == "" {
 		s.busyOpenID = openID
+		s.busyName = name
+		s.busyContent = content
+		s.armCancel()
 		return Result{Status: StatusAccepted}
 	}
 	if s.busyOpenID == openID {
@@ -128,7 +143,10 @@ func (m *Manager) Finish(scope, openID string) (next *Item, notices []Notice) {
 		return nil, nil
 	}
 	s.busyOpenID = ""
+	s.busyName = ""
+	s.busyContent = ""
 	s.extra = ""
+	s.clearCancel()
 	if len(s.queue) == 0 {
 		delete(m.slots, scope)
 		return nil, nil
@@ -136,8 +154,74 @@ func (m *Manager) Finish(scope, openID string) (next *Item, notices []Notice) {
 	item := s.queue[0]
 	s.queue = s.queue[1:]
 	s.busyOpenID = item.OpenID
+	s.busyName = item.Name
+	s.busyContent = item.Content
+	s.armCancel()
 	for i, q := range s.queue {
 		notices = append(notices, Notice{OpenID: q.OpenID, Name: q.Name, Position: i + 1})
 	}
 	return &item, notices
+}
+
+func (s *slot) armCancel() {
+	s.clearCancel()
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+}
+
+func (s *slot) clearCancel() {
+	if s.cancel != nil {
+		s.cancel = nil
+	}
+	s.ctx = nil
+}
+
+// Context is the cancellable context for the job currently running in scope.
+func (m *Manager) Context(scope string) context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.slots[scope]
+	if s == nil || s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
+}
+
+// Cancel aborts the engine run currently occupying scope.
+// It does not dequeue waiters; Finish still runs after the backend returns.
+func (m *Manager) Cancel(scope string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.slots[scope]
+	if s == nil || s.cancel == nil {
+		return false
+	}
+	s.cancel()
+	s.cancel = nil
+	return true
+}
+
+// Busy reports whether scope has a running job.
+func (m *Manager) Busy(scope string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.slots[scope]
+	return s != nil && s.busyOpenID != ""
+}
+
+// Snapshot copies the running job and waiters for scope.
+func (m *Manager) Snapshot(scope string) Snapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.slots[scope]
+	if s == nil || s.busyOpenID == "" {
+		return Snapshot{}
+	}
+	out := Snapshot{
+		Current: Item{OpenID: s.busyOpenID, Name: s.busyName, Content: s.busyContent},
+		Extra:   s.extra,
+	}
+	if len(s.queue) > 0 {
+		out.Queue = append([]Item(nil), s.queue...)
+	}
+	return out
 }

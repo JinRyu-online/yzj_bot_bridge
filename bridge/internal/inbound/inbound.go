@@ -170,6 +170,18 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 	}
 	clean := commands.StripBotMention(n.Content, b, d.Reg.Names(), true)
 	cmdRes := commands.Parse(clean, b, d.Reg)
+	if cmdRes.Overrides["stop"] == "1" {
+		scope := d.queueScope(b, n.OpenID)
+		ack := yzjout.FormatStopAck(d.Jobs.Cancel(scope))
+		_ = d.send(b.Config.SendMsgURL, ack, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		return
+	}
+	if cmdRes.Overrides["jobs"] == "1" {
+		scope := d.queueScope(b, n.OpenID)
+		body := yzjout.FormatJobList(d.Jobs.Snapshot(scope))
+		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		return
+	}
 	if cmdRes.Handled && strings.TrimSpace(cmdRes.RestText) == "" {
 		body := strings.TrimSpace(cmdRes.Reply)
 		body = yzjout.FormatCompletionReply(body, n.OpenID, n.Name, b.Config.MentionOnReply)
@@ -230,7 +242,7 @@ func (d *Dispatcher) runJob(b *bot.Bot, n Normalized, cmdRes commands.Result) {
 		parts = append(parts, strings.TrimSpace(cmdRes.Reply))
 	}
 	for {
-		dr := d.Orch.Dispatch(b.Config.ID, content, n.OpenID, n.Name, overrides)
+		dr := d.Orch.DispatchWithContext(d.Jobs.Context(scope), b.Config.ID, content, n.OpenID, n.Name, overrides)
 		handler := d.Reg.Get(dr.HandlerBotID)
 		sendURL := b.Config.SendMsgURL
 		mention := b.Config.MentionOnReply
@@ -238,11 +250,19 @@ func (d *Dispatcher) runJob(b *bot.Bot, n Normalized, cmdRes commands.Result) {
 			sendURL = handler.Config.SendMsgURL
 			mention = handler.Config.MentionOnReply
 		}
-		body := yzjout.FormatCompletionReply(dr.Reply, n.OpenID, n.Name, mention)
+		var body string
+		if dr.Status == "interrupted" {
+			body = yzjout.FormatInterruptReply(dr.Reply, n.OpenID, n.Name, mention)
+		} else {
+			body = yzjout.FormatCompletionReply(dr.Reply, n.OpenID, n.Name, mention)
+		}
 		if err := d.send(sendURL, body, n.OpenID, &yzjout.ReplyMeta{
 			MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content,
 		}); err != nil {
 			log.Printf("outbound error bot=%s: %v", b.Config.ID, err)
+		}
+		if dr.Status == "interrupted" {
+			break
 		}
 		extra := d.Jobs.DrainExtra(scope, n.OpenID)
 		if extra == "" {

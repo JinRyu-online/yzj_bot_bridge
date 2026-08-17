@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"log"
 	"strings"
 	"unicode/utf8"
@@ -21,28 +22,33 @@ type Orchestrator struct {
 
 type DispatchResult struct {
 	Reply        string
+	Status       string
 	HandlerBotID string
 	ReceiveBotID string
 }
 
 func (o *Orchestrator) Dispatch(receiveBotID, content, openID, name string, overrides map[string]string) DispatchResult {
-	return o.dispatch(receiveBotID, content, openID, name, overrides, nil, nil)
+	return o.dispatch(receiveBotID, content, openID, name, overrides, nil, nil, nil)
+}
+
+func (o *Orchestrator) DispatchWithContext(ctx context.Context, receiveBotID, content, openID, name string, overrides map[string]string) DispatchResult {
+	return o.dispatch(receiveBotID, content, openID, name, overrides, nil, nil, ctx)
 }
 
 // DispatchWithHistory is like Dispatch but injects prior turns into RunOpts.History
 // (used by GUI chat so OpenAI-compatible backends keep multi-turn context).
 func (o *Orchestrator) DispatchWithHistory(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn) DispatchResult {
-	return o.dispatch(receiveBotID, content, openID, name, overrides, history, nil)
+	return o.dispatch(receiveBotID, content, openID, name, overrides, history, nil, nil)
 }
 
 // DispatchWithHistoryStream is like DispatchWithHistory but also forwards an
 // OnStream callback into RunOpts so backends that support streaming can emit
 // incremental reasoning/content/tool events. The callback may be nil.
 func (o *Orchestrator) DispatchWithHistoryStream(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn, onStream func(bot.StreamEvent)) DispatchResult {
-	return o.dispatch(receiveBotID, content, openID, name, overrides, history, onStream)
+	return o.dispatch(receiveBotID, content, openID, name, overrides, history, onStream, nil)
 }
 
-func (o *Orchestrator) dispatch(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn, onStream func(bot.StreamEvent)) DispatchResult {
+func (o *Orchestrator) dispatch(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn, onStream func(bot.StreamEvent), ctx context.Context) DispatchResult {
 	if overrides == nil {
 		overrides = map[string]string{}
 	}
@@ -76,7 +82,7 @@ func (o *Orchestrator) dispatch(receiveBotID, content, openID, name string, over
 	opts := bot.RunOpts{
 		Workspace: ws, Mode: mode, Skills: handler.Config.Skills,
 		Model: overrides["model"], OperatorOpenID: openID, OperatorName: name,
-		Overrides: overrides, History: history, OnStream: onStream,
+		Overrides: overrides, History: history, OnStream: onStream, Context: ctx,
 	}
 	if o.Skills != nil && len(handler.Config.Skills) > 0 {
 		pkgs, err := skills.Resolve(o.Skills, handler.Config.Skills)
@@ -112,7 +118,7 @@ func (o *Orchestrator) dispatch(receiveBotID, content, openID, name string, over
 	}
 	result := handler.Backend.Run(clean, opts)
 	log.Printf("bot=%s reply: %s", handlerID, clip(result.Reply, 2000))
-	return DispatchResult{Reply: result.Reply, HandlerBotID: handlerID, ReceiveBotID: receiveBotID}
+	return DispatchResult{Reply: result.Reply, Status: result.Status, HandlerBotID: handlerID, ReceiveBotID: receiveBotID}
 }
 
 func clip(s string, max int) string {

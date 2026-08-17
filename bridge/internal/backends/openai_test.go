@@ -1,9 +1,12 @@
 package backends
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"yzj-bridge/internal/bot"
 )
 
 func TestSafePath(t *testing.T) {
@@ -21,4 +24,14 @@ func TestSafePath(t *testing.T) {
 		t.Fatal("expected escape error")
 	}
 	_ = os.WriteFile(filepath.Join(dir, "f.txt"), []byte("hi"), 0o644)
+}
+
+func TestOpenAIRunInterrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	o := NewOpenAI(bot.Config{Model: "m", OpenAITimeout: 5, OpenAIAPIKey: "k"}, nil)
+	res := o.Run("hi", bot.RunOpts{Context: ctx, Mode: "ask"})
+	if res.Status != "interrupted" || res.Reply != "任务已中断" {
+		t.Fatalf("%+v", res)
+	}
 }

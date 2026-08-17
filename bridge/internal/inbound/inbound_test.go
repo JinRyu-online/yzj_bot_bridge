@@ -33,6 +33,14 @@ func (g *gateBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	case g.enter <- opts.OperatorOpenID:
 	default:
 	}
+	if opts.Context != nil {
+		select {
+		case <-g.release:
+			return bot.RunResult{Reply: "done " + prompt, Status: "ok"}
+		case <-opts.Context.Done():
+			return bot.RunResult{Reply: "任务已中断", Status: "interrupted"}
+		}
+	}
 	<-g.release
 	return bot.RunResult{Reply: "done " + prompt, Status: "ok"}
 }
@@ -176,6 +184,105 @@ func TestPerUserAllowsParallelDifferentOpenIDs(t *testing.T) {
 	}
 	g.release <- struct{}{}
 	g.release <- struct{}{}
+}
+
+func TestStopCancelsRunningJobAndStartsNext(t *testing.T) {
+	g := &gateBackend{enter: make(chan string, 8), release: make(chan struct{})}
+	d, sentPtr, mu := newSharedDispatcher(t, g)
+
+	d.Handle("logbot", Normalized{OpenID: "a", Name: "甲", MsgID: "m1", Content: "问A"})
+	select {
+	case id := <-g.enter:
+		if id != "a" {
+			t.Fatalf("first runner=%s", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("A did not start")
+	}
+	d.Handle("logbot", Normalized{OpenID: "b", Name: "乙", MsgID: "m2", Content: "问B"})
+	d.Handle("logbot", Normalized{OpenID: "a", Name: "甲", MsgID: "m3", Content: "--stop"})
+
+	waitUntil(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hasMsg(*sentPtr, "a", "已中断当前任务")
+	})
+	select {
+	case id := <-g.enter:
+		if id != "b" {
+			t.Fatalf("second runner=%s want b", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("B did not start after stop")
+	}
+	waitUntil(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hasMsg(*sentPtr, "a", "任务已中断")
+	})
+	mu.Lock()
+	for _, m := range *sentPtr {
+		if m.OpenID == "a" && strings.Contains(m.Content, "任务已完成") && strings.Contains(m.Content, "任务已中断") {
+			mu.Unlock()
+			t.Fatalf("interrupt should not use completion prefix: %q", m.Content)
+		}
+	}
+	mu.Unlock()
+	g.release <- struct{}{}
+	waitUntil(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hasMsg(*sentPtr, "b", "任务已完成\n\ndone 问B")
+	})
+}
+
+func TestJobsListsCurrentAndQueued(t *testing.T) {
+	g := &gateBackend{enter: make(chan string, 8), release: make(chan struct{})}
+	d, sentPtr, mu := newSharedDispatcher(t, g)
+
+	d.Handle("logbot", Normalized{OpenID: "a", Name: "甲", MsgID: "m1", Content: "问A"})
+	select {
+	case <-g.enter:
+	case <-time.After(time.Second):
+		t.Fatal("A did not start")
+	}
+	d.Handle("logbot", Normalized{OpenID: "b", Name: "乙", MsgID: "m2", Content: "问B"})
+	d.Handle("logbot", Normalized{OpenID: "c", Name: "丙", MsgID: "m3", Content: "问C"})
+	d.Handle("logbot", Normalized{OpenID: "a", Name: "甲", MsgID: "m4", Content: "--jobs"})
+
+	waitUntil(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hasMsg(*sentPtr, "a", "执行中：甲") &&
+			hasMsg(*sentPtr, "a", "内容：问A") &&
+			hasMsg(*sentPtr, "a", "1. 乙：问B") &&
+			hasMsg(*sentPtr, "a", "2. 丙：问C")
+	})
+	g.release <- struct{}{}
+	g.release <- struct{}{}
+	g.release <- struct{}{}
+}
+
+func TestJobsWhenIdle(t *testing.T) {
+	g := &gateBackend{enter: make(chan string, 8), release: make(chan struct{})}
+	d, sentPtr, mu := newSharedDispatcher(t, g)
+	d.Handle("logbot", Normalized{OpenID: "a", Name: "甲", MsgID: "m1", Content: "/任务"})
+	waitUntil(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hasMsg(*sentPtr, "a", "当前没有正在执行或排队的任务")
+	})
+}
+
+func TestStopWhenIdle(t *testing.T) {
+	g := &gateBackend{enter: make(chan string, 8), release: make(chan struct{})}
+	d, sentPtr, mu := newSharedDispatcher(t, g)
+	d.Handle("logbot", Normalized{OpenID: "a", Name: "甲", MsgID: "m1", Content: "/中断"})
+	waitUntil(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hasMsg(*sentPtr, "a", "当前没有正在执行的任务")
+	})
 }
 
 func hasMsg(sent []sentMsg, openID, content string) bool {

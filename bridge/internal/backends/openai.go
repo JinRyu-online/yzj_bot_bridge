@@ -141,7 +141,7 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		tools = append(tools, oaToolFromSpec(st))
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := withRunTimeout(opts, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	stream := opts.OnStream
@@ -155,6 +155,10 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	var lastHadTools bool
 	roundsUsed := 0
 	for round := 0; round < maxRounds; round++ {
+		if res, ok := resultFromCtx(ctx, "openai 超时"); ok {
+			emit(bot.StreamEvent{Type: "error", Text: res.Reply})
+			return res
+		}
 		roundsUsed = round + 1
 		emit(bot.StreamEvent{Type: "status", Text: "round", Round: roundsUsed})
 		var msg oaMessage
@@ -165,6 +169,10 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 			msg, err = o.chatOnce(ctx, model, messages, tools)
 		}
 		if err != nil {
+			if res, ok := resultFromCtx(ctx, "openai 超时"); ok {
+				emit(bot.StreamEvent{Type: "error", Text: res.Reply})
+				return res
+			}
 			emit(bot.StreamEvent{Type: "error", Text: err.Error()})
 			return bot.RunResult{Reply: "openai 调用失败: " + err.Error(), Status: "error"}
 		}
@@ -183,7 +191,7 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		for _, tc := range msg.ToolCalls {
 			log.Printf("openai tool bot=%s round=%d name=%s args=%s", o.cfg.ID, roundsUsed, tc.Function.Name, clipRunes(tc.Function.Arguments, 300))
 			emit(bot.StreamEvent{Type: "tool_start", Name: tc.Function.Name, Round: roundsUsed})
-			out := o.execTool(tc.Function.Name, tc.Function.Arguments, opts.Workspace, mode, opts.SkillDispatch)
+			out := o.execTool(ctx, tc.Function.Name, tc.Function.Arguments, opts.Workspace, mode, opts.SkillDispatch)
 			log.Printf("openai tool-result bot=%s name=%s: %s", o.cfg.ID, tc.Function.Name, clipRunes(out, 500))
 			emit(bot.StreamEvent{Type: "tool_result", Name: tc.Function.Name, Text: clipRunes(out, 800), Round: roundsUsed})
 			messages = append(messages, oaMessage{
@@ -206,6 +214,10 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 			msg, err = o.chatOnce(ctx, model, messages, nil)
 		}
 		if err != nil {
+			if res, ok := resultFromCtx(ctx, "openai 超时"); ok {
+				emit(bot.StreamEvent{Type: "error", Text: res.Reply})
+				return res
+			}
 			log.Printf("openai finalize failed bot=%s: %v", o.cfg.ID, err)
 			emit(bot.StreamEvent{Type: "error", Text: err.Error()})
 		} else {
@@ -498,14 +510,14 @@ func oaToolFromSpec(st bot.ToolSpec) oaTool {
 	return t
 }
 
-func (o *OpenAIBackend) execTool(name, argsJSON, workspace, mode string, skillDispatch func(string, string, string) string) string {
+func (o *OpenAIBackend) execTool(ctx context.Context, name, argsJSON, workspace, mode string, skillDispatch func(string, string, string) string) string {
 	if name == "skill" && skillDispatch != nil {
 		return skillDispatch(name, argsJSON, workspace)
 	}
-	return o.execBuiltinTool(name, argsJSON, workspace, mode)
+	return o.execBuiltinTool(ctx, name, argsJSON, workspace, mode)
 }
 
-func (o *OpenAIBackend) execBuiltinTool(name, argsJSON, workspace, mode string) string {
+func (o *OpenAIBackend) execBuiltinTool(ctx context.Context, name, argsJSON, workspace, mode string) string {
 	var args map[string]any
 	_ = json.Unmarshal([]byte(argsJSON), &args)
 	switch name {
@@ -595,9 +607,12 @@ func (o *OpenAIBackend) execBuiltinTool(name, argsJSON, workspace, mode string) 
 			return "run_command disabled in ask/plan mode"
 		}
 		cmdLine := fmt.Sprint(args["command"])
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		cmdCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "cmd", "/C", cmdLine)
+		cmd := exec.CommandContext(cmdCtx, "cmd", "/C", cmdLine)
 		processutil.HideWindow(cmd)
 		cmd.Dir = workspace
 		out, err := cmd.CombinedOutput()

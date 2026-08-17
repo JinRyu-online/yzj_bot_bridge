@@ -136,7 +136,7 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	if timeout <= 0 {
 		timeout = 600
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := withRunTimeout(opts, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
@@ -202,15 +202,23 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		}
 	}
 	_ = cmd.Wait()
+	if res, ok := resultFromCtx(ctx, "claude 超时"); ok {
+		res.SessionID = sessionID
+		if hasKey && c.store != nil {
+			c.store.SetChatID(c.cfg.ID, entryKey, sessionID, opts.OperatorName)
+			e := c.store.GetEntry(c.cfg.ID, entryKey)
+			e.AgentCWD = opts.Workspace
+			c.store.SetProject(c.cfg.ID, entryKey, e.ProjectName, e.ProjectPath)
+			_ = c.store.Save()
+		}
+		return res
+	}
 	reply := strings.TrimSpace(resultText)
 	if reply == "" {
 		reply = strings.TrimSpace(assistantText)
 	}
 	status := "ok"
 	if reply == "" {
-		if ctx.Err() != nil {
-			return bot.RunResult{Reply: "claude 超时", Status: "timeout", SessionID: sessionID}
-		}
 		status = "empty"
 		reply = "(空回复)"
 	}

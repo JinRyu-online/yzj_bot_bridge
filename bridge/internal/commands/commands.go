@@ -10,7 +10,9 @@ import (
 )
 
 var (
-	cmdFlagRe = regexp.MustCompile(`(?i)(?:^|\s)(?:--|/)(clear|new|help|status|whoami|plan|ask|agent|prompt)(?:\s|$)`)
+	cmdFlagRe  = regexp.MustCompile(`(?i)(?:^|\s)(?:--|/)(clear|new|help|status|whoami|plan|ask|agent|prompt|stop|abort|interrupt|停止|中断|jobs|queue|list|tasks|任务|队列|列表)(?:\s|$)`)
+	stopFlagRe = regexp.MustCompile(`(?i)(?:^|\s)(?:--|/)(stop|abort|interrupt|停止|中断)(?:\s|$)`)
+	jobsFlagRe = regexp.MustCompile(`(?i)(?:^|\s)(?:--|/)(jobs|queue|list|tasks|任务|队列|列表)(?:\s|$)`)
 	projectRe = regexp.MustCompile(`(?i)(?:--|/)project(?:\s+(\S+))?`)
 	modelRe   = regexp.MustCompile(`(?i)(?:--|/)model(?:\s+(\S+))`)
 	atRe      = regexp.MustCompile(`(?i)@([^\s@]+)\b\s*`)
@@ -49,6 +51,20 @@ func StripBotMention(text string, b *bot.Bot, extra []string, onlySelf bool) str
 
 func Parse(text string, b *bot.Bot, reg *registry.Registry) Result {
 	res := Result{Overrides: map[string]string{}, RestText: text}
+	// Interrupt is always available so a long engine run can be aborted
+	// even when other slash commands are disabled.
+	if stopFlagRe.MatchString(text) {
+		res.Overrides["stop"] = "1"
+		res.Handled = true
+		res.RestText = ""
+		return res
+	}
+	if jobsFlagRe.MatchString(text) {
+		res.Overrides["jobs"] = "1"
+		res.Handled = true
+		res.RestText = ""
+		return res
+	}
 	if b == nil || !b.Config.CommandsEnabled {
 		return res
 	}
@@ -77,8 +93,11 @@ func Parse(text string, b *bot.Bot, reg *registry.Registry) Result {
 			res.Overrides["clear"] = "1"
 			res.Reply += "已清除会话\n"
 			res.Handled = true
+		case "stop", "abort", "interrupt", "停止", "中断":
+			res.Overrides["stop"] = "1"
+			res.Handled = true
 		case "help":
-			res.Reply += "命令: --clear/--new/--help/--status/--whoami/--plan/--ask/--agent/--prompt --project --model\n"
+			res.Reply += "命令: --clear/--new/--stop/--jobs/--help/--status/--whoami/--plan/--ask/--agent/--prompt --project --model\n"
 			res.Handled = true
 		case "status":
 			st := b.SnapshotStatus()

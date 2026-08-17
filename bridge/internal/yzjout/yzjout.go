@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"yzj-bridge/internal/jobs"
 )
 
 const (
@@ -107,4 +110,82 @@ func FormatQueuePosition(position int) string {
 		position = 1
 	}
 	return fmt.Sprintf("正在处理之前的问题，你的问题排在第%d位", position)
+}
+
+// FormatStopAck is the immediate reply to --stop / --abort / --interrupt.
+func FormatStopAck(cancelled bool) string {
+	if cancelled {
+		return "已中断当前任务"
+	}
+	return "当前没有正在执行的任务"
+}
+
+// FormatJobList is the reply to --jobs / --queue / /任务.
+func FormatJobList(snap jobs.Snapshot) string {
+	if snap.Current.OpenID == "" {
+		return "当前没有正在执行或排队的任务"
+	}
+	var b strings.Builder
+	b.WriteString("当前任务\n")
+	b.WriteString("执行中：")
+	b.WriteString(jobWho(snap.Current.Name, snap.Current.OpenID))
+	b.WriteString("\n内容：")
+	b.WriteString(clipJobText(snap.Current.Content, 80))
+	if extra := strings.TrimSpace(snap.Extra); extra != "" {
+		b.WriteString("\n补充：")
+		b.WriteString(clipJobText(extra, 80))
+	}
+	b.WriteString("\n\n待执行")
+	if len(snap.Queue) == 0 {
+		b.WriteString("：无")
+		return b.String()
+	}
+	b.WriteString(fmt.Sprintf("（%d）\n", len(snap.Queue)))
+	for i, it := range snap.Queue {
+		b.WriteString(fmt.Sprintf("%d. %s：%s", i+1, jobWho(it.Name, it.OpenID), clipJobText(it.Content, 80)))
+		if i+1 < len(snap.Queue) {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func jobWho(name, openID string) string {
+	if s := strings.TrimSpace(name); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(openID); s != "" {
+		return s
+	}
+	return "未知用户"
+}
+
+func clipJobText(s string, max int) string {
+	s = strings.Join(strings.Fields(strings.ReplaceAll(s, "\r", "\n")), " ")
+	if s == "" {
+		return "（无内容）"
+	}
+	if max <= 0 || utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:max]) + "…"
+}
+
+// FormatInterruptReply is the job-finished message after the engine was aborted.
+func FormatInterruptReply(body, openID, name string, mention bool) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = "任务已中断"
+	}
+	if !mention {
+		return body
+	}
+	if openID != "" {
+		return body
+	}
+	if name != "" {
+		return "@" + name + " " + body
+	}
+	return body
 }

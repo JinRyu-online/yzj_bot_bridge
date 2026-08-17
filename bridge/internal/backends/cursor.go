@@ -2,7 +2,6 @@ package backends
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -133,7 +132,7 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	if timeout <= 0 {
 		timeout = 600
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	ctx, cancel := withRunTimeout(opts, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	tSpawn := time.Now()
@@ -196,15 +195,20 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	}
 	_ = cmd.Wait()
 	log.Printf("bot=%s cursor: done total=%dms", c.cfg.ID, time.Since(started).Milliseconds())
+	if res, ok := resultFromCtx(ctx, "cursor-cli 超时"); ok {
+		res.SessionID = sessionID
+		if key, ok := sessions.ResolveSessionKey(c.cfg, opts.OperatorOpenID); ok && c.store != nil && sessionID != "" {
+			c.store.SetChatID(c.cfg.ID, key, sessionID, opts.OperatorName)
+			_ = c.store.Save()
+		}
+		return res
+	}
 	reply := strings.TrimSpace(resultText)
 	if reply == "" {
 		reply = strings.TrimSpace(assistantText)
 	}
 	status := "ok"
 	if reply == "" {
-		if ctx.Err() != nil {
-			return bot.RunResult{Reply: "cursor-cli 超时", Status: "timeout", SessionID: sessionID}
-		}
 		status = "empty"
 		reply = "(空回复)"
 	}

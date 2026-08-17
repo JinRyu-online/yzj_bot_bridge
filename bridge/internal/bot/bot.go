@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -85,6 +86,9 @@ type RunOpts struct {
 	OperatorOpenID string
 	OperatorName   string
 	Overrides      map[string]string
+	// Context, when set, is cancelled to abort the current engine run
+	// (--stop / --abort / --interrupt). Backends should derive timeouts from it.
+	Context context.Context
 	// History is prior user/assistant turns (e.g. GUI chat). OpenAI injects them
 	// into the messages array; other backends may ignore.
 	History []HistoryTurn
