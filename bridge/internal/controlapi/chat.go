@@ -159,16 +159,16 @@ func (s *Server) chatSendMessage(w http.ResponseWriter, r *http.Request, session
 		return
 	}
 
-	receiveBotID, clean, history, err := s.resolveChatDispatch(sess, content)
+	receiveBotID, clean, err := s.resolveChatDispatch(sess, content)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Dispatch through the orchestrator; never yzjout. The openID is
-	// namespaced per session so each GUI chat keeps its own conversation.
+	// Same dispatch path as IM (DispatchWithContext). Isolation is via openID
+	// gui-chat:{sessionID}; backends resolve multi-turn context from session store.
 	openID := "gui-chat:" + sessionID
-	res := s.RT.Orch.DispatchWithHistory(receiveBotID, clean, openID, "GUI测试", map[string]string{}, history)
+	res := s.RT.Orch.DispatchWithContext(nil, receiveBotID, clean, openID, "GUI测试", map[string]string{})
 
 	userMsg := chatstore.Message{Role: "user", BotID: receiveBotID, Content: content}
 	assistantMsg := chatstore.Message{Role: "assistant", BotID: res.HandlerBotID, Content: res.Reply}
@@ -186,11 +186,8 @@ func (s *Server) chatSendMessage(w http.ResponseWriter, r *http.Request, session
 	})
 }
 
-// resolveChatDispatch mirrors the bot/@mention/history resolution performed
-// by chatSendMessage so the streaming handler can reuse the same logic.
-// It returns the effective receiveBotID, the cleaned prompt (mention
-// stripped), and the prior-turn history for multi-turn backends.
-func (s *Server) resolveChatDispatch(sess *chatstore.Session, content string) (receiveBotID, clean string, history []bot.HistoryTurn, err error) {
+// resolveChatDispatch resolves the target bot and strips a leading @mention.
+func (s *Server) resolveChatDispatch(sess *chatstore.Session, content string) (receiveBotID, clean string, err error) {
 	// Resolve the receiving bot: a leading @mention overrides the
 	// session's bot_id; otherwise fall back to the session default.
 	receiveBotID = ""
@@ -205,37 +202,18 @@ func (s *Server) resolveChatDispatch(sess *chatstore.Session, content string) (r
 		receiveBotID = sess.BotID
 	}
 	if receiveBotID == "" {
-		return "", "", nil, fmt.Errorf("bot_id required")
+		return "", "", fmt.Errorf("bot_id required")
 	}
 	if s.RT.Reg.Get(receiveBotID) == nil {
-		return "", "", nil, fmt.Errorf("bot not found: %s", receiveBotID)
+		return "", "", fmt.Errorf("bot not found: %s", receiveBotID)
 	}
-
-	// Build history from prior turns in this GUI session (not yet including
-	// the new user message — that is the Dispatch prompt).
-	history = make([]bot.HistoryTurn, 0, len(sess.Messages))
-	for _, m := range sess.Messages {
-		role := strings.ToLower(strings.TrimSpace(m.Role))
-		if role != "user" && role != "assistant" {
-			continue
-		}
-		c := strings.TrimSpace(m.Content)
-		if c == "" || strings.HasPrefix(c, "(空回复") {
-			continue
-		}
-		history = append(history, bot.HistoryTurn{Role: role, Content: c})
-	}
-	return receiveBotID, clean, history, nil
+	return receiveBotID, clean, nil
 }
 
 // chatStreamMessage implements POST /v1/chat/sessions/{id}/messages/stream.
 //
-// It mirrors chatSendMessage's bot/@mention/history resolution, then
-// dispatches through the orchestrator with an OnStream callback that
-// writes Server-Sent Events to the response as the backend produces
-// reasoning/content/tool deltas. After dispatch completes the user and
-// assistant turns are persisted (including accumulated reasoning) and
-// a final `done` event is emitted carrying the reply and refreshed session.
+// It mirrors chatSendMessage's bot/@mention resolution, then dispatches through
+// the orchestrator with an OnStream callback (same path as IM + streaming).
 func (s *Server) chatStreamMessage(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if s.RT == nil || s.RT.Orch == nil {
 		http.Error(w, "runtime unavailable", http.StatusServiceUnavailable)
@@ -261,7 +239,7 @@ func (s *Server) chatStreamMessage(w http.ResponseWriter, r *http.Request, sessi
 		return
 	}
 
-	receiveBotID, clean, history, err := s.resolveChatDispatch(sess, content)
+	receiveBotID, clean, err := s.resolveChatDispatch(sess, content)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -290,7 +268,7 @@ func (s *Server) chatStreamMessage(w http.ResponseWriter, r *http.Request, sessi
 	}
 
 	openID := "gui-chat:" + sessionID
-	res := s.RT.Orch.DispatchWithHistoryStream(receiveBotID, clean, openID, "GUI测试", map[string]string{}, history, onStream)
+	res := s.RT.Orch.DispatchWithContextStream(nil, receiveBotID, clean, openID, "GUI测试", map[string]string{}, onStream)
 
 	userMsg := chatstore.Message{Role: "user", BotID: receiveBotID, Content: content}
 	assistantMsg := chatstore.Message{

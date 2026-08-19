@@ -89,8 +89,8 @@ type RunOpts struct {
 	// Context, when set, is cancelled to abort the current engine run
 	// (--stop / --abort / --interrupt). Backends should derive timeouts from it.
 	Context context.Context
-	// History is prior user/assistant turns (e.g. GUI chat). OpenAI injects them
-	// into the messages array; other backends may ignore.
+	// History optionally overrides backend session-store / jsonl resolution
+	// (tests or explicit injection). IM and GUI leave empty; backends load context.
 	History []HistoryTurn
 	// OnStream, when non-nil, lets a backend emit incremental updates
 	// (reasoning/content deltas, tool round markers, status, errors) as the

@@ -458,13 +458,10 @@ export function ChatPage({ api, bots, ready, active = true }: Props) {
         body: JSON.stringify({ content: text }),
         onEvent,
       });
+      // Stream HTTP 已成功时不要再 POST /messages——否则会重复写入一对 user/assistant。
+      // 若 done 事件因 Channel 时序未到，从服务端拉一次会话即可。
       if (!sawDone) {
-        const raw = await api("POST", `/v1/chat/sessions/${encodeURIComponent(sess.id)}/messages`, {
-          content: text,
-        });
-        const data = JSON.parse(raw) as { session: ChatSession };
-        setSession(data.session);
-        rememberActive(data.session.id);
+        await loadSession(sess.id);
       }
       await loadSummaries();
     } catch (e) {

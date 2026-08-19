@@ -47,6 +47,7 @@ type BotForm = {
   openai_use_defaults: boolean;
   skills: string[];
   inbound_mode: string;
+  session_mode: string;
   workspace: string;
 };
 
@@ -645,6 +646,7 @@ function emptyBotForm(): BotForm {
     openai_use_defaults: true,
     skills: [],
     inbound_mode: "websocket",
+    session_mode: "per_user",
     workspace: defaultBotWorkspace(""),
   };
 }
@@ -1678,6 +1680,11 @@ function App() {
         ? (selectedRoleConfig.skills as unknown[]).map((x) => String(x))
         : [],
       inbound_mode: String(selectedRoleConfig.inbound_mode || "websocket"),
+      session_mode: String(
+        selectedRoleConfig.session_mode ||
+          (rawConfig?.defaults as Record<string, unknown> | undefined)?.session_mode ||
+          "per_user",
+      ),
       workspace: String(selectedRoleConfig.workspace || "").trim() || defaultBotWorkspace(botId),
     });
     setBotWorkspaceTouched(true);
@@ -1742,6 +1749,7 @@ function App() {
       name: botForm.name.trim(),
       backend: botForm.backend,
       inbound_mode: botForm.inbound_mode,
+      session_mode: botForm.session_mode,
       system_prompt: botForm.system_prompt,
       workspace: botForm.workspace.trim() || defaultBotWorkspace(botForm.id),
       skills: botForm.skills,
@@ -1969,6 +1977,11 @@ function App() {
     { id: "websocket", label: "websocket" },
     { id: "webhook", label: "webhook" },
     { id: "both", label: "both" },
+  ];
+  const sessionModeOptions = [
+    { id: "per_user", label: "per_user（按用户隔离）" },
+    { id: "shared", label: "shared（通道共享）" },
+    { id: "oneshot", label: "oneshot（单次，无上下文）" },
   ];
 
   return (
@@ -3041,6 +3054,17 @@ function App() {
                   value={botForm.inbound_mode}
                   options={inboundOptions}
                   onChange={(v) => setBotForm({ ...botForm, inbound_mode: v })}
+                />
+              </div>
+              <div className="field">
+                <FieldLabel tip="多轮上下文隔离方式：per_user 按用户；shared 同通道共享（默认通道内排队）；oneshot 每次新会话">
+                  会话模式 session_mode
+                </FieldLabel>
+                <FancySelect
+                  testId="bot-session-mode"
+                  value={botForm.session_mode}
+                  options={sessionModeOptions}
+                  onChange={(v) => setBotForm({ ...botForm, session_mode: v })}
                 />
               </div>
               {botModal === "create" || !Array.isArray(selectedRoleConfig?.channels) ? (

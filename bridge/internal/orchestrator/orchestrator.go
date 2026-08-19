@@ -35,15 +35,19 @@ func (o *Orchestrator) DispatchWithContext(ctx context.Context, receiveBotID, co
 	return o.dispatch(receiveBotID, content, openID, name, overrides, nil, nil, ctx)
 }
 
-// DispatchWithHistory is like Dispatch but injects prior turns into RunOpts.History
-// (used by GUI chat so OpenAI-compatible backends keep multi-turn context).
+// DispatchWithContextStream is like DispatchWithContext but forwards an
+// OnStream callback into RunOpts for backends that support streaming.
+func (o *Orchestrator) DispatchWithContextStream(ctx context.Context, receiveBotID, content, openID, name string, overrides map[string]string, onStream func(bot.StreamEvent)) DispatchResult {
+	return o.dispatch(receiveBotID, content, openID, name, overrides, nil, onStream, ctx)
+}
+
+// DispatchWithHistory injects explicit prior turns into RunOpts.History, bypassing
+// backend session-store / jsonl resolution. Prefer DispatchWithContext for IM and GUI.
 func (o *Orchestrator) DispatchWithHistory(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn) DispatchResult {
 	return o.dispatch(receiveBotID, content, openID, name, overrides, history, nil, nil)
 }
 
-// DispatchWithHistoryStream is like DispatchWithHistory but also forwards an
-// OnStream callback into RunOpts so backends that support streaming can emit
-// incremental reasoning/content/tool events. The callback may be nil.
+// DispatchWithHistoryStream is DispatchWithHistory with streaming; see DispatchWithHistory.
 func (o *Orchestrator) DispatchWithHistoryStream(receiveBotID, content, openID, name string, overrides map[string]string, history []bot.HistoryTurn, onStream func(bot.StreamEvent)) DispatchResult {
 	return o.dispatch(receiveBotID, content, openID, name, overrides, history, onStream, nil)
 }
