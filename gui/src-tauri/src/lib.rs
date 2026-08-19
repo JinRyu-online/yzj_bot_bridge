@@ -88,6 +88,10 @@ fn read_token_file() -> Option<Endpoint> {
     Some(Endpoint { addr, token })
 }
 
+fn clear_stale_token() {
+    let _ = fs::remove_file(token_file());
+}
+
 fn find_bridge_bin(app: &AppHandle) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     // Dev first: prefer freshly built bridge/bin over stale src-tauri/binaries.
@@ -127,6 +131,8 @@ fn ensure_bridge_running(app: &AppHandle, state: &BridgeState) -> Result<Endpoin
     let bin = find_bridge_bin(app).ok_or_else(|| {
         "找不到 yzj-bridge.exe，请先构建 bridge/bin/yzj-bridge.exe".to_string()
     })?;
+    // Drop stale token from a crashed bridge so we don't probe the wrong process forever.
+    clear_stale_token();
     let mut cmd = Command::new(&bin);
     cmd.arg("--control-addr")
         .arg("127.0.0.1:18765")

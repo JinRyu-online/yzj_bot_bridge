@@ -46,7 +46,19 @@ func main() {
 	}
 	rt := runtime.New(path)
 	if err := rt.Load(true); err != nil {
-		log.Fatalf("load config: %v", err)
+		if len(defaultYAML) > 0 {
+			if repairErr := config.RepairConfigIfInvalid(defaultYAML); repairErr == nil {
+				if err2 := rt.Load(true); err2 == nil {
+					log.Printf("repaired invalid config at %s", path)
+				} else {
+					log.Fatalf("load config: %v", err2)
+				}
+			} else {
+				log.Fatalf("load config: %v", err)
+			}
+		} else {
+			log.Fatalf("load config: %v", err)
+		}
 	}
 	if !*noStartWSS {
 		// Load(restoreWSS) already restored; if empty map start all
@@ -95,19 +107,28 @@ func main() {
 func findDefaultYAML() []byte {
 	candidates := []string{
 		"config.default.yaml",
+		filepath.Join("binaries", "config.default.yaml"),
 		filepath.Join("..", "config.default.yaml"),
 		filepath.Join("..", "..", "config.default.yaml"),
 	}
 	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
 		candidates = append([]string{
-			filepath.Join(filepath.Dir(exe), "config.default.yaml"),
+			filepath.Join(exeDir, "config.default.yaml"),
+			filepath.Join(exeDir, "binaries", "config.default.yaml"),
 		}, candidates...)
 	}
 	for _, c := range candidates {
 		b, err := os.ReadFile(c)
-		if err == nil {
+		if err != nil {
+			continue
+		}
+		if _, err := config.ParseYAML(b); err == nil {
 			return b
 		}
+	}
+	if valid, err := config.ValidatedDefaultYAML(nil); err == nil {
+		return valid
 	}
 	return nil
 }

@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $TauriConfPath = Join-Path $Root "gui\src-tauri\tauri.conf.json"
-$TauriConf = Get-Content $TauriConfPath -Raw | ConvertFrom-Json
+$TauriConf = Get-Content $TauriConfPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $Ver = [string]$TauriConf.version
 if (-not $Ver) { throw "tauri.conf.json missing version" }
 
@@ -56,6 +56,25 @@ if ($Dll) {
 }
 Copy-Item -Force (Join-Path $Root "bridge\bin\yzj-bridge.exe") (Join-Path $Portable "yzj-bridge.exe")
 Copy-Item -Force (Join-Path $Root "config.default.yaml") (Join-Path $Portable "config.default.yaml")
+
+$bundleWebView2Loader = ($TauriConf.bundle.resources | Where-Object { $_ -eq "WebView2Loader.dll" }).Count -gt 0
+
+# GNU builds need WebView2Loader.dll beside YZJBridge.exe; MSVC statically links it.
+if ($bundleWebView2Loader -and -not $Dll) {
+    throw "missing WebView2Loader.dll under $TargetRoot - run scripts/prepare-bundle.ps1 before tauri build"
+}
+
+$NsisScript = $null
+foreach ($rel in $ReleaseDirs) {
+    $candidate = Join-Path $rel "nsis\x64\installer.nsi"
+    if (Test-Path $candidate) { $NsisScript = $candidate; break }
+}
+if ($NsisScript -and $bundleWebView2Loader) {
+    $nsisText = Get-Content $NsisScript -Raw -Encoding UTF8
+    if ($nsisText -notmatch "WebView2Loader\.dll") {
+        throw "NSIS script does not bundle WebView2Loader.dll: $NsisScript"
+    }
+}
 
 Write-Host "installer : $Versioned"
 Write-Host "installer : $Latest"

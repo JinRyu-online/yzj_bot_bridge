@@ -349,8 +349,71 @@ func BootstrapIfNeeded(defaultYAML []byte) error {
 	if _, err := os.Stat(p); err == nil {
 		return nil
 	}
-	return os.WriteFile(p, defaultYAML, 0o644)
+	data, err := ValidatedDefaultYAML(defaultYAML)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, data, 0o644)
 }
+
+// RepairConfigIfInvalid rewrites config.yaml when it exists but fails to parse
+// (e.g. corrupted by an older broken default template on first install).
+func RepairConfigIfInvalid(defaultYAML []byte) error {
+	p := paths.ConfigPath()
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	if _, err := ParseYAML(data); err == nil {
+		return nil
+	}
+	valid, err := ValidatedDefaultYAML(defaultYAML)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(p, valid, 0o644)
+}
+
+// ValidatedDefaultYAML returns the first parseable bootstrap template, falling back
+// to a minimal embedded default so first-run never writes invalid YAML.
+func ValidatedDefaultYAML(candidates ...[]byte) ([]byte, error) {
+	for _, c := range candidates {
+		if len(c) == 0 {
+			continue
+		}
+		if _, err := ParseYAML(c); err == nil {
+			return c, nil
+		}
+	}
+	if _, err := ParseYAML(minimalBootstrapYAML); err != nil {
+		return nil, fmt.Errorf("internal bootstrap template invalid: %w", err)
+	}
+	return minimalBootstrapYAML, nil
+}
+
+// minimalBootstrapYAML is the last-resort first-run config when bundled
+// config.default.yaml is missing or invalid (must stay valid YAML — spaces only).
+var minimalBootstrapYAML = []byte(`defaults:
+  cursor_bin: "agent"
+  claude_bin: "claude"
+  workspace: "~"
+  cursor_workspace: "~/.yzj-bridge/workspace/cursor_cli"
+  claude_workspace: "~/.yzj-bridge/workspace/claude_code"
+  session_mode: "per_user"
+  inbound_mode: websocket
+  sessions_file: "sessions.json"
+  skills_dir: "~/.yzj-bridge/skills"
+groups:
+  - id: default
+    description: "默认分组"
+bots:
+  - id: fairy
+    name: "Fairy"
+    backend: cursor_cli
+    workspace: "~"
+    group: default
+    send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_ME"
+`)
 
 func asString(v any) string {
 	if v == nil {

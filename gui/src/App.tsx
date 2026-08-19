@@ -1091,7 +1091,8 @@ function App() {
     setBooting(true);
     setError("");
     let lastErr = "";
-    for (let i = 0; i < 40; i++) {
+    // ensure_bridge already waits up to ~15s; keep retries low to avoid minutes-long spinner.
+    for (let i = 0; i < 3; i++) {
       try {
         await invoke("ensure_bridge");
         const [auto, tray] = await Promise.all([
@@ -1106,12 +1107,14 @@ function App() {
         return;
       } catch (e) {
         lastErr = String(e);
-        await new Promise((r) => setTimeout(r, 250));
+        if (i < 2) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
       }
     }
     setReady(false);
     setBooting(false);
-    setError(lastErr || "桥启动超时");
+    setError(lastErr || "桥启动超时，请检查 yzj-bridge.exe 与 ~/.yzj-bridge/config.yaml");
   }, []);
 
   const refreshCursorModels = useCallback(async () => {
@@ -1994,9 +1997,26 @@ function App() {
       {(booting || !ready) && (
         <div className="boot-overlay" data-testid="boot-overlay">
           <div className="boot-card">
-            <span className="spinner dark lg" />
-            <strong>{booting ? "正在启动桥接服务…" : "等待桥就绪…"}</strong>
-            <span>加载配置与控制通道，请稍候</span>
+            {booting ? <span className="spinner dark lg" /> : null}
+            <strong>
+              {booting
+                ? "正在启动桥接服务…"
+                : error
+                  ? "桥接服务启动失败"
+                  : "等待桥就绪…"}
+            </strong>
+            <span>
+              {booting
+                ? "加载配置与控制通道，请稍候"
+                : error
+                  ? "请查看下方错误信息，或检查 ~/.yzj-bridge/config.yaml"
+                  : "正在连接控制 API…"}
+            </span>
+            {error ? (
+              <span className="err" data-testid="boot-error">
+                {error}
+              </span>
+            ) : null}
           </div>
         </div>
       )}

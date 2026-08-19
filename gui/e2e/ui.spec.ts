@@ -558,6 +558,25 @@ test("启动遮罩在桥就绪后消失", async ({ page }) => {
   await expect(page.getByTestId("bridge-status")).toContainText("桥已连接");
 });
 
+test("桥启动失败时显示错误而非无限转圈", async ({ page }) => {
+  await page.addInitScript(() => {
+    const internals = (window as any).__TAURI_INTERNALS__;
+    if (!internals) return;
+    const orig = internals.invoke.bind(internals);
+    internals.invoke = async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "ensure_bridge") {
+        throw new Error("桥进程启动超时，请检查 yzj-bridge.exe 与配置");
+      }
+      return orig(cmd, args);
+    };
+  });
+  await page.reload();
+  await expect(page.getByTestId("boot-overlay")).toBeVisible({ timeout: 60000 });
+  await expect(page.getByTestId("boot-error")).toContainText("桥进程启动超时");
+  await expect(page.getByTestId("boot-overlay")).toContainText("桥接服务启动失败");
+  await expect(page.getByTestId("boot-overlay").locator(".spinner")).toHaveCount(0);
+});
+
 test("聊天菜单在首位且默认仍是机器人页", async ({ page }) => {
   await expect(page.getByTestId("page-bots")).toBeVisible();
   const nav = page.locator("aside .nav-btn");

@@ -60,7 +60,7 @@ try {
     Write-Host ""
     $shouldPause = -not $SkipPause -and -not $env:GITHUB_ACTIONS -and [Environment]::UserInteractive
     if ($shouldPause) {
-        Read-Host "按 Enter 键关闭窗口"
+        Read-Host "Press Enter to close"
     }
     exit $exitCode
 }
