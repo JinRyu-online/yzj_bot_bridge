@@ -41,7 +41,6 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "WebView2Loader.dll",
       "binaries/yzj-bridge.exe",
       "binaries/config.default.yaml"
     ],
