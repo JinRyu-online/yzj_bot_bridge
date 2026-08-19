@@ -40,10 +40,22 @@ function Set-TauriWebView2LoaderResource {
     [System.IO.File]::WriteAllText($TauriConfPath, $text, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Test-GnuToolchainActive {
+    $toolchain = (rustup show active-toolchain 2>$null)
+    return $toolchain -match 'gnu'
+}
+
 $TargetRoot = Join-Path $TauriDir "target"
+$destRoot = Join-Path $TauriDir "WebView2Loader.dll"
+$destPortable = Join-Path $BinDir "WebView2Loader.dll"
+Remove-Item $destRoot, $destPortable -ErrorAction SilentlyContinue
+
+# Strip DLL resource first so MSVC/CI cargo invocations never fail on a missing file.
+Set-TauriWebView2LoaderResource -Include $false
+
 $loader = Find-WebView2Loader $TargetRoot
-if (-not $loader) {
-    Write-Host "WebView2Loader.dll not found; running cargo build --release..."
+if (-not $loader -and (Test-GnuToolchainActive) -and $env:GITHUB_ACTIONS -ne "true") {
+    Write-Host "WebView2Loader.dll not found; running cargo build --release (GNU local)..."
     Push-Location $TauriDir
     try {
         $gnuGcc = Join-Path $env:USERPROFILE ".rustup\toolchains\stable-x86_64-pc-windows-gnu\lib\rustlib\x86_64-pc-windows-gnu\bin\self-contained\x86_64-w64-mingw32-gcc.exe"
@@ -58,19 +70,13 @@ if (-not $loader) {
     $loader = Find-WebView2Loader $TargetRoot
 }
 
-$destRoot = Join-Path $TauriDir "WebView2Loader.dll"
-$destPortable = Join-Path $BinDir "WebView2Loader.dll"
-Remove-Item $destRoot, $destPortable -ErrorAction SilentlyContinue
-
 if ($loader) {
     Copy-Item -Force $loader $destRoot
     Copy-Item -Force $loader $destPortable
     Set-TauriWebView2LoaderResource -Include $true
     Write-Host "Prepared WebView2Loader.dll: $destRoot"
 } else {
-    # MSVC statically links WebView2; do not require the sidecar DLL in NSIS resources.
-    Set-TauriWebView2LoaderResource -Include $false
-    Write-Host "WebView2Loader.dll not needed (MSVC/static WebView2 build)"
+    Write-Host "WebView2Loader.dll not bundled (MSVC/static WebView2 build)"
 }
 
 Write-Host "Prepared bundle sidecar: $BinDir"
