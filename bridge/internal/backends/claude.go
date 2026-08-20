@@ -91,7 +91,7 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		prompt = prompt + "\n\n优先使用这些 skills: " + strings.Join(c.cfg.Skills, ", ")
 	}
 
-	args := []string{"--print", prompt, "--output-format", "stream-json", "--verbose"}
+	args := []string{"--print", "--output-format", "stream-json", "--verbose"}
 	if c.cfg.CursorStreamPart {
 		args = append(args, "--include-partial-messages")
 	}
@@ -131,6 +131,7 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	} else {
 		args = append(args, "--resume", sessionID)
 	}
+	args = appendCLIPrompt(args, prompt)
 
 	timeout := c.cfg.CursorTimeout
 	if timeout <= 0 {
@@ -157,16 +158,13 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	}
 
 	var resultText, assistantText string
+	var stream cliStreamCollect
 	sc := bufio.NewScanner(stdout)
 	buf := make([]byte, 0, 1024*64)
 	sc.Buffer(buf, 1024*1024*8)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var ev map[string]any
-		if json.Unmarshal([]byte(line), &ev) != nil {
+		ev, ok := stream.readLine(sc.Text())
+		if !ok {
 			continue
 		}
 		switch fmt.Sprint(ev["type"]) {
@@ -201,7 +199,8 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 			}
 		}
 	}
-	_ = cmd.Wait()
+	waitErr := cmd.Wait()
+	logCLINonJSON(c.cfg.ID, "claude", stream.nonJSON)
 	if res, ok := resultFromCtx(ctx, "claude 超时"); ok {
 		res.SessionID = sessionID
 		if hasKey && c.store != nil {
@@ -213,15 +212,7 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		}
 		return res
 	}
-	reply := strings.TrimSpace(resultText)
-	if reply == "" {
-		reply = strings.TrimSpace(assistantText)
-	}
-	status := "ok"
-	if reply == "" {
-		status = "empty"
-		reply = "(空回复)"
-	}
+	reply, status := cliReplyOrError(resultText, assistantText, stream.nonJSON, waitErr)
 	if hasKey && c.store != nil {
 		c.store.SetChatID(c.cfg.ID, entryKey, sessionID, opts.OperatorName)
 		e := c.store.GetEntry(c.cfg.ID, entryKey)

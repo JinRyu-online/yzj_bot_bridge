@@ -2,7 +2,6 @@ package backends
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -105,7 +104,7 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		}
 	}
 
-	args := []string{"-p", prompt, "--workspace", opts.Workspace, "--trust"}
+	args := []string{"--print", "--workspace", opts.Workspace, "--trust"}
 	if c.cfg.CursorSandbox != "" {
 		args = append(args, "--sandbox", c.cfg.CursorSandbox)
 	}
@@ -127,6 +126,7 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	if sessionID != "" {
 		args = append(args, "--resume", sessionID)
 	}
+	args = appendCLIPrompt(args, prompt)
 
 	timeout := c.cfg.CursorTimeout
 	if timeout <= 0 {
@@ -155,17 +155,14 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	log.Printf("bot=%s cursor: agent spawned %dms model=%q", c.cfg.ID, time.Since(tSpawn).Milliseconds(), model)
 
 	var resultText, assistantText string
+	var stream cliStreamCollect
 	firstEvent := true
 	sc := bufio.NewScanner(stdout)
 	buf := make([]byte, 0, 1024*64)
 	sc.Buffer(buf, 1024*1024*8)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var ev map[string]any
-		if json.Unmarshal([]byte(line), &ev) != nil {
+		ev, ok := stream.readLine(sc.Text())
+		if !ok {
 			continue
 		}
 		if firstEvent {
@@ -193,7 +190,8 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 			}
 		}
 	}
-	_ = cmd.Wait()
+	waitErr := cmd.Wait()
+	logCLINonJSON(c.cfg.ID, "cursor", stream.nonJSON)
 	log.Printf("bot=%s cursor: done total=%dms", c.cfg.ID, time.Since(started).Milliseconds())
 	if res, ok := resultFromCtx(ctx, "cursor-cli 超时"); ok {
 		res.SessionID = sessionID
@@ -203,15 +201,7 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		}
 		return res
 	}
-	reply := strings.TrimSpace(resultText)
-	if reply == "" {
-		reply = strings.TrimSpace(assistantText)
-	}
-	status := "ok"
-	if reply == "" {
-		status = "empty"
-		reply = "(空回复)"
-	}
+	reply, status := cliReplyOrError(resultText, assistantText, stream.nonJSON, waitErr)
 	if key, ok := sessions.ResolveSessionKey(c.cfg, opts.OperatorOpenID); ok && c.store != nil && sessionID != "" {
 		c.store.SetChatID(c.cfg.ID, key, sessionID, opts.OperatorName)
 		_ = c.store.Save()
