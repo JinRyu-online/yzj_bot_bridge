@@ -413,6 +413,11 @@ fn do_chat_stream(
 }
 
 #[tauri::command]
+fn get_app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
 async fn get_autostart() -> bool {
     tauri::async_runtime::spawn_blocking(is_autostart_enabled)
         .await
@@ -626,6 +631,7 @@ pub fn run() {
             start_lock: Mutex::new(()),
         })
         .invoke_handler(tauri::generate_handler![
+            get_app_version,
             get_endpoint,
             ensure_bridge,
             bridge_fetch,

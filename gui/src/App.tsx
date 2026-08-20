@@ -1016,6 +1016,7 @@ function App() {
   const saveToastTimer = useRef<number | null>(null);
   const [closeToTray, setCloseToTray] = useState(true);
   const [loadingCloseTray, setLoadingCloseTray] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const cursorModelsAutoTried = useRef(false);
   const claudeModelsAutoTried = useRef(false);
   /** 已自动探测过的 OpenAI base\\nkey 指纹，变更凭据后可再次自动探测。 */
@@ -1095,12 +1096,14 @@ function App() {
     for (let i = 0; i < 3; i++) {
       try {
         await invoke("ensure_bridge");
-        const [auto, tray] = await Promise.all([
+        const [auto, tray, version] = await Promise.all([
           invoke<boolean>("get_autostart"),
           invoke<boolean>("get_close_to_tray"),
+          invoke<string>("get_app_version"),
         ]);
         setAutostart(auto);
         setCloseToTray(tray);
+        setAppVersion(version);
         setReady(true);
         setError("");
         setBooting(false);
@@ -2156,6 +2159,14 @@ function App() {
                     >
                       {paths?.config || "-"}
                     </button>
+                  </div>
+                </div>
+                <div className="row">
+                  <div className="row-text">
+                    <strong>应用版本</strong>
+                    <span data-testid="app-version">
+                      {appVersion ? `v${appVersion}` : "—"}
+                    </span>
                   </div>
                 </div>
               </div>

@@ -419,6 +419,8 @@ async function installTauriMock(page: Page) {
           }
           case "get_close_to_tray":
             return (state as any).closeToTray !== false;
+          case "get_app_version":
+            return "0.2.6";
           case "set_close_to_tray":
             (state as any).closeToTray = !!args.enabled;
             return (state as any).closeToTray;
@@ -482,6 +484,7 @@ test("系统页：主题下拉可读、热重载按钮、路径可点", async ({
   await expect(system).not.toContainText("无控制台闪烁");
   await expect(system).toContainText("从磁盘重新加载 config.yaml");
   await expect(system).not.toContainText("WSS 启停状态");
+  await expect(page.getByTestId("app-version")).toHaveText("v0.2.6");
 });
 
 test("系统页：关闭到托盘开关", async ({ page }) => {
