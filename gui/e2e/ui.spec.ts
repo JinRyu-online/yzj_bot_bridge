@@ -720,7 +720,7 @@ test("主题下拉冰蓝白排第一", async ({ page }) => {
 
 test("侧栏菜单带统一图标", async ({ page }) => {
   await expect(page.getByTestId("brand-mark")).toBeVisible();
-  for (const id of ["chat", "memory", "bots", "settings", "skills", "logs", "help", "system"]) {
+  for (const id of ["chat", "bots", "settings", "skills", "memory", "logs", "help", "system"]) {
     await expect(page.getByTestId(`nav-${id}`).locator(".nav-icon")).toBeVisible();
   }
 });
@@ -730,6 +730,8 @@ test("记忆页入口与默认关", async ({ page }) => {
   await expect(page.getByTestId("page-memory")).toBeVisible();
   await expect(page.getByTestId("memory-list")).toBeVisible();
   await expect(page.getByTestId("memory-list")).not.toContainText(".jsonl");
+  await expect(page.getByTestId("memory-bot-filter")).toBeVisible();
+  await expect(page.getByTestId("memory-detail")).toContainText("尚未选择用户");
 
   await page.getByTestId("nav-settings").click();
   await expect(page.getByTestId("memory-enabled-switch")).toBeVisible();
