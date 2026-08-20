@@ -12,6 +12,7 @@ import (
 	"yzj-bridge/internal/commands"
 	"yzj-bridge/internal/dedupe"
 	"yzj-bridge/internal/jobs"
+	"yzj-bridge/internal/memory"
 	"yzj-bridge/internal/orchestrator"
 	"yzj-bridge/internal/registry"
 	"yzj-bridge/internal/sessions"
@@ -35,6 +36,7 @@ type Dispatcher struct {
 	Dedupe *dedupe.Store
 	Jobs   *jobs.Manager
 	Store  *sessions.Store
+	Memory *memory.Service
 	// SendText, when set, replaces yzjout.SendText (tests).
 	SendText func(sendURL, content, openID string, reply *yzjout.ReplyMeta) error
 }
@@ -182,6 +184,18 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
+	if memSub := cmdRes.Overrides["memory"]; memSub != "" {
+		body := d.handleMemoryCmd(n.OpenID, memSub)
+		body = yzjout.FormatCompletionReply(body, n.OpenID, n.Name, b.Config.MentionOnReply)
+		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		return
+	}
+	if cmdRes.Overrides["forget"] == "1" {
+		body := d.handleForgetCmd(n.OpenID)
+		body = yzjout.FormatCompletionReply(body, n.OpenID, n.Name, b.Config.MentionOnReply)
+		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		return
+	}
 	if cmdRes.Handled && strings.TrimSpace(cmdRes.RestText) == "" {
 		body := strings.TrimSpace(cmdRes.Reply)
 		body = yzjout.FormatCompletionReply(body, n.OpenID, n.Name, b.Config.MentionOnReply)
@@ -272,4 +286,43 @@ func (d *Dispatcher) runJob(b *bot.Bot, n Normalized, cmdRes commands.Result) {
 		overrides = map[string]string{}
 		_ = parts
 	}
+}
+
+func (d *Dispatcher) handleMemoryCmd(openID, sub string) string {
+	if d.Memory == nil {
+		return "记忆服务未启用"
+	}
+	openID = strings.TrimSpace(openID)
+	if openID == "" {
+		return "无法识别用户 openID，无法操作记忆"
+	}
+	switch strings.ToLower(strings.TrimSpace(sub)) {
+	case "off":
+		if _, err := d.Memory.SetOptOut(openID, true); err != nil {
+			return "关闭记忆失败: " + err.Error()
+		}
+		return "已关闭你的用户记忆（不再注入、不再更新）。发送 /memory on 可重新开启。"
+	case "on":
+		if _, err := d.Memory.SetOptOut(openID, false); err != nil {
+			return "开启记忆失败: " + err.Error()
+		}
+		return "已开启你的用户记忆。"
+	default:
+		return d.Memory.FormatShow(openID)
+	}
+}
+
+func (d *Dispatcher) handleForgetCmd(openID string) string {
+	if d.Memory == nil {
+		return "记忆服务未启用"
+	}
+	openID = strings.TrimSpace(openID)
+	if openID == "" {
+		return "无法识别用户 openID，无法清除记忆"
+	}
+	reply, _, err := d.Memory.HandleForget(openID)
+	if err != nil {
+		return "清除记忆失败: " + err.Error()
+	}
+	return reply
 }

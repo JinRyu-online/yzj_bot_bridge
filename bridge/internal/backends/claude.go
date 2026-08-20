@@ -87,6 +87,9 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	} else if len(c.cfg.Skills) > 0 {
 		prompt = prompt + "\n\n优先使用这些 skills: " + strings.Join(c.cfg.Skills, ", ")
 	}
+	if opts.MemoryPrompt != "" {
+		prompt = prompt + opts.MemoryPrompt
+	}
 
 	args := []string{"--print", "--output-format", "stream-json", "--verbose"}
 	if c.cfg.CursorStreamPart {

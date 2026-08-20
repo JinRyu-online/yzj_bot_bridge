@@ -96,15 +96,16 @@ func (s *Server) chatSessionsPath(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, sess)
 	case sub == "" && r.Method == http.MethodPatch:
 		var body struct {
-			BotID string `json:"bot_id"`
-			Title string `json:"title"`
+			BotID        string  `json:"bot_id"`
+			Title        string  `json:"title"`
+			BoundOpenID *string `json:"bound_open_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
 		st := s.chat()
-		updated, err := st.Update(id, body.Title, body.BotID)
+		updated, err := st.UpdateFields(id, body.Title, body.BotID, body.BoundOpenID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -170,7 +171,11 @@ func (s *Server) chatSendMessage(w http.ResponseWriter, r *http.Request, session
 	// gui-chat:{sessionID} and always get their own agent context (see
 	// sessions.ResolveSessionKey), even when the bot is session_mode: shared.
 	openID := sessions.GUIChatOpenID(sessionID)
-	res := s.RT.Orch.DispatchWithContext(r.Context(), receiveBotID, clean, openID, "GUI测试", map[string]string{})
+	overrides := map[string]string{}
+	if s.memoryGUIBindEnabled() && strings.TrimSpace(sess.BoundOpenID) != "" {
+		overrides["memory_bind_open_id"] = strings.TrimSpace(sess.BoundOpenID)
+	}
+	res := s.RT.Orch.DispatchWithContext(r.Context(), receiveBotID, clean, openID, "GUI测试", overrides)
 
 	userMsg := chatstore.Message{Role: "user", BotID: receiveBotID, Content: content}
 	assistantMsg := chatstore.Message{Role: "assistant", BotID: res.HandlerBotID, Content: res.Reply}
@@ -270,7 +275,11 @@ func (s *Server) chatStreamMessage(w http.ResponseWriter, r *http.Request, sessi
 	}
 
 	openID := sessions.GUIChatOpenID(sessionID)
-	res := s.RT.Orch.DispatchWithContextStream(r.Context(), receiveBotID, clean, openID, "GUI测试", map[string]string{}, onStream)
+	overrides := map[string]string{}
+	if s.memoryGUIBindEnabled() && strings.TrimSpace(sess.BoundOpenID) != "" {
+		overrides["memory_bind_open_id"] = strings.TrimSpace(sess.BoundOpenID)
+	}
+	res := s.RT.Orch.DispatchWithContextStream(r.Context(), receiveBotID, clean, openID, "GUI测试", overrides, onStream)
 
 	userMsg := chatstore.Message{Role: "user", BotID: receiveBotID, Content: content}
 	assistantMsg := chatstore.Message{
@@ -308,4 +317,11 @@ func writeSSE(w http.ResponseWriter, eventType string, payload any, flusher http
 	if flusher != nil {
 		flusher.Flush()
 	}
+}
+
+func (s *Server) memoryGUIBindEnabled() bool {
+	if s.RT == nil || s.RT.Memory == nil {
+		return false
+	}
+	return s.RT.Memory.ConfigSnapshot().GUIBindEnabled
 }

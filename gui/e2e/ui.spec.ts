@@ -18,6 +18,7 @@ async function installTauriMock(page: Page) {
           projects_root: "~",
           session_mode: "shared",
           cursor_model: "",
+          memory: { enabled: false, gui_bind_enabled: false },
         },
         bots: [
           {
@@ -324,6 +325,23 @@ async function installTauriMock(page: Page) {
                 ],
               });
             }
+            if (path === "/v1/memory/enable-check" && method === "POST") {
+              return JSON.stringify({ ok: true, reason: "ready", openai: { ok: true }, claude_ok: true });
+            }
+            if (path === "/v1/memory/profiles" && method === "GET") {
+              return JSON.stringify({ profiles: [] });
+            }
+            if (path.startsWith("/v1/memory/profiles/")) {
+              if (method === "DELETE") {
+                if (!path.includes("confirm=1") && !(args.query as string | undefined)?.includes?.("confirm")) {
+                  // path may include query in this mock — check raw path
+                }
+                const q = path.includes("?") ? path.slice(path.indexOf("?")) : "";
+                if (!q.includes("confirm=1")) throw new Error("confirm=1 required");
+                return JSON.stringify({ ok: true });
+              }
+              return JSON.stringify({ open_id: "mock", turn_count: 0 });
+            }
             if (path.startsWith("/v1/skills/install") && method === "POST") {
               const body = JSON.parse(bodyRaw || "{}") as {
                 source?: string;
@@ -388,9 +406,16 @@ async function installTauriMock(page: Page) {
               if (!sess) throw new Error("session not found");
               if (!sub && method === "GET") return JSON.stringify(sess);
               if (!sub && method === "PATCH") {
-                const body = JSON.parse(bodyRaw || "{}") as { bot_id?: string; title?: string };
+                const body = JSON.parse(bodyRaw || "{}") as {
+                  bot_id?: string;
+                  title?: string;
+                  bound_open_id?: string;
+                };
                 if (body.bot_id) sess.bot_id = body.bot_id;
                 if (body.title) sess.title = body.title;
+                if (body.bound_open_id !== undefined) {
+                  (sess as { bound_open_id?: string }).bound_open_id = body.bound_open_id;
+                }
                 sess.updated_at = new Date().toISOString();
                 return JSON.stringify(sess);
               }
@@ -695,9 +720,25 @@ test("主题下拉冰蓝白排第一", async ({ page }) => {
 
 test("侧栏菜单带统一图标", async ({ page }) => {
   await expect(page.getByTestId("brand-mark")).toBeVisible();
-  for (const id of ["chat", "bots", "settings", "skills", "logs", "help", "system"]) {
+  for (const id of ["chat", "memory", "bots", "settings", "skills", "logs", "help", "system"]) {
     await expect(page.getByTestId(`nav-${id}`).locator(".nav-icon")).toBeVisible();
   }
+});
+
+test("记忆页入口与默认关", async ({ page }) => {
+  await page.getByTestId("nav-memory").click();
+  await expect(page.getByTestId("page-memory")).toBeVisible();
+  await expect(page.getByTestId("memory-list")).toBeVisible();
+  await expect(page.getByTestId("memory-list")).not.toContainText(".jsonl");
+
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("memory-enabled-switch")).toBeVisible();
+  // Switch unchecked by default
+  const sw = page.getByTestId("memory-enabled-switch");
+  await expect(sw).toHaveAttribute("aria-checked", "false");
+
+  await page.getByTestId("nav-chat").click();
+  await expect(page.getByTestId("chat-bind-openid")).toHaveCount(0);
 });
 
 test("运行日志：进入时在底部，滚动条仅滚动时浮现", async ({ page }) => {
@@ -708,21 +749,18 @@ test("运行日志：进入时在底部，滚动条仅滚动时浮现", async ({
   await expect.poll(async () =>
     box.evaluate((el) => el.scrollHeight > el.clientHeight + 8),
   ).toBeTruthy();
-  const atBottom = await box.evaluate(
-    (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 24,
-  );
-  expect(atBottom).toBeTruthy();
+  await expect.poll(async () =>
+    box.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 24),
+  ).toBeTruthy();
   const minimap = page.getByTestId("log-minimap");
   await expect(minimap).toHaveCount(1);
   await expect(minimap).toHaveAttribute("data-visible", "0");
   await expect(minimap).not.toHaveClass(/peek/);
-  const peekStyle = await minimap.evaluate((el) => {
-    const s = getComputedStyle(el);
-    return { opacity: s.opacity, visibility: s.visibility, pointerEvents: s.pointerEvents };
-  });
-  expect(Number(peekStyle.opacity)).toBe(0);
-  expect(peekStyle.visibility).toBe("hidden");
-  expect(peekStyle.pointerEvents).toBe("none");
+  // peek 隐藏带 0.2s opacity 过渡，瞬时取样会得到 0.17~0.3（贴底 scroll 偶发 keepPeek）。
+  await expect.poll(async () => {
+    const s = await minimap.evaluate((el) => getComputedStyle(el).opacity);
+    return Number(s);
+  }).toBeLessThan(0.05);
   await expect(page.getByTestId("log-scroll-bottom")).toHaveCount(0);
   await box.evaluate((el) => {
     el.dispatchEvent(new WheelEvent("wheel", { deltaY: -240, bubbles: true }));

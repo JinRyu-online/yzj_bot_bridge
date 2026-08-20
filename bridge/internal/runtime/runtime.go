@@ -14,6 +14,7 @@ import (
 	"yzj-bridge/internal/dedupe"
 	"yzj-bridge/internal/inbound"
 	"yzj-bridge/internal/jobs"
+	"yzj-bridge/internal/memory"
 	"yzj-bridge/internal/orchestrator"
 	"yzj-bridge/internal/paths"
 	"yzj-bridge/internal/registry"
@@ -33,6 +34,7 @@ type Runtime struct {
 	Reg        *registry.Registry
 	Store      *sessions.Store
 	SkillStore *skills.Store
+	Memory     *memory.Service
 	Orch       *orchestrator.Orchestrator
 	Disp       *inbound.Dispatcher
 	Clients    map[string]*ws.Client
@@ -101,11 +103,25 @@ func (r *Runtime) Load(restoreWSS bool) error {
 		bots = append(bots, b)
 	}
 	r.Reg.Replace(bots)
+	memCfg := memory.ParseConfig(r.Defaults).ResolveEngine(r.Defaults)
+	if r.Memory == nil {
+		r.Memory = memory.NewService(paths.MemoryDir(), memCfg)
+	} else {
+		r.Memory.SetConfig(memCfg)
+		if r.Memory.Sched != nil {
+			r.Memory.Sched.Stop()
+		}
+		r.Memory.Sched = memory.NewScheduler(r.Memory)
+	}
+	r.Memory.SetDefaults(r.Defaults)
+	if memCfg.Enabled {
+		r.Memory.Sched.StartIdleTicker()
+	}
 	r.Orch = &orchestrator.Orchestrator{
-		Reg: r.Reg, Store: store, Skills: r.SkillStore, Locks: runlock.New(),
+		Reg: r.Reg, Store: store, Skills: r.SkillStore, Locks: runlock.New(), Memory: r.Memory,
 	}
 	r.Disp = &inbound.Dispatcher{
-		Reg: r.Reg, Orch: r.Orch, Dedupe: dedupe.New(), Jobs: jobs.New(), Store: store,
+		Reg: r.Reg, Orch: r.Orch, Dedupe: dedupe.New(), Jobs: jobs.New(), Store: store, Memory: r.Memory,
 	}
 
 	// teardown old clients
@@ -343,6 +359,9 @@ func (r *Runtime) Shutdown() {
 	r.StopAllWSS()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.Memory != nil && r.Memory.Sched != nil {
+		r.Memory.Sched.Stop()
+	}
 	if r.Webhook != nil {
 		r.Webhook.Stop()
 	}

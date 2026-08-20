@@ -2974,6 +2974,51 @@ textarea {
   font-size: 0.85rem;
 }
 
+.chat-bind-openid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  min-width: 160px;
+}
+.chat-bind-openid input {
+  font-size: 0.85rem;
+  padding: 6px 8px;
+}
+
+.memory-split {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.memory-user-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.memory-user-list button {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+}
+.memory-user-list button.active,
+.memory-user-list button:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.memory-user-list span {
+  opacity: 0.65;
+  font-size: 0.8rem;
+}
+
 @media (max-width: 980px) {
   .bots-layout {
     grid-template-columns: 1fr;
@@ -2982,6 +3027,9 @@ textarea {
     grid-template-columns: 1fr;
   }
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .memory-split {
     grid-template-columns: 1fr;
   }
 }

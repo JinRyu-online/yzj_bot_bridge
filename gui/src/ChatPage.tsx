@@ -22,6 +22,7 @@ type ChatSession = {
   id: string;
   title: string;
   bot_id: string;
+  bound_open_id?: string;
   updated_at: string;
   messages: ChatMessage[];
 };
@@ -42,6 +43,8 @@ type Props = {
   ready: boolean;
   /** True while the chat page is the visible main view. */
   active?: boolean;
+  /** When memory.gui_bind_enabled, show bind-openID field. */
+  guiBindEnabled?: boolean;
 };
 
 const ACTIVE_SESSION_KEY = "yzj-chat-active-session";
@@ -149,7 +152,7 @@ function IconChevron({ open }: { open: boolean }) {
   );
 }
 
-export function ChatPage({ api, bots, ready, active = true }: Props) {
+export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = false }: Props) {
   const [summaries, setSummaries] = useState<ChatSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => {
     try {
@@ -617,6 +620,27 @@ export function ChatPage({ api, bots, ready, active = true }: Props) {
                 </div>
               ) : null}
             </div>
+
+            {guiBindEnabled ? (
+              <label className="chat-bind-openid" data-testid="chat-bind-openid">
+                模拟 openID
+                <input
+                  data-testid="chat-bind-openid-input"
+                  value={session?.bound_open_id || ""}
+                  placeholder="云之家 OperatorOpenID"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSession((prev) => (prev ? { ...prev, bound_open_id: v } : prev));
+                  }}
+                  onBlur={() => {
+                    if (!activeId || !session) return;
+                    void api("PATCH", `/v1/chat/sessions/${encodeURIComponent(activeId)}`, {
+                      bound_open_id: session.bound_open_id || "",
+                    }).catch((err) => setError(String(err)));
+                  }}
+                />
+              </label>
+            ) : null}
 
             <div className="chat-head-actions" ref={historyRef}>
               <button

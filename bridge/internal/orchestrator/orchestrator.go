@@ -9,6 +9,7 @@ import (
 
 	"yzj-bridge/internal/bot"
 	"yzj-bridge/internal/commands"
+	"yzj-bridge/internal/memory"
 	"yzj-bridge/internal/registry"
 	"yzj-bridge/internal/runlock"
 	"yzj-bridge/internal/sessions"
@@ -20,6 +21,7 @@ type Orchestrator struct {
 	Store  *sessions.Store
 	Skills *skills.Store
 	Locks  *runlock.Manager
+	Memory *memory.Service
 }
 
 type DispatchResult struct {
@@ -147,8 +149,16 @@ func (o *Orchestrator) dispatch(receiveBotID, content, openID, name string, over
 			}
 		}
 	}
+	bindOpenID := strings.TrimSpace(overrides["memory_bind_open_id"])
+	if o.Memory != nil {
+		opts.MemoryPrompt = o.Memory.MemoryPromptFor(handler.Config, openID, bindOpenID)
+	}
 	result := handler.Backend.Run(clean, opts)
 	log.Printf("bot=%s reply: %s", handlerID, clip(result.Reply, 2000))
+	if o.Memory != nil {
+		// Non-blocking record + maybe enqueue profiler.
+		go o.Memory.AfterDispatch(handler.Config, openID, bindOpenID, name, clean, result)
+	}
 	return DispatchResult{Reply: result.Reply, Status: result.Status, HandlerBotID: handlerID, ReceiveBotID: receiveBotID}
 }
 

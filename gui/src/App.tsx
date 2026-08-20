@@ -3,6 +3,7 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { ChatPage } from "./ChatPage";
+import { MemoryPage } from "./MemoryPage";
 import { findWebhookConflict } from "./webhookUnique";
 import "./App.css";
 
@@ -21,7 +22,7 @@ type StatusItem = {
 
 type LogLine = { seq: number; time: string; level: string; bot?: string; message: string };
 type ThemeId = "aurora" | "midnight" | "sand" | "ice";
-type PageId = "chat" | "system" | "bots" | "settings" | "skills" | "logs" | "help";
+type PageId = "chat" | "memory" | "system" | "bots" | "settings" | "skills" | "logs" | "help";
 
 type SkillInfo = {
   id: string;
@@ -727,6 +728,16 @@ function NavIcon({ id }: { id: PageId }) {
           d="M6.5 5.75h11a2.25 2.25 0 012.25 2.25v7a2.25 2.25 0 01-2.25 2.25H11.2L7 19.6v-2.35H6.5A2.25 2.25 0 014.25 15V8A2.25 2.25 0 016.5 5.75z"
         />
       ) : null}
+      {id === "memory" ? (
+        <>
+          <path
+            {...stroke}
+            d="M8.2 6.2h7.6A2.3 2.3 0 0118.1 8.5v7A2.3 2.3 0 0115.8 17.8H8.2A2.3 2.3 0 015.9 15.5v-7A2.3 2.3 0 018.2 6.2z"
+          />
+          <path {...stroke} d="M9.4 10.2h5.2M9.4 13h3.6" />
+          <circle cx="12" cy="7.4" r="0.9" fill="currentColor" />
+        </>
+      ) : null}
       {id === "bots" ? (
         <>
           <rect {...stroke} x="6.25" y="8" width="11.5" height="10.25" rx="3.2" />
@@ -1081,7 +1092,11 @@ function App() {
     cursor_model: "",
     claude_model: "",
     openai_model: "",
+    memory_enabled: false,
+    memory_gui_bind_enabled: false,
   });
+  const [memoryEnableHint, setMemoryEnableHint] = useState("");
+  const [memoryEnableBusy, setMemoryEnableBusy] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -1269,6 +1284,13 @@ function App() {
       cursor_model: String(defaults.cursor_model || ""),
       claude_model: String(defaults.claude_model || ""),
       openai_model: String(defaults.openai_model || ""),
+      memory_enabled: Boolean(
+        ((defaults.memory as Record<string, unknown> | undefined)?.enabled ?? false) === true,
+      ),
+      memory_gui_bind_enabled: Boolean(
+        ((defaults.memory as Record<string, unknown> | undefined)?.gui_bind_enabled ?? false) ===
+          true,
+      ),
     });
   }, []);
 
@@ -1437,7 +1459,13 @@ function App() {
     if (page !== "logs") return;
     logNearBottomRef.current = true;
     setShowLogScrollBottom(false);
-    const jump = () => jumpLogsToBottom();
+    const jump = () => {
+      // 用户已上滑时不要再强制贴底，否则会吞掉「滚到底部」按钮（e2e / 快速操作会踩中 80ms 定时器）。
+      if (!logNearBottomRef.current) {
+        return;
+      }
+      jumpLogsToBottom();
+    };
     jump();
     const id = window.requestAnimationFrame(jump);
     const t = window.setTimeout(jump, 80);
@@ -1944,6 +1972,15 @@ function App() {
       defaults.cursor_model = cliForm.cursor_model.trim();
       defaults.claude_model = cliForm.claude_model.trim();
       defaults.openai_model = cliForm.openai_model.trim();
+      const prevMem = {
+        ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
+          string,
+          unknown
+        >),
+      };
+      prevMem.enabled = cliForm.memory_enabled;
+      prevMem.gui_bind_enabled = cliForm.memory_gui_bind_enabled;
+      defaults.memory = prevMem;
       await saveConfig({ ...rawConfig, defaults });
       await refreshConfig();
       if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
@@ -2023,6 +2060,7 @@ function App() {
         {(
           [
             ["chat", "聊天"],
+            ["memory", "记忆"],
             ["bots", "机器人"],
             ["settings", "AI 设置"],
             ["skills", "Skills"],
@@ -2071,8 +2109,16 @@ function App() {
               ready={ready}
               active={page === "chat"}
               bots={status.map((b) => ({ id: b.id, name: b.name, backend: b.backend }))}
+              guiBindEnabled={cliForm.memory_gui_bind_enabled}
             />
           </div>
+        ) : null}
+        {page === "memory" ? (
+          <MemoryPage
+            api={api}
+            ready={ready}
+            bots={status.map((b) => ({ id: b.id, name: b.name }))}
+          />
         ) : null}
         {page === "system" && (
           <section className="page" key="system" data-testid="page-system">
@@ -2359,6 +2405,63 @@ function App() {
                       </span>
                     ) : null}
                   </div>
+                </div>
+              </div>
+
+              <div className="card soft pad settings-group" data-testid="group-memory">
+                <h3 className="section-inline">用户记忆</h3>
+                <p className="group-desc">
+                  按云之家 openID 维护画像并在回复时注入附录；默认关闭。开启前会探测 OpenAI 或 Claude。
+                </p>
+                <div className="row">
+                  <div className="row-text">
+                    <strong>启用用户记忆</strong>
+                    <span>defaults.memory.enabled（默认关）</span>
+                  </div>
+                  <Switch
+                    testId="memory-enabled-switch"
+                    checked={cliForm.memory_enabled}
+                    loading={memoryEnableBusy}
+                    onChange={async (v) => {
+                      if (!v) {
+                        setCliForm({ ...cliForm, memory_enabled: false });
+                        setMemoryEnableHint("");
+                        return;
+                      }
+                      setMemoryEnableBusy(true);
+                      setMemoryEnableHint("");
+                      try {
+                        const raw = await api("POST", "/v1/memory/enable-check");
+                        const res = JSON.parse(raw) as { ok?: boolean; reason?: string };
+                        if (!res.ok) {
+                          setMemoryEnableHint(res.reason || "探测失败，无法开启");
+                          return;
+                        }
+                        setCliForm({ ...cliForm, memory_enabled: true });
+                        setMemoryEnableHint("探测通过，保存设置后生效");
+                      } catch (e) {
+                        setMemoryEnableHint(String(e));
+                      } finally {
+                        setMemoryEnableBusy(false);
+                      }
+                    }}
+                  />
+                </div>
+                {memoryEnableHint ? (
+                  <span className="field-hint" data-testid="memory-enable-hint">
+                    {memoryEnableHint}
+                  </span>
+                ) : null}
+                <div className="row">
+                  <div className="row-text">
+                    <strong>GUI 聊天绑定 openID</strong>
+                    <span>仅调试；默认关。开启后聊天页可绑定真人 openID 走记忆</span>
+                  </div>
+                  <Switch
+                    testId="memory-gui-bind-switch"
+                    checked={cliForm.memory_gui_bind_enabled}
+                    onChange={(v) => setCliForm({ ...cliForm, memory_gui_bind_enabled: v })}
+                  />
                 </div>
               </div>
 

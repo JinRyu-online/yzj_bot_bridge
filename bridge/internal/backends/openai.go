@@ -122,6 +122,9 @@ func (o *OpenAIBackend) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	} else if len(o.cfg.Skills) > 0 {
 		system += "\n\n优先使用这些 skills: " + strings.Join(o.cfg.Skills, ", ")
 	}
+	if opts.MemoryPrompt != "" {
+		system += opts.MemoryPrompt
+	}
 	system += "\n工作区: " + opts.Workspace
 
 	messages := []oaMessage{}

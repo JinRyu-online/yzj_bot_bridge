@@ -98,6 +98,9 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 			prompt = prompt + "\n\n优先使用这些 skills: " + strings.Join(skills, ", ")
 		}
 	}
+	if opts.MemoryPrompt != "" {
+		prompt = prompt + opts.MemoryPrompt
+	}
 
 	args := []string{"--print", "--workspace", opts.Workspace, "--trust"}
 	if c.cfg.CursorSandbox != "" {
