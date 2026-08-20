@@ -42,6 +42,8 @@ async function installTauriMock(page: Page) {
             name: "Youkai",
             backend: "claude_code",
             workspace: "~/.yzj-bridge/workspace/youkai",
+            skills: ["hello-workspace", "kdlog"],
+            system_prompt: "你是 Youkai，负责开发协助。",
             channels: [
               {
                 group: "development",
@@ -140,6 +142,12 @@ async function installTauriMock(page: Page) {
           version: "1.0.0",
           description: "样例 Skill",
           dir: "C:\\\\Users\\\\mock\\\\.yzj-bridge\\\\skills\\\\hello-workspace",
+        },
+        {
+          id: "kdlog",
+          name: "KDLog",
+          version: "1.0.0",
+          description: "日志查询",
         },
       ] as { id: string; name: string; version?: string; description?: string; dir?: string }[],
       chatSessions: [
@@ -635,6 +643,17 @@ test("新建机器人可见 Skills 勾选区", async ({ page }) => {
   await expect(page.getByTestId("bot-modal")).toBeVisible();
   await expect(page.getByTestId("bot-skills")).toBeVisible();
   await page.getByTestId("bot-modal-close").click();
+});
+
+test("机器人摘要显示已配置 Skills 与系统提示词", async ({ page }) => {
+  await page.getByTestId("nav-bots").click();
+  await page.getByTestId("role-youkai").click();
+  const summary = page.getByTestId("bot-skills-summary");
+  await expect(summary).toContainText("Hello Workspace (hello-workspace)");
+  await expect(summary).toContainText("KDLog (kdlog)");
+  const prompt = page.getByTestId("bot-system-prompt-summary");
+  await expect(prompt).toBeVisible();
+  await expect(prompt).toContainText("你是 Youkai");
 });
 
 test("机器人排序稳定", async ({ page }) => {

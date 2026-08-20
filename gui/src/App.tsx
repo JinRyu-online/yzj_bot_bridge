@@ -70,6 +70,24 @@ function defaultBotWorkspace(botId: string): string {
   return id ? `~/.yzj-bridge/workspace/${id}` : "~/.yzj-bridge/workspace/";
 }
 
+function formatBotSkillsSummary(skills: unknown, installed: SkillInfo[]): string {
+  const ids = Array.isArray(skills)
+    ? skills.map((x) => String(x).trim()).filter(Boolean)
+    : [];
+  if (!ids.length) {
+    return "（未配置）";
+  }
+  return ids
+    .map((id) => {
+      const sk = installed.find((s) => s.id === id);
+      if (sk?.name && sk.name !== id) {
+        return `${sk.name} (${id})`;
+      }
+      return id;
+    })
+    .join("、");
+}
+
 function FieldLabel({ children, tip }: { children: React.ReactNode; tip?: string }) {
   const iconRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -2577,13 +2595,6 @@ function App() {
                         <p>
                           {selectedRoleId} · {selectedItem.backend} · {selectedItem.inbound_mode}
                         </p>
-                        {Array.isArray(selectedRoleConfig.skills) &&
-                        (selectedRoleConfig.skills as unknown[]).length > 0 ? (
-                          <p className="skill-meta" data-testid="bot-skills-summary">
-                            Skills:{" "}
-                            {(selectedRoleConfig.skills as unknown[]).map((x) => String(x)).join(", ")}
-                          </p>
-                        ) : null}
                       </div>
                       <button className="btn danger ghost" disabled={saving} onClick={deleteBot}>
                         删除机器人
@@ -2654,10 +2665,22 @@ function App() {
                           <span>工作目录</span>
                           <strong>{String(selectedRoleConfig.workspace || "-")}</strong>
                         </div>
+                        <div className="kv-full">
+                          <span>Skills</span>
+                          <strong data-testid="bot-skills-summary">
+                            {formatBotSkillsSummary(selectedRoleConfig.skills, installedSkills)}
+                          </strong>
+                        </div>
+                        <div className="kv-full">
+                          <span>系统提示词</span>
+                          <pre
+                            className="prompt-preview"
+                            data-testid="bot-system-prompt-summary"
+                          >
+                            {String(selectedRoleConfig.system_prompt || "（未设置系统提示词）")}
+                          </pre>
+                        </div>
                       </div>
-                      <pre className="prompt-preview">
-                        {String(selectedRoleConfig.system_prompt || "（未设置系统提示词）")}
-                      </pre>
                     </div>
                   </>
                 ) : (

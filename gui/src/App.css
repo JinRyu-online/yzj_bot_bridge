@@ -1643,6 +1643,11 @@ textarea {
   color: var(--muted);
 }
 
+[data-theme="ice"] .kv .prompt-preview {
+  border: none;
+  background: linear-gradient(180deg, #f7fbff, #eef4fa);
+}
+
 [data-theme="ice"] .kv > div {
   background: linear-gradient(180deg, #f8fbfe, #f1f6fb);
 }
@@ -1713,6 +1718,10 @@ textarea {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.kv > div.kv-full {
+  grid-column: 1 / -1;
+}
+
 .kv span {
   display: block;
   color: var(--muted);
@@ -1740,6 +1749,11 @@ textarea {
   padding: 12px;
   max-height: 180px;
   overflow: auto;
+}
+
+.kv .prompt-preview {
+  border: none;
+  margin-top: 2px;
 }
 
 .logs-page .logbox-wrap {
