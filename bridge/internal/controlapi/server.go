@@ -15,6 +15,7 @@ import (
 	"yzj-bridge/internal/backends"
 	"yzj-bridge/internal/chatstore"
 	"yzj-bridge/internal/logbuf"
+	"yzj-bridge/internal/paths"
 	"yzj-bridge/internal/runtime"
 )
 
@@ -261,9 +262,18 @@ func (s *Server) cursorModels(w http.ResponseWriter, r *http.Request) {
 	}
 	bin, _ := defs["cursor_bin"].(string)
 	key, _ := defs["cursor_api_key"].(string)
-	ws, _ := defs["cursor_workspace"].(string)
+	ws := ""
+	if s.RT != nil && s.RT.Reg != nil {
+		for _, b := range s.RT.Reg.List() {
+			be := strings.ToLower(strings.TrimSpace(b.Config.Backend))
+			if be == "cursor_cli" || be == "cursor" {
+				ws = b.Config.Workspace
+				break
+			}
+		}
+	}
 	if ws == "" {
-		ws, _ = defs["workspace"].(string)
+		ws = filepath.Join(paths.UserDataDir(), "workspace")
 	}
 	models, err := backends.ListCursorModels(bin, key, ws)
 	if err != nil {

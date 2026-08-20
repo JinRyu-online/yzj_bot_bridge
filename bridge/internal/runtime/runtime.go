@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"yzj-bridge/internal/orchestrator"
 	"yzj-bridge/internal/paths"
 	"yzj-bridge/internal/registry"
+	"yzj-bridge/internal/runlock"
 	"yzj-bridge/internal/sessions"
 	"yzj-bridge/internal/skills"
 	"yzj-bridge/internal/webhook"
@@ -84,14 +84,9 @@ func (r *Runtime) Load(restoreWSS bool) error {
 			log.Printf("warn: bot %s skills: %v (ignored until installed)", cfg.ID, err)
 		}
 	}
-	globalWS, _ := r.Defaults["workspace"].(string)
-	if globalWS == "" {
-		globalWS = filepath.Join(paths.UserDataDir(), "workspace")
-	}
-	_ = os.MkdirAll(globalWS, 0o755)
-	for _, key := range []string{"cursor_workspace", "claude_workspace"} {
-		if ws, ok := r.Defaults[key].(string); ok && strings.TrimSpace(ws) != "" {
-			_ = os.MkdirAll(ws, 0o755)
+	for _, cfg := range cfgs {
+		if strings.TrimSpace(cfg.Workspace) != "" {
+			_ = os.MkdirAll(cfg.Workspace, 0o755)
 		}
 	}
 
@@ -107,7 +102,7 @@ func (r *Runtime) Load(restoreWSS bool) error {
 	}
 	r.Reg.Replace(bots)
 	r.Orch = &orchestrator.Orchestrator{
-		Reg: r.Reg, Store: store, GlobalWorkspace: globalWS, Skills: r.SkillStore,
+		Reg: r.Reg, Store: store, Skills: r.SkillStore, Locks: runlock.New(),
 	}
 	r.Disp = &inbound.Dispatcher{
 		Reg: r.Reg, Orch: r.Orch, Dedupe: dedupe.New(), Jobs: jobs.New(), Store: store,

@@ -124,7 +124,8 @@ bots:
 - `defaults` + `bots` + 可选 `channels` 多群展开（runtime id：`{role}__{group}`）
 - `bots[].skills`：已安装 Skill 的 id 白名单（跨 OpenAI / Cursor / Claude）
 - `inbound_mode`: `websocket` | `webhook` | `both`
-- 会话：`session_mode` 为 `per_user`（默认，按人隔离）| `shared`（同通道共享上下文，且通道内排队）| `oneshot`
+- 会话：`session_mode` 为 `shared`（默认，同通道共享上下文且通道内排队）| `per_user`（按人隔离）| `oneshot`
+- **工作目录**：仅 `bots[].workspace`；留空自动补全为 `~/.yzj-bridge/workspace/{roleID}`；旧版 `defaults.workspace` / `cursor_workspace` / `claude_workspace` 仍可读作兼容
 - **GUI 聊天测试**（侧栏「聊天」页）始终按 `gui-chat:{sessionId}` 独立 agent 上下文，**不受** `session_mode` 影响，与云之家群聊隔离；详见 [docs/chat-test.md](docs/chat-test.md)
 - `job_queue`：空则 `shared` 用通道排队、其它用按人排队；也可显式 `user` / `channel`。通道排队时后来者会收到「排在第 N 位」，每次答完更新剩余排位
 - 会话文件：`sessions.json` v3；WSS 启停记忆：`wss_enabled.json`

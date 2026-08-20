@@ -51,9 +51,6 @@ func (c *Claude) ClearSession(string) (string, error) {
 }
 
 func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
-	workspaceMu.Lock()
-	defer workspaceMu.Unlock()
-
 	mode := opts.Mode
 	if mode == "" {
 		mode = "agent"

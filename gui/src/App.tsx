@@ -65,9 +65,6 @@ const THEMES: { id: ThemeId; label: string }[] = [
   { id: "sand", label: "暖砂" },
 ];
 
-const DEFAULT_CURSOR_WORKSPACE = "~/.yzj-bridge/workspace/cursor_cli";
-const DEFAULT_CLAUDE_WORKSPACE = "~/.yzj-bridge/workspace/claude_code";
-
 function defaultBotWorkspace(botId: string): string {
   const id = botId.trim();
   return id ? `~/.yzj-bridge/workspace/${id}` : "~/.yzj-bridge/workspace/";
@@ -646,7 +643,7 @@ function emptyBotForm(): BotForm {
     openai_use_defaults: true,
     skills: [],
     inbound_mode: "websocket",
-    session_mode: "per_user",
+    session_mode: "shared",
     workspace: defaultBotWorkspace(""),
   };
 }
@@ -1062,10 +1059,7 @@ function App() {
     anthropic_api_key: "",
     openai_api_key: "",
     openai_base_url: "",
-    cursor_workspace: DEFAULT_CURSOR_WORKSPACE,
-    claude_workspace: DEFAULT_CLAUDE_WORKSPACE,
     projects_root: "~",
-    workspace: "~",
     cursor_model: "",
     claude_model: "",
     openai_model: "",
@@ -1253,10 +1247,7 @@ function App() {
       anthropic_api_key: String(defaults.anthropic_api_key || ""),
       openai_api_key: String(defaults.openai_api_key || ""),
       openai_base_url: String(defaults.openai_base_url || ""),
-      cursor_workspace: pick("cursor_workspace", DEFAULT_CURSOR_WORKSPACE),
-      claude_workspace: pick("claude_workspace", DEFAULT_CLAUDE_WORKSPACE),
       projects_root: pick("projects_root", "~"),
-      workspace: pick("workspace", "~"),
       cursor_model: String(defaults.cursor_model || ""),
       claude_model: String(defaults.claude_model || ""),
       openai_model: String(defaults.openai_model || ""),
@@ -1512,32 +1503,6 @@ function App() {
     ];
   }, [selectedRoleConfig]);
 
-  const cliBots = useMemo(() => {
-    const bots = (rawConfig?.bots as Record<string, unknown>[]) || [];
-    return bots.filter((b) => {
-      const be = String(b.backend || "cursor_cli");
-      return be === "cursor_cli" || be === "cursor" || be === "claude_code" || be === "claude";
-    });
-  }, [rawConfig]);
-
-  const cursorBots = useMemo(
-    () =>
-      cliBots.filter((b) => {
-        const be = String(b.backend || "");
-        return be === "cursor_cli" || be === "cursor";
-      }),
-    [cliBots],
-  );
-
-  const claudeBots = useMemo(
-    () =>
-      cliBots.filter((b) => {
-        const be = String(b.backend || "");
-        return be === "claude_code" || be === "claude";
-      }),
-    [cliBots],
-  );
-
   async function saveConfig(next: Record<string, unknown>) {
     setSaving(true);
     try {
@@ -1689,7 +1654,7 @@ function App() {
       session_mode: String(
         selectedRoleConfig.session_mode ||
           (rawConfig?.defaults as Record<string, unknown> | undefined)?.session_mode ||
-          "per_user",
+          "shared",
       ),
       workspace: String(selectedRoleConfig.workspace || "").trim() || defaultBotWorkspace(botId),
     });
@@ -1940,15 +1905,14 @@ function App() {
       defaults.anthropic_api_key = cliForm.anthropic_api_key.trim();
       defaults.openai_api_key = cliForm.openai_api_key.trim();
       defaults.openai_base_url = cliForm.openai_base_url.trim();
-      defaults.cursor_workspace = cliForm.cursor_workspace.trim() || DEFAULT_CURSOR_WORKSPACE;
-      defaults.claude_workspace = cliForm.claude_workspace.trim() || DEFAULT_CLAUDE_WORKSPACE;
+      delete defaults.workspace;
+      delete defaults.cursor_workspace;
+      delete defaults.claude_workspace;
       defaults.projects_root = cliForm.projects_root.trim() || "~";
-      defaults.workspace = cliForm.workspace.trim() || "~";
       // 引擎模型分字段保存，不写共享 defaults.model，避免 Cursor/Claude/OpenAI 互相覆盖。
       defaults.cursor_model = cliForm.cursor_model.trim();
       defaults.claude_model = cliForm.claude_model.trim();
       defaults.openai_model = cliForm.openai_model.trim();
-      // One write: defaults + in-memory bot workspace edits (avoid stale overwrite).
       await saveConfig({ ...rawConfig, defaults });
       await refreshConfig();
       if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
@@ -1959,14 +1923,6 @@ function App() {
       }, 2200);
       void guiLog("保存 AI 设置成功");
     });
-  }
-
-  async function updateBotWorkspace(botId: string, workspace: string) {
-    if (!rawConfig) return;
-    const bots = ((rawConfig.bots as Record<string, unknown>[]) || []).map((b) =>
-      String(b.id) === botId ? { ...b, workspace } : b,
-    );
-    setRawConfig({ ...rawConfig, bots });
   }
 
   const logBotOptions = useMemo(
@@ -2250,43 +2206,12 @@ function App() {
                       </span>
                     )}
                   </div>
-                  <div className="field">
-                    <span className="field-label">默认启动目录</span>
-                    <input
-                      data-testid="cursor-workspace"
-                      value={cliForm.cursor_workspace}
-                      onChange={(e) => setCliForm({ ...cliForm, cursor_workspace: e.target.value })}
-                      placeholder={DEFAULT_CURSOR_WORKSPACE}
-                      title="Cursor 机器人未单独配置 workspace 时，agent 的工作目录（cwd）"
-                    />
-                    <span className="field-hint">
-                      未单独配置机器人 workspace 时使用（agent cwd）
-                    </span>
-                  </div>
                 </div>
-                {cursorBots.length ? (
-                  <div className="cli-bot-list nested">
-                    <div className="nested-title">该引擎下机器人目录覆盖</div>
-                    {cursorBots.map((b) => (
-                      <label key={String(b.id)} className="cli-bot-row">
-                        <span>
-                          <strong>{String(b.name || b.id)}</strong>
-                          <em>{String(b.id)}</em>
-                        </span>
-                        <input
-                          value={String(b.workspace || "~")}
-                          onChange={(e) => updateBotWorkspace(String(b.id), e.target.value)}
-                          placeholder="~"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                ) : null}
               </div>
 
               <div className="card soft pad settings-group" data-testid="group-claude">
                 <h3 className="section-inline">Claude Code</h3>
-                <p className="group-desc">claude 可执行文件、Anthropic Key 与启动目录</p>
+                <p className="group-desc">claude 可执行文件、Anthropic Key 与默认模型</p>
                 <div className="form-grid">
                   <label className="full">
                     可执行路径（claude_bin）
@@ -2339,38 +2264,7 @@ function App() {
                       </span>
                     )}
                   </div>
-                  <div className="field full">
-                    <span className="field-label">默认启动目录</span>
-                    <input
-                      data-testid="claude-workspace"
-                      value={cliForm.claude_workspace}
-                      onChange={(e) => setCliForm({ ...cliForm, claude_workspace: e.target.value })}
-                      placeholder={DEFAULT_CLAUDE_WORKSPACE}
-                      title="Claude Code 机器人未单独配置 workspace 时的工作目录（cwd）"
-                    />
-                    <span className="field-hint">
-                      未单独配置机器人 workspace 时使用（claude cwd）
-                    </span>
-                  </div>
                 </div>
-                {claudeBots.length ? (
-                  <div className="cli-bot-list nested">
-                    <div className="nested-title">该引擎下机器人目录覆盖</div>
-                    {claudeBots.map((b) => (
-                      <label key={String(b.id)} className="cli-bot-row">
-                        <span>
-                          <strong>{String(b.name || b.id)}</strong>
-                          <em>{String(b.id)}</em>
-                        </span>
-                        <input
-                          value={String(b.workspace || "~")}
-                          onChange={(e) => updateBotWorkspace(String(b.id), e.target.value)}
-                          placeholder="~"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                ) : null}
               </div>
 
               <div className="card soft pad settings-group" data-testid="group-openai">
@@ -2438,25 +2332,13 @@ function App() {
               </div>
 
               <div className="card soft pad settings-group" data-testid="group-dirs">
-                <h3 className="section-inline">全局目录</h3>
+                <h3 className="section-inline">项目目录</h3>
                 <p className="group-desc">
-                  工作区是机器人跑任务时的默认 cwd。projects_root 只用于解析聊天里的项目名（如
-                  --project api-sms）到本机代码目录，与 YZJBridge.exe 自身打包无关。
+                  projects_root 用于解析聊天里的项目名（如 --project api-sms）到本机代码目录。
+                  机器人工作目录请在各机器人设置中的 workspace 配置；留空则自动补全为
+                  ~/.yzj-bridge/workspace/&#123;机器人 id&#125;。
                 </p>
                 <div className="form-grid">
-                  <label className="full">
-                    通用工作区 workspace
-                    <input
-                      data-testid="workspace"
-                      value={cliForm.workspace}
-                      onChange={(e) => setCliForm({ ...cliForm, workspace: e.target.value })}
-                      placeholder="~"
-                    />
-                    <span className="field-hint">
-                      全局兜底 cwd：机器人 / 引擎目录都未指定时使用。填 ~ 表示用户主目录（Windows 即
-                      %USERPROFILE%）。当前磁盘里若仍是旧绝对路径，改完后请点「保存设置」。
-                    </span>
-                  </label>
                   <label className="full">
                     项目检索根目录 projects_root
                     <input

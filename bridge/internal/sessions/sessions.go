@@ -241,7 +241,7 @@ func (s *Store) SetProject(botID, userKey, name, path string) {
 	users[userKey] = e
 }
 
-func ResolveAgentWorkspace(cfg bot.Config, openID string, store *Store, globalWorkspace string) string {
+func ResolveAgentWorkspace(cfg bot.Config, openID string, store *Store) string {
 	if key, ok := ResolveSessionKey(cfg, openID); ok && store != nil {
 		e := store.GetEntry(cfg.ID, key)
 		if e.ProjectPath != "" {
@@ -257,9 +257,6 @@ func ResolveAgentWorkspace(cfg bot.Config, openID string, store *Store, globalWo
 	}
 	if cfg.Workspace != "" {
 		return cfg.Workspace
-	}
-	if globalWorkspace != "" {
-		return globalWorkspace
 	}
 	return filepath.Join(paths.UserDataDir(), "workspace")
 }

@@ -12,6 +12,7 @@ import (
 	"yzj-bridge/internal/bot"
 	"yzj-bridge/internal/orchestrator"
 	"yzj-bridge/internal/registry"
+	"yzj-bridge/internal/runlock"
 	"yzj-bridge/internal/runtime"
 )
 
@@ -41,7 +42,7 @@ func newChatTestServer(t *testing.T) *Server {
 	})
 	rt := &runtime.Runtime{
 		Reg:  reg,
-		Orch: &orchestrator.Orchestrator{Reg: reg, GlobalWorkspace: dir},
+		Orch: &orchestrator.Orchestrator{Reg: reg, Locks: runlock.New()},
 	}
 	s := &Server{
 		RT:       rt,
@@ -335,7 +336,7 @@ func newSharedBotChatServer(t *testing.T, cap *openIDCapturingBackend) *Server {
 	})
 	rt := &runtime.Runtime{
 		Reg:  reg,
-		Orch: &orchestrator.Orchestrator{Reg: reg, GlobalWorkspace: dir},
+		Orch: &orchestrator.Orchestrator{Reg: reg, Locks: runlock.New()},
 	}
 	return &Server{
 		RT:       rt,

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 	"unicode/utf8"
@@ -9,15 +10,16 @@ import (
 	"yzj-bridge/internal/bot"
 	"yzj-bridge/internal/commands"
 	"yzj-bridge/internal/registry"
+	"yzj-bridge/internal/runlock"
 	"yzj-bridge/internal/sessions"
 	"yzj-bridge/internal/skills"
 )
 
 type Orchestrator struct {
-	Reg             *registry.Registry
-	Store           *sessions.Store
-	GlobalWorkspace string
-	Skills          *skills.Store
+	Reg    *registry.Registry
+	Store  *sessions.Store
+	Skills *skills.Store
+	Locks  *runlock.Manager
 }
 
 type DispatchResult struct {
@@ -72,7 +74,32 @@ func (o *Orchestrator) dispatch(receiveBotID, content, openID, name string, over
 	}
 	clean := commands.StripBotMention(content, handler, o.Reg.Names(), false)
 	log.Printf("bot=%s ask from=%s: %s", handlerID, name, clip(clean, 800))
-	ws := sessions.ResolveAgentWorkspace(handler.Config, openID, o.Store, o.GlobalWorkspace)
+	ws := sessions.ResolveAgentWorkspace(handler.Config, openID, o.Store)
+	lockCtx := ctx
+	if lockCtx == nil {
+		lockCtx = context.Background()
+	}
+	if o.Locks != nil {
+		lockKey := runlock.SessionKey(
+			runlock.NormalizeEngine(handler.Config.Backend),
+			handler.Config.ID,
+			sessions.RunLockKey(handler.Config, openID),
+		)
+		release, err := o.Locks.Acquire(lockCtx, lockKey)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return DispatchResult{
+					Reply: "任务已中断", Status: "interrupted",
+					HandlerBotID: handlerID, ReceiveBotID: receiveBotID,
+				}
+			}
+			return DispatchResult{
+				Reply: err.Error(), Status: "start_error",
+				HandlerBotID: handlerID, ReceiveBotID: receiveBotID,
+			}
+		}
+		defer release()
+	}
 	mode := overrides["mode"]
 	if mode == "" {
 		mode = "agent"

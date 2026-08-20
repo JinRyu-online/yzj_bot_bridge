@@ -22,8 +22,8 @@ type File struct {
 
 func defaultMap() map[string]any {
 	return map[string]any{
-		"cursor_api_key": "", "anthropic_api_key": "", "workspace": "~",
-		"cursor_bin": "agent", "cursor_model": "", "claude_model": "", "session_mode": "per_user", "job_queue": "",
+		"cursor_api_key": "", "anthropic_api_key": "",
+		"cursor_bin": "agent", "cursor_model": "", "claude_model": "", "session_mode": "shared", "job_queue": "",
 		"allow_openids": []any{}, "allow_users": []any{},
 		"cursor_timeout": 600, "ack_pending": true, "mention_on_reply": true,
 		"cursor_sandbox": "disabled", "cursor_force": true,
@@ -42,8 +42,6 @@ func defaultMap() map[string]any {
 		"openai_max_tool_rounds": 8, "openai_model": "",
 		"openai_compact": true, "openai_compact_keep": 6,
 		"openai_compact_after_turns": 10, "openai_compact_after_runes": 8000,
-		"cursor_workspace": "~/.yzj-bridge/workspace/cursor_cli",
-		"claude_workspace": "~/.yzj-bridge/workspace/claude_code",
 	}
 }
 
@@ -94,7 +92,7 @@ func (f *File) MergedDefaults() map[string]any {
 		out[k] = v
 	}
 	syncModel(out)
-	for _, key := range []string{"workspace", "cursor_workspace", "claude_workspace", "projects_root"} {
+	for _, key := range []string{"projects_root"} {
 		if s, ok := out[key].(string); ok {
 			if strings.TrimSpace(s) == "" {
 				out[key] = "~"
@@ -269,18 +267,19 @@ func checkWebhookUnique(runtimeID, sendURL, webhookPath string, seenToken, seenU
 
 func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride string) bot.Config {
 	backend := firstNonEmpty(asString(m["backend"]), "cursor_cli")
-	workspace := ExpandHome(asString(m["workspace"]))
-	if workspace == "" {
+	rawWS := strings.TrimSpace(asString(m["workspace"]))
+	if rawWS == "" {
 		switch backend {
 		case "cursor_cli", "cursor":
-			workspace = ExpandHome(asString(m["cursor_workspace"]))
+			rawWS = strings.TrimSpace(asString(m["cursor_workspace"]))
 		case "claude_code", "claude":
-			workspace = ExpandHome(asString(m["claude_workspace"]))
+			rawWS = strings.TrimSpace(asString(m["claude_workspace"]))
 		}
 	}
-	if workspace == "" {
-		workspace = ExpandHome("~")
+	if rawWS == "" {
+		rawWS = filepath.Join("~/.yzj-bridge/workspace", roleID)
 	}
+	workspace := ExpandHome(rawWS)
 	// 模型优先级：通道/机器人覆盖 > 引擎默认字段。
 	model := strings.TrimSpace(modelOverride)
 	switch backend {
@@ -316,7 +315,7 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		OpenAICompactKeep:       asInt(m["openai_compact_keep"], 0),
 		OpenAICompactAfterTurns: asInt(m["openai_compact_after_turns"], 0),
 		OpenAICompactAfterRunes: asInt(m["openai_compact_after_runes"], 0),
-		SessionMode:             firstNonEmpty(asString(m["session_mode"]), "per_user"),
+		SessionMode:             firstNonEmpty(asString(m["session_mode"]), "shared"),
 		JobQueue:                strings.ToLower(strings.TrimSpace(asString(m["job_queue"]))),
 		SharedSessionKey:        firstNonEmpty(asString(m["shared_session_key"]), "__shared__"),
 		AckPending:              asBool(m["ack_pending"], true), MentionOnReply: asBool(m["mention_on_reply"], true),
@@ -396,10 +395,7 @@ func ValidatedDefaultYAML(candidates ...[]byte) ([]byte, error) {
 var minimalBootstrapYAML = []byte(`defaults:
   cursor_bin: "agent"
   claude_bin: "claude"
-  workspace: "~"
-  cursor_workspace: "~/.yzj-bridge/workspace/cursor_cli"
-  claude_workspace: "~/.yzj-bridge/workspace/claude_code"
-  session_mode: "per_user"
+  session_mode: "shared"
   inbound_mode: websocket
   sessions_file: "sessions.json"
   skills_dir: "~/.yzj-bridge/skills"
@@ -410,7 +406,6 @@ bots:
   - id: fairy
     name: "Fairy"
     backend: cursor_cli
-    workspace: "~"
     group: default
     send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_ME"
 `)

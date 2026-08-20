@@ -7,7 +7,6 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -15,8 +14,6 @@ import (
 	"yzj-bridge/internal/processutil"
 	"yzj-bridge/internal/sessions"
 )
-
-var workspaceMu sync.Mutex
 
 type Cursor struct {
 	cfg   bot.Config
@@ -62,9 +59,7 @@ func (c *Cursor) ClearSession(sessionID string) (string, error) {
 
 func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	started := time.Now()
-	workspaceMu.Lock()
-	defer workspaceMu.Unlock()
-	log.Printf("bot=%s cursor: lock acquired after %dms", c.cfg.ID, time.Since(started).Milliseconds())
+	log.Printf("bot=%s cursor: run start", c.cfg.ID)
 
 	mode := opts.Mode
 	if mode == "" {

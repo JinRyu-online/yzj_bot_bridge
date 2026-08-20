@@ -15,10 +15,8 @@ async function installTauriMock(page: Page) {
           anthropic_api_key: "",
           openai_api_key: "",
           openai_base_url: "",
-          cursor_workspace: "~/.yzj-bridge/workspace/cursor_cli",
-          claude_workspace: "~/.yzj-bridge/workspace/claude_code",
           projects_root: "~",
-          workspace: "~",
+          session_mode: "shared",
           cursor_model: "",
         },
         bots: [
@@ -26,7 +24,6 @@ async function installTauriMock(page: Page) {
             id: "fairy",
             name: "Fairy",
             backend: "cursor_cli",
-            workspace: "~",
             channels: [
               {
                 group: "workAssistant",

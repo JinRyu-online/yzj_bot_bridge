@@ -170,7 +170,7 @@ func (s *Server) chatSendMessage(w http.ResponseWriter, r *http.Request, session
 	// gui-chat:{sessionID} and always get their own agent context (see
 	// sessions.ResolveSessionKey), even when the bot is session_mode: shared.
 	openID := sessions.GUIChatOpenID(sessionID)
-	res := s.RT.Orch.DispatchWithContext(nil, receiveBotID, clean, openID, "GUI测试", map[string]string{})
+	res := s.RT.Orch.DispatchWithContext(r.Context(), receiveBotID, clean, openID, "GUI测试", map[string]string{})
 
 	userMsg := chatstore.Message{Role: "user", BotID: receiveBotID, Content: content}
 	assistantMsg := chatstore.Message{Role: "assistant", BotID: res.HandlerBotID, Content: res.Reply}
@@ -270,7 +270,7 @@ func (s *Server) chatStreamMessage(w http.ResponseWriter, r *http.Request, sessi
 	}
 
 	openID := sessions.GUIChatOpenID(sessionID)
-	res := s.RT.Orch.DispatchWithContextStream(nil, receiveBotID, clean, openID, "GUI测试", map[string]string{}, onStream)
+	res := s.RT.Orch.DispatchWithContextStream(r.Context(), receiveBotID, clean, openID, "GUI测试", map[string]string{}, onStream)
 
 	userMsg := chatstore.Message{Role: "user", BotID: receiveBotID, Content: content}
 	assistantMsg := chatstore.Message{
