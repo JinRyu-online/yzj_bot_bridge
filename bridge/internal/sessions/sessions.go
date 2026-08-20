@@ -4,12 +4,27 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"yzj-bridge/internal/bot"
 	"yzj-bridge/internal/paths"
 )
+
+// GUIChatOpenIDPrefix marks control-api GUI test chats. Keys with this prefix
+// always resolve to their own session store entry, independent of session_mode.
+const GUIChatOpenIDPrefix = "gui-chat:"
+
+// GUIChatOpenID builds the operator openID used by the GUI chat API.
+func GUIChatOpenID(sessionID string) string {
+	return GUIChatOpenIDPrefix + sessionID
+}
+
+// IsGUIChatOpenID reports whether openID belongs to a GUI chat session.
+func IsGUIChatOpenID(openID string) bool {
+	return strings.HasPrefix(openID, GUIChatOpenIDPrefix) && openID != GUIChatOpenIDPrefix
+}
 
 type HistoryItem struct {
 	ChatID    string `json:"chat_id"`
@@ -88,6 +103,11 @@ func (s *Store) Save() error {
 }
 
 func ResolveSessionKey(cfg bot.Config, openID string) (string, bool) {
+	// GUI test chats always get per-session agent context, even when the bot
+	// uses shared session_mode for Yunzhijia group chat.
+	if IsGUIChatOpenID(openID) {
+		return openID, true
+	}
 	switch cfg.SessionMode {
 	case "oneshot":
 		return "", false

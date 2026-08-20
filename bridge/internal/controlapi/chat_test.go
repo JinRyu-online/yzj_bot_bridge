@@ -305,6 +305,81 @@ func TestChatStreamMessageEmptyContent400(t *testing.T) {
 	}
 }
 
+// openIDCapturingBackend records OperatorOpenID from each Run for isolation tests.
+type openIDCapturingBackend struct {
+	reply   string
+	openIDs []string
+}
+
+func (b *openIDCapturingBackend) Run(_ string, opts bot.RunOpts) bot.RunResult {
+	b.openIDs = append(b.openIDs, opts.OperatorOpenID)
+	return bot.RunResult{Reply: b.reply, Status: "ok"}
+}
+func (b *openIDCapturingBackend) CreateSession() (string, error) { return "s1", nil }
+func (b *openIDCapturingBackend) ClearSession(string) (string, error) {
+	return "", nil
+}
+
+func newSharedBotChatServer(t *testing.T, cap *openIDCapturingBackend) *Server {
+	t.Helper()
+	dir := t.TempDir()
+	reg := registry.New()
+	reg.Replace([]*bot.Bot{
+		{
+			Config: bot.Config{
+				ID: "shared-bot", Name: "Shared", Backend: "fake",
+				SessionMode: "shared", SharedSessionKey: "__shared__",
+			},
+			Backend: cap,
+		},
+	})
+	rt := &runtime.Runtime{
+		Reg:  reg,
+		Orch: &orchestrator.Orchestrator{Reg: reg, GlobalWorkspace: dir},
+	}
+	return &Server{
+		RT:       rt,
+		Token:    "test-token",
+		ChatPath: filepath.Join(dir, "chat_sessions.json"),
+	}
+}
+
+func TestChatGUIUsesPerSessionOpenIDWithSharedBot(t *testing.T) {
+	cap := &openIDCapturingBackend{reply: "ok"}
+	s := newSharedBotChatServer(t, cap)
+
+	w := doChat(t, s, http.MethodPost, "/v1/chat/sessions", map[string]any{"bot_id": "shared-bot"})
+	var sessA chatSessionJSON
+	_ = json.Unmarshal(w.Body.Bytes(), &sessA)
+
+	w = doChat(t, s, http.MethodPost, "/v1/chat/sessions", map[string]any{"bot_id": "shared-bot"})
+	var sessB chatSessionJSON
+	_ = json.Unmarshal(w.Body.Bytes(), &sessB)
+
+	w = doChat(t, s, http.MethodPost, "/v1/chat/sessions/"+sessA.ID+"/messages", map[string]any{"content": "query A"})
+	if w.Code != 200 {
+		t.Fatalf("sessA status=%d body=%s", w.Code, w.Body.String())
+	}
+	w = doChat(t, s, http.MethodPost, "/v1/chat/sessions/"+sessB.ID+"/messages", map[string]any{"content": "query B"})
+	if w.Code != 200 {
+		t.Fatalf("sessB status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	if len(cap.openIDs) != 2 {
+		t.Fatalf("openIDs=%v want 2 entries", cap.openIDs)
+	}
+	wantA := "gui-chat:" + sessA.ID
+	wantB := "gui-chat:" + sessB.ID
+	if cap.openIDs[0] != wantA || cap.openIDs[1] != wantB {
+		t.Fatalf("openIDs=%v want [%q %q]", cap.openIDs, wantA, wantB)
+	}
+	for _, id := range cap.openIDs {
+		if id == "__shared__" {
+			t.Fatalf("GUI must not use shared key, got %q", id)
+		}
+	}
+}
+
 func TestChatStreamMessageMissingSession404(t *testing.T) {
 	s := newChatTestServer(t)
 	w := doChat(t, s, http.MethodPost, "/v1/chat/sessions/nope/messages/stream", map[string]any{"content": "hi"})
