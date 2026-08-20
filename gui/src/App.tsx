@@ -1773,8 +1773,18 @@ function App() {
         delete prev.openai_api_key;
         delete prev.model;
       }
-      if (botForm.backend !== "openai" && !botForm.model.trim()) {
-        delete prev.model;
+      if (botForm.backend !== "openai") {
+        // 切离 OpenAI 后清掉角色/通道上的旧 model，避免 Cursor CLI 误用 deepseek 等网关模型名。
+        delete prev.openai_base_url;
+        delete prev.openai_api_key;
+        if (!botForm.model.trim()) delete prev.model;
+        if (Array.isArray(prev.channels)) {
+          prev.channels = (prev.channels as Record<string, unknown>[]).map((ch) => {
+            const next = { ...ch };
+            delete next.model;
+            return next;
+          });
+        }
       }
       if (!Array.isArray(prev.channels)) {
         prev.group = botForm.group || prev.group || "default";
@@ -1875,7 +1885,10 @@ function App() {
       send_msg_url: channelForm.send_msg_url.trim(),
     };
     if (channelForm.id.trim()) entry.id = channelForm.id.trim();
-    if (channelForm.model.trim()) entry.model = channelForm.model.trim();
+    // 通道模型覆盖仅对 OpenAI 有意义；非 OpenAI 保存时显式丢掉，避免残留网关模型名。
+    if (String(bot.backend || "") === "openai" && channelForm.model.trim()) {
+      entry.model = channelForm.model.trim();
+    }
     if (editingChannelIdx === null) channels.push(entry);
     else channels[editingChannelIdx] = entry;
     bot.channels = channels;
@@ -2972,6 +2985,8 @@ function App() {
                     setBotForm({
                       ...botForm,
                       backend: v,
+                      // 离开 OpenAI 时清空角色模型，改用对应引擎的全局默认（如 cursor_model）。
+                      model: v === "openai" ? botForm.model : "",
                       openai_use_defaults: v === "openai" ? botForm.openai_use_defaults : true,
                     });
                     if (v === "openai" && !openaiModels.length) {
