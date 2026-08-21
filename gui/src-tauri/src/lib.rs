@@ -590,6 +590,74 @@ fn open_path_default_sync(path: &str) -> Result<(), String> {
     }
 }
 
+/// Open a visible terminal with the official Cursor/Claude install command.
+/// User confirms with Enter before the installer runs.
+fn open_cli_install_terminal_sync(engine: &str) -> Result<(), String> {
+    let engine = engine.trim().to_lowercase();
+    let (title, command) = match engine.as_str() {
+        "cursor" | "cursor_cli" | "agent" => (
+            "YZJ Bridge · 安装 Cursor CLI",
+            "irm 'https://cursor.com/install?win32=true' | iex",
+        ),
+        "claude" | "claude_code" => (
+            "YZJ Bridge · 安装 Claude Code",
+            "irm https://claude.ai/install.ps1 | iex",
+        ),
+        _ => return Err(format!("未知引擎: {engine}")),
+    };
+
+    #[cfg(windows)]
+    {
+        let ps = format!(
+            "$Host.UI.RawUI.WindowTitle = {title}; \
+Write-Host {title} -ForegroundColor Cyan; \
+Write-Host ''; \
+Write-Host '将执行官方安装命令:' -ForegroundColor Yellow; \
+Write-Host {cmd} -ForegroundColor White; \
+Write-Host ''; \
+Read-Host '按 Enter 开始安装（Ctrl+C 取消）' | Out-Null; \
+Write-Host ''; \
+Write-Host '安装中…' -ForegroundColor Cyan; \
+{raw}; \
+Write-Host ''; \
+Write-Host '若安装成功，请回到 YZJ Bridge → AI 设置 → 重新扫描' -ForegroundColor Green; \
+Read-Host '按 Enter 关闭窗口' | Out-Null",
+            title = ps_single_quote(title),
+            cmd = ps_single_quote(command),
+            raw = command,
+        );
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-NoExit",
+                "-Command",
+                &ps,
+            ])
+            .spawn()
+            .map_err(|e| format!("无法打开 PowerShell: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (title, command);
+        Err("当前仅 Windows 支持一键打开安装终端".into())
+    }
+}
+
+fn ps_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+#[tauri::command]
+async fn open_cli_install_terminal(engine: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_cli_install_terminal_sync(&engine))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn remove_autostart_cmd() -> Result<(), String> {
     if let Some(path) = autostart_cmd_path() {
         if path.exists() {
@@ -640,6 +708,7 @@ pub fn run() {
             set_autostart,
             reveal_path,
             open_path_default,
+            open_cli_install_terminal,
             get_close_to_tray,
             set_close_to_tray
         ])

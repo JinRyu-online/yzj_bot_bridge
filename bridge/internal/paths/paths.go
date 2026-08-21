@@ -42,11 +42,19 @@ func MemoryDir() string {
 	return filepath.Join(UserDataDir(), "memory")
 }
 
+// LogsDir returns ~/.yzj-bridge/logs (runtime jsonl + conversations/).
+func LogsDir() string {
+	return filepath.Join(UserDataDir(), "logs")
+}
+
 func EnsureUserData() error {
 	if err := os.MkdirAll(UserDataDir(), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(SkillsDir(), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(LogsDir(), 0o755); err != nil {
 		return err
 	}
 	return os.MkdirAll(MemoryDir(), 0o755)

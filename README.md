@@ -129,6 +129,7 @@ bots:
 - **GUI 聊天测试**（侧栏「聊天」页）始终按 `gui-chat:{sessionId}` 独立 agent 上下文，**不受** `session_mode` 影响，与云之家群聊隔离；详见 [docs/chat-test.md](docs/chat-test.md)
 - `job_queue`：空则 `shared` 用通道排队、其它用按人排队；也可显式 `user` / `channel`。通道排队时后来者会收到「排在第 N 位」，每次答完更新剩余排位
 - 会话文件：`sessions.json` v3；WSS 启停记忆：`wss_enabled.json`
+- 运行日志：`~/.yzj-bridge/logs/runtime-YYYY-MM-DD.jsonl`（按日追加；GUI 仍只展示进程内最近 2000 条）
 - 参考模板：`config.default.yaml`（占位符，无真实密钥；首次启动会复制到用户目录）
 
 ## 目录

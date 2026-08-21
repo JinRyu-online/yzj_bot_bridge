@@ -864,6 +864,25 @@ function App() {
   });
   const [memoryEnableHint, setMemoryEnableHint] = useState("");
   const [memoryEnableBusy, setMemoryEnableBusy] = useState(false);
+  const [cursorDiscover, setCursorDiscover] = useState<{
+    found: boolean;
+    path?: string;
+    version?: string;
+    message?: string;
+    install?: { shell: string; command: string; hint: string };
+  } | null>(null);
+  const [claudeDiscover, setClaudeDiscover] = useState<{
+    found: boolean;
+    path?: string;
+    version?: string;
+    message?: string;
+    install?: { shell: string; command: string; hint: string };
+  } | null>(null);
+  const [discoveringCursor, setDiscoveringCursor] = useState(false);
+  const [discoveringClaude, setDiscoveringClaude] = useState(false);
+  const [installingCursor, setInstallingCursor] = useState(false);
+  const [installingClaude, setInstallingClaude] = useState(false);
+  const cliDiscoverTried = useRef(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -965,6 +984,77 @@ function App() {
       void guiLog(`拉取 Claude 模型失败: ${e}`, "ERROR");
     } finally {
       setLoadingClaudeModels(false);
+    }
+  }, []);
+
+  const discoverCli = useCallback(
+    async (engine: "cursor" | "claude", opts?: { autofill?: boolean }) => {
+      const autofill = opts?.autofill !== false;
+      const setBusy = engine === "cursor" ? setDiscoveringCursor : setDiscoveringClaude;
+      const setResult = engine === "cursor" ? setCursorDiscover : setClaudeDiscover;
+      const currentBin = engine === "cursor" ? cliForm.cursor_bin : cliForm.claude_bin;
+      setBusy(true);
+      try {
+        const raw = await api("POST", "/v1/backends/cli/discover", {
+          engine,
+          bin: currentBin,
+        });
+        const data = JSON.parse(raw) as {
+          found?: boolean;
+          path?: string;
+          version?: string;
+          message?: string;
+          install?: { shell: string; command: string; hint: string };
+        };
+        setResult({
+          found: !!data.found,
+          path: data.path,
+          version: data.version,
+          message: data.message,
+          install: data.install,
+        });
+        if (autofill && data.found && data.path) {
+          const cur = currentBin.trim();
+          const bare =
+            !cur ||
+            cur === "agent" ||
+            cur === "claude" ||
+            cur === "cursor-agent" ||
+            (!cur.includes("/") && !cur.includes("\\") && !cur.includes(":"));
+          if (bare && data.path !== cur) {
+            if (engine === "cursor") {
+              setCliForm((prev) => ({ ...prev, cursor_bin: data.path || prev.cursor_bin }));
+            } else {
+              setCliForm((prev) => ({ ...prev, claude_bin: data.path || prev.claude_bin }));
+            }
+            void guiLog(`自动填入 ${engine} 路径: ${data.path}`);
+          }
+        }
+        return data;
+      } catch (e) {
+        setResult({
+          found: false,
+          message: String(e),
+        });
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [cliForm.cursor_bin, cliForm.claude_bin],
+  );
+
+  const openCliInstall = useCallback(async (engine: "cursor" | "claude") => {
+    const setBusy = engine === "cursor" ? setInstallingCursor : setInstallingClaude;
+    setBusy(true);
+    try {
+      await invoke("open_cli_install_terminal", { engine });
+      void guiLog(`已打开 ${engine === "cursor" ? "Cursor CLI" : "Claude Code"} 安装终端`);
+    } catch (e) {
+      setError(String(e));
+      void guiLog(`打开安装终端失败: ${e}`, "ERROR");
+    } finally {
+      setBusy(false);
     }
   }, []);
 
@@ -1331,6 +1421,12 @@ function App() {
   useEffect(() => {
     if (!ready || page !== "settings") return;
 
+    if (!cliDiscoverTried.current) {
+      cliDiscoverTried.current = true;
+      void discoverCli("cursor");
+      void discoverCli("claude");
+    }
+
     if (!cursorModelsAutoTried.current && !loadingCursorModels) {
       const bin = cliForm.cursor_bin.trim();
       if (bin) {
@@ -1371,7 +1467,14 @@ function App() {
     refreshCursorModels,
     refreshClaudeModels,
     probeOpenai,
+    discoverCli,
   ]);
+
+  useEffect(() => {
+    if (page !== "settings") {
+      cliDiscoverTried.current = false;
+    }
+  }, [page]);
 
   async function toggleCloseToTray(v: boolean) {
     await withMinLoading(setLoadingCloseTray, async () => {
@@ -1997,12 +2100,52 @@ function App() {
                 <div className="form-grid">
                   <label className="full">
                     可执行路径（cursor_bin）
-        <input
-                      data-testid="cursor-bin"
-                      value={cliForm.cursor_bin}
-                      onChange={(e) => setCliForm({ ...cliForm, cursor_bin: e.target.value })}
-                      placeholder="agent"
-                    />
+                    <div className="inline-field cli-bin-row">
+                      <input
+                        data-testid="cursor-bin"
+                        value={cliForm.cursor_bin}
+                        onChange={(e) => setCliForm({ ...cliForm, cursor_bin: e.target.value })}
+                        placeholder="agent 或绝对路径"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${discoveringCursor ? " loading" : ""}`}
+                        data-testid="discover-cursor"
+                        disabled={discoveringCursor}
+                        onClick={() => void discoverCli("cursor", { autofill: true })}
+                      >
+                        {discoveringCursor ? <span className="spinner dark" /> : null}
+                        <span>{discoveringCursor ? "扫描中" : "重新扫描"}</span>
+                      </button>
+                      {cursorDiscover && !cursorDiscover.found ? (
+                        <button
+                          type="button"
+                          className={`action-chip side${installingCursor ? " loading" : ""}`}
+                          data-testid="install-cursor"
+                          disabled={installingCursor}
+                          onClick={() => void openCliInstall("cursor")}
+                        >
+                          {installingCursor ? <span className="spinner dark" /> : null}
+                          <span>{installingCursor ? "打开中" : "一键安装"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {cursorDiscover ? (
+                      <span
+                        className={`field-hint${cursorDiscover.found ? " ok" : " error"}`}
+                        data-testid="cursor-discover-hint"
+                      >
+                        {cursorDiscover.found
+                          ? `已找到${cursorDiscover.version ? `（${cursorDiscover.version}）` : ""}：${cursorDiscover.path || ""}`
+                          : cursorDiscover.message ||
+                            cursorDiscover.install?.hint ||
+                            "未找到 Cursor CLI，可一键打开终端安装"}
+                      </span>
+                    ) : (
+                      <span className="field-hint spacer" aria-hidden="true">
+                        &nbsp;
+                      </span>
+                    )}
                   </label>
                   <label className="full">
                     API Key（cursor_api_key）
@@ -2055,12 +2198,52 @@ function App() {
                 <div className="form-grid">
                   <label className="full">
                     可执行路径（claude_bin）
-                    <input
-                      data-testid="claude-bin"
-                      value={cliForm.claude_bin}
-                      onChange={(e) => setCliForm({ ...cliForm, claude_bin: e.target.value })}
-                      placeholder="claude"
-                    />
+                    <div className="inline-field cli-bin-row">
+                      <input
+                        data-testid="claude-bin"
+                        value={cliForm.claude_bin}
+                        onChange={(e) => setCliForm({ ...cliForm, claude_bin: e.target.value })}
+                        placeholder="claude 或绝对路径"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${discoveringClaude ? " loading" : ""}`}
+                        data-testid="discover-claude"
+                        disabled={discoveringClaude}
+                        onClick={() => void discoverCli("claude", { autofill: true })}
+                      >
+                        {discoveringClaude ? <span className="spinner dark" /> : null}
+                        <span>{discoveringClaude ? "扫描中" : "重新扫描"}</span>
+                      </button>
+                      {claudeDiscover && !claudeDiscover.found ? (
+                        <button
+                          type="button"
+                          className={`action-chip side${installingClaude ? " loading" : ""}`}
+                          data-testid="install-claude"
+                          disabled={installingClaude}
+                          onClick={() => void openCliInstall("claude")}
+                        >
+                          {installingClaude ? <span className="spinner dark" /> : null}
+                          <span>{installingClaude ? "打开中" : "一键安装"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {claudeDiscover ? (
+                      <span
+                        className={`field-hint${claudeDiscover.found ? " ok" : " error"}`}
+                        data-testid="claude-discover-hint"
+                      >
+                        {claudeDiscover.found
+                          ? `已找到${claudeDiscover.version ? `（${claudeDiscover.version}）` : ""}：${claudeDiscover.path || ""}`
+                          : claudeDiscover.message ||
+                            claudeDiscover.install?.hint ||
+                            "未找到 Claude Code，可一键打开终端安装"}
+                      </span>
+                    ) : (
+                      <span className="field-hint spacer" aria-hidden="true">
+                        &nbsp;
+                      </span>
+                    )}
                   </label>
                   <label className="full">
                     API Key（anthropic_api_key）
@@ -2575,7 +2758,7 @@ function App() {
             <header className="page-head">
               <div>
                 <h1>运行日志</h1>
-                <p className="subtitle">桥与面板事件 · 可按来源过滤</p>
+                <p className="subtitle">桥与面板事件 · 可按来源过滤 · 同时写入 ~/.yzj-bridge/logs/runtime-日期.jsonl</p>
               </div>
               <div className="head-actions">
                 <FancySelect

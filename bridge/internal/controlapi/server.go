@@ -74,6 +74,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/backends/cursor/models", s.auth(s.cursorModels))
 	mux.HandleFunc("/v1/backends/claude/models", s.auth(s.claudeModels))
 	mux.HandleFunc("/v1/backends/openai/probe", s.auth(s.openaiProbe))
+	mux.HandleFunc("/v1/backends/cli/discover", s.auth(s.cliDiscover))
 	mux.HandleFunc("/v1/skills", s.auth(s.skillsRoot))
 	mux.HandleFunc("/v1/skills/", s.auth(s.skillsRoot))
 	mux.HandleFunc("/v1/chat/sessions", s.auth(s.chatSessions))
@@ -330,6 +331,42 @@ func (s *Server) openaiProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	res := backends.ProbeOpenAI(body.BaseURL, body.APIKey)
 	writeJSON(w, res)
+}
+
+// cliDiscover 扫描本机 Cursor CLI / Claude Code 可执行文件，并返回官方安装提示。
+func (s *Server) cliDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	engine := r.URL.Query().Get("engine")
+	configured := r.URL.Query().Get("bin")
+	if r.Method == http.MethodPost {
+		var body struct {
+			Engine string `json:"engine"`
+			Bin    string `json:"bin"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Engine != "" {
+			engine = body.Engine
+		}
+		if body.Bin != "" {
+			configured = body.Bin
+		}
+	}
+	if engine == "" {
+		http.Error(w, "engine required (cursor|claude)", 400)
+		return
+	}
+	if configured == "" && s.RT != nil && s.RT.Defaults != nil {
+		switch strings.ToLower(strings.TrimSpace(engine)) {
+		case "cursor", "cursor_cli", "agent":
+			configured, _ = s.RT.Defaults["cursor_bin"].(string)
+		case "claude", "claude_code":
+			configured, _ = s.RT.Defaults["claude_bin"].(string)
+		}
+	}
+	writeJSON(w, backends.DiscoverCLI(engine, configured))
 }
 
 func fmtSscanf(s string, since *int64) (int, error) {

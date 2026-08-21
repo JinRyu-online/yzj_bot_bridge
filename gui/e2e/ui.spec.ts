@@ -233,6 +233,9 @@ async function installTauriMock(page: Page) {
           case "open_path_default":
             state.opened.push(String(args.path || ""));
             return null;
+          case "open_cli_install_terminal":
+            state.opened.push(`install:${String(args.engine || "")}`);
+            return null;
           case "plugin:opener|open_path":
             state.opened.push(String(args.path || ""));
             return null;
@@ -323,6 +326,34 @@ async function installTauriMock(page: Page) {
                   { id: "gpt-4o-mini", label: "gpt-4o-mini" },
                   { id: "gpt-4o", label: "gpt-4o" },
                 ],
+              });
+            }
+            if (path.startsWith("/v1/backends/cli/discover")) {
+              const body = JSON.parse(bodyRaw || "{}") as { engine?: string };
+              const engine = String(body.engine || "cursor");
+              if (engine === "claude") {
+                return JSON.stringify({
+                  engine: "claude",
+                  found: false,
+                  message: "未在 PATH 或常见安装目录找到，可一键打开终端安装",
+                  install: {
+                    shell: "powershell",
+                    command: "irm https://claude.ai/install.ps1 | iex",
+                    hint: "将打开 PowerShell，确认后执行 Claude Code 官方安装脚本",
+                  },
+                });
+              }
+              return JSON.stringify({
+                engine: "cursor",
+                found: true,
+                path: "C:\\\\Users\\\\mock\\\\AppData\\\\Local\\\\cursor-agent\\\\agent.exe",
+                version: "2026.08.11",
+                message: "已找到可执行文件",
+                install: {
+                  shell: "powershell",
+                  command: "irm 'https://cursor.com/install?win32=true' | iex",
+                  hint: "将打开 PowerShell，确认后执行 Cursor 官方安装脚本",
+                },
               });
             }
             if (path === "/v1/memory/enable-check" && method === "POST") {
@@ -523,6 +554,19 @@ test("系统页：关闭到托盘开关", async ({ page }) => {
   await expect(sw).toHaveAttribute("aria-checked", "true");
   await sw.click();
   await expect(sw).toHaveAttribute("aria-checked", "false");
+});
+
+test("AI 设置：CLI 自动扫描与一键安装入口", async ({ page }) => {
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("group-cursor")).toBeVisible();
+  await expect(page.getByTestId("discover-cursor")).toBeVisible();
+  await expect(page.getByTestId("discover-claude")).toBeVisible();
+  // Mock: cursor found → autofill absolute path; claude missing → install button.
+  await expect(page.getByTestId("cursor-discover-hint")).toContainText("已找到");
+  await expect(page.getByTestId("cursor-bin")).toHaveValue(/cursor-agent/);
+  await expect(page.getByTestId("claude-discover-hint")).toContainText("未在 PATH");
+  await expect(page.getByTestId("install-claude")).toBeVisible();
+  await page.getByTestId("install-claude").click();
 });
 
 test("AI 设置：Cursor 模型下拉与 OpenAI 连通性", async ({ page }) => {

@@ -532,10 +532,18 @@ textarea {
 
 .inline-field {
   display: flex;
-  gap: 0;
+  gap: 8px;
   align-items: stretch;
   min-width: 0;
   width: 100%;
+}
+
+.inline-field > input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  box-sizing: border-box;
+  border-radius: 12px;
 }
 
 .inline-field .fancy-select {
@@ -545,7 +553,7 @@ textarea {
 }
 
 .inline-field .fancy-select .fancy-select-trigger {
-  border-radius: 12px 0 0 12px;
+  border-radius: 12px;
   height: 42px;
   padding: 0 12px;
   box-sizing: border-box;
@@ -557,10 +565,10 @@ textarea {
   min-width: 96px;
   height: 42px;
   box-sizing: border-box;
-  border-radius: 0 12px 12px 0;
+  border-radius: 12px;
   margin: 0;
-  padding: 0 12px;
-  border-left-width: 0;
+  padding: 0 14px;
+  white-space: nowrap;
 }
 
 .field {
@@ -693,6 +701,11 @@ textarea {
   line-height: 1.35;
   color: var(--muted);
   opacity: 0.85;
+  word-break: break-all;
+}
+
+.cli-bin-row {
+  align-items: stretch;
 }
 
 .field-hint.error,
