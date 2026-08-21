@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 function fuzzyMatch(text: string, query: string): boolean {
@@ -27,7 +27,7 @@ export function FancySelect<T extends string>({
   onOpen,
 }: {
   value: T;
-  options: { id: T; label: string }[];
+  options: { id: T; label: string; icon?: ReactNode }[];
   onChange: (v: T) => void;
   testId?: string;
   className?: string;
@@ -203,6 +203,7 @@ export function FancySelect<T extends string>({
                     onMouseEnter={() => setActiveIdx(idx)}
                     onClick={() => pick(o.id)}
                   >
+                    {o.icon ? <span className="fancy-option-icon">{o.icon}</span> : null}
                     {o.label}
                   </button>
                 ))
@@ -241,6 +242,9 @@ export function FancySelect<T extends string>({
         }}
         title={current?.label || value || placeholder || ""}
       >
+        {current?.icon ? (
+          <span className="fancy-trigger-icon">{current.icon}</span>
+        ) : null}
         <span className="fancy-select-label">
           {current?.label || value || placeholder || "请选择"}
         </span>

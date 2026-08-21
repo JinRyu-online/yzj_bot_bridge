@@ -532,6 +532,22 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fancy-option-icon,
+.fancy-trigger-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.fancy-option-icon svg,
+.fancy-trigger-icon svg {
+  display: block;
 }
 
 .fancy-option:hover {
@@ -1330,6 +1346,13 @@ textarea {
   margin: 0 0 12px;
   font-size: 14px;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-inline .engine-icon {
+  flex-shrink: 0;
 }
 
 .cli-bot-list {
