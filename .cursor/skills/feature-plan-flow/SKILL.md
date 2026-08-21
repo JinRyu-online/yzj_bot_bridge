@@ -25,7 +25,7 @@ disable-model-invocation: true
 
 1. 并行检查：`git status`、`git diff`（含 staged）、`git log -5 --oneline`。
 2. 若工作区干净：向用户说明「无需 commit」，直接 Step 2。
-3. 若有改动：
+3. 若有改动且与当前期望功能无关：
    - 按仓库既有风格写 1–2 句 commit message（说明 why）。
    - `git add` 相关文件后 commit（遵循用户的 git 安全协议：不改 config、不 `--no-verify`、不 amend 除非规则允许）。
    - **不要 push**，除非用户另行要求。
@@ -47,7 +47,7 @@ disable-model-invocation: true
 
 ## Step 4 — Subagent 审批计划
 
-1. 用 `Task` 拉起 **一个** subagent（`subagent_type: generalPurpose`），只做计划评审，不改代码。
+1. 用 `Task` 拉起 subagent（`subagent_type: generalPurpose`），只做计划评审，不改代码。
 2. Prompt 须包含：用户原始需求、完整计划正文、仓库约束（若涉及 GUI 则要求对照 [docs/gui-design.md](../../../docs/gui-design.md)）。
 3. 要求 subagent 输出固定结构：
 
