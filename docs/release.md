@@ -6,6 +6,8 @@
 
 当前仓库版本号写在 [`gui/src-tauri/tauri.conf.json`](../gui/src-tauri/tauri.conf.json) 的 `version`（例如 `0.2.1`）。Git tag 必须是 `v` + 同一版本号，例如 `v0.2.1`。
 
+> ⚠️ **发版铁律：先改版本号，再打 tag。** 安装包文件名（`YZJBridge-<version>-Windows-x64-setup.exe`）与打包产物名称都取自 `tauri.conf.json` 的 `version`，不是 git tag。若只打 tag 不更新 `tauri.conf.json`，打包出来的仍是旧版本号（例如打了 `v0.3.2` 却打包成 `YZJBridge-0.3.1-...`）。因此每次发版必须：① 改 `tauri.conf.json` 的 `version` 并提交 → ② 再打同号 tag。二者不一致视为发布事故。
+
 ---
 
 ## 客户端自动更新（轻量 GitHub Releases）
@@ -33,6 +35,8 @@
 ### 1. 改版本并提交
 
 把 `gui/src-tauri/tauri.conf.json` 的 `version` 改成新号，例如 `0.2.2`。不要复用已经发布过的 tag。
+
+> 改版本前先确认 `tauri.conf.json` 的 `version` 与本次 tag 完全一致（如 `0.2.2` ↔ `v0.2.2`），否则打包产物与安装包文件名会停留在旧版本号。
 
 ```powershell
 git add gui/src-tauri/tauri.conf.json
