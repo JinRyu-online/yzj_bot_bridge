@@ -38,9 +38,17 @@ type Props = {
 };
 
 function fieldText(f?: Field): string {
-  const m = (f?.manual || "").trim();
-  if (m) return m;
+  return (f?.manual || "").trim();
+}
+
+function inferredText(f?: Field): string {
   return (f?.inferred || "").trim();
+}
+
+function fieldSource(f?: Field): "manual" | "inferred" | "empty" {
+  if (fieldText(f)) return "manual";
+  if (inferredText(f)) return "inferred";
+  return "empty";
 }
 
 function pendingTurns(p: Profile): number {
@@ -70,7 +78,6 @@ export function MemoryPage({ api, ready }: Props) {
     donts: "",
     notes: "",
   });
-
   const refresh = useCallback(
     async (opts?: { notify?: boolean }) => {
       if (!ready) return;
@@ -109,14 +116,12 @@ export function MemoryPage({ api, ready }: Props) {
     if (!selected) return;
     setDraft({
       display_name: selected.display_name || "",
+      // 输入框只编辑手动值；推断值单独展示为徽标/小字，避免误固化。
       how_to_address: fieldText(selected.how_to_address),
       role: fieldText(selected.role),
       ask_style: fieldText(selected.ask_style),
       reply_style: fieldText(selected.reply_style),
-      donts: (selected.donts?.manual?.length
-        ? selected.donts.manual
-        : selected.donts?.inferred || []
-      ).join("；"),
+      donts: (selected.donts?.manual || []).join("；"),
       notes: fieldText(selected.notes),
     });
   }, [selected]);
@@ -126,20 +131,28 @@ export function MemoryPage({ api, ready }: Props) {
     setBusy(true);
     setError("");
     try {
-      const body = {
-        display_name: draft.display_name,
-        how_to_address: { manual: draft.how_to_address },
-        role: { manual: draft.role },
-        ask_style: { manual: draft.ask_style },
-        reply_style: { manual: draft.reply_style },
-        notes: { manual: draft.notes },
-        donts: {
-          manual: draft.donts
-            .split(/[；;,\n]/)
-            .map((s) => s.trim())
-            .filter(Boolean),
-        },
+      // 只提交用户实际动过的字段；清空某字段时发送 manual:"" 以删除手动值（推断值保留）。
+      const body: Record<string, unknown> = {};
+      if (draft.display_name !== (selected.display_name || "")) {
+        body.display_name = draft.display_name;
+      }
+      const setIfChanged = (key: string, value: string, field?: Field) => {
+        if (value === fieldText(field)) return;
+        body[key] = { manual: value };
       };
+      setIfChanged("how_to_address", draft.how_to_address, selected.how_to_address);
+      setIfChanged("role", draft.role, selected.role);
+      setIfChanged("ask_style", draft.ask_style, selected.ask_style);
+      setIfChanged("reply_style", draft.reply_style, selected.reply_style);
+      setIfChanged("notes", draft.notes, selected.notes);
+      const donts = draft.donts
+        .split(/[；;,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const oldDonts = (selected.donts?.manual || []).join("；");
+      if (donts.join("；") !== oldDonts) {
+        body.donts = { manual: donts };
+      }
       const raw = await api(
         "PATCH",
         `/v1/memory/profiles/${encodeURIComponent(selected.open_id)}`,
@@ -362,7 +375,9 @@ export function MemoryPage({ api, ready }: Props) {
                     data-testid="memory-field-display_name"
                     value={draft.display_name}
                     onChange={(e) => setDraft({ ...draft, display_name: e.target.value })}
+                    placeholder="（未设置）"
                   />
+                  <span className="memory-field-hint">仅手动设置，不参与自动画像</span>
                 </label>
                 {(
                   [
@@ -372,34 +387,114 @@ export function MemoryPage({ api, ready }: Props) {
                     ["reply_style", "回答风格", selected.reply_style],
                     ["notes", "风格说明", selected.notes],
                   ] as const
-                ).map(([key, label, field]) => (
-                  <label key={key} className="full">
-                    <span className="field-label memory-field-label">
-                      <span>{label}</span>
-                      <button
-                        type="button"
-                        className={`btn ghost xs${field?.locked ? " memory-lock-on" : ""}`}
-                        data-testid={`memory-lock-${key}`}
-                        disabled={busy}
-                        onClick={() => void toggleLock(key, !field?.locked)}
-                      >
-                        {field?.locked ? "已锁定" : "锁定"}
-                      </button>
-                    </span>
-                    <input
-                      data-testid={`memory-field-${key}`}
-                      value={draft[key]}
-                      onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
-                    />
-                  </label>
-                ))}
+                ).map(([key, label, field]) => {
+                  const src = fieldSource(field);
+                  const locked = !!field?.locked;
+                  return (
+                    <label key={key} className="full">
+                      <span className="field-label memory-field-label">
+                        <span className="memory-field-name">
+                          <span>{label}</span>
+                          {src !== "empty" ? (
+                            <span
+                              className={`memory-src-tag ${src}`}
+                              data-testid={`memory-src-${key}`}
+                              title={
+                                src === "manual"
+                                  ? "手动设置：人工填写的值，优先于推断"
+                                  : "自动推断：画像器从问答中提取，可手动覆盖"
+                              }
+                            >
+                              {src === "manual" ? "手动" : "推断"}
+                            </span>
+                          ) : null}
+                          {locked ? (
+                            <span
+                              className="memory-src-tag locked"
+                              data-testid={`memory-locked-${key}`}
+                              title="已锁定：画像器不再自动更新此字段"
+                            >
+                              已锁定
+                            </span>
+                          ) : null}
+                        </span>
+                        <button
+                          type="button"
+                          className={`btn ghost xs${locked ? " memory-lock-on" : ""}`}
+                          data-testid={`memory-lock-${key}`}
+                          disabled={busy}
+                          onClick={() => void toggleLock(key, !locked)}
+                          title={
+                            locked
+                              ? "已锁定：画像器不会自动覆盖此字段。点击解锁。"
+                              : "锁定后画像器不会自动覆盖此字段（手动编辑仍可保存）。"
+                          }
+                        >
+                          <span aria-hidden="true">{locked ? "🔒" : "🔓"}</span>
+                          {locked ? "已锁定" : "锁定"}
+                        </button>
+                      </span>
+                      <input
+                        data-testid={`memory-field-${key}`}
+                        value={draft[key]}
+                        onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
+                        placeholder={
+                          src === "inferred" ? inferredText(field) : "（未设置）"
+                        }
+                      />
+                      {src === "inferred" ? (
+                        <span className="memory-field-inferred" data-testid={`memory-inferred-${key}`}>
+                          推断值：{inferredText(field)}
+                        </span>
+                      ) : null}
+                    </label>
+                  );
+                })}
                 <label className="full">
-                  <span className="field-label">忌口（；分隔）</span>
+                  <span className="field-label memory-field-label">
+                    <span className="memory-field-name">
+                      <span>忌口（；分隔）</span>
+                      {selected.donts?.locked ? (
+                        <span
+                          className="memory-src-tag locked"
+                          data-testid="memory-locked-donts"
+                          title="已锁定：画像器不再自动更新此字段"
+                        >
+                          已锁定
+                        </span>
+                      ) : null}
+                    </span>
+                    <button
+                      type="button"
+                      className={`btn ghost xs${selected.donts?.locked ? " memory-lock-on" : ""}`}
+                      data-testid="memory-lock-donts"
+                      disabled={busy}
+                      onClick={() => void toggleLock("donts", !selected.donts?.locked)}
+                      title={
+                        selected.donts?.locked
+                          ? "已锁定：画像器不会自动覆盖此字段。点击解锁。"
+                          : "锁定后画像器不会自动覆盖此字段（手动编辑仍可保存）。"
+                      }
+                    >
+                      <span aria-hidden="true">{selected.donts?.locked ? "🔒" : "🔓"}</span>
+                      {selected.donts?.locked ? "已锁定" : "锁定"}
+                    </button>
+                  </span>
                   <input
                     data-testid="memory-field-donts"
                     value={draft.donts}
                     onChange={(e) => setDraft({ ...draft, donts: e.target.value })}
+                    placeholder={
+                      selected.donts?.inferred?.length
+                        ? selected.donts.inferred.join("；")
+                        : "（未设置）"
+                    }
                   />
+                  {selected.donts?.inferred?.length ? (
+                    <span className="memory-field-inferred" data-testid="memory-inferred-donts">
+                      推断值：{selected.donts.inferred.join("；")}
+                    </span>
+                  ) : null}
                 </label>
               </div>
               <div className="memory-actions">

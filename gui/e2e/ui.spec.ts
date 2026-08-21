@@ -25,6 +25,7 @@ async function installTauriMock(
       eventSeq: 0,
       _cbSeq: 0,
       _cbMap: new Map<number, unknown>(),
+      memoryProfiles: [] as any[],
       /** 测试辅助：向监听 update-download-progress 的前端推送进度事件。 */
       __emitUpdateProgress: (payload: unknown) => {
         const h = (state as any).eventHandlers["update-download-progress"];
@@ -439,16 +440,63 @@ async function installTauriMock(
               return JSON.stringify({ ok: true, reason: "ready", openai: { ok: true }, claude_ok: true });
             }
             if (path === "/v1/memory/profiles" && method === "GET") {
-              return JSON.stringify({ profiles: [] });
+              return JSON.stringify({
+                profiles: (state as any).memoryProfiles || [],
+              });
             }
             if (path.startsWith("/v1/memory/profiles/")) {
+              const rest = path.slice("/v1/memory/profiles/".length);
+              const [oid, sub] = rest.split("/");
+              const profs: any[] = (state as any).memoryProfiles || [];
               if (method === "DELETE") {
-                if (!path.includes("confirm=1") && !(args.query as string | undefined)?.includes?.("confirm")) {
-                  // path may include query in this mock — check raw path
-                }
                 const q = path.includes("?") ? path.slice(path.indexOf("?")) : "";
                 if (!q.includes("confirm=1")) throw new Error("confirm=1 required");
+                (state as any).memoryProfiles = profs.filter((p) => p.open_id !== oid);
                 return JSON.stringify({ ok: true });
+              }
+              if (sub === "lock" && method === "POST") {
+                const body = JSON.parse(bodyRaw || "{}") as { fields?: Record<string, boolean> };
+                const p = profs.find((x) => x.open_id === oid);
+                if (p) {
+                  for (const [k, v] of Object.entries(body.fields || {})) {
+                    if (p[k] && typeof p[k] === "object") p[k].locked = v;
+                  }
+                  return JSON.stringify(p);
+                }
+                return JSON.stringify({ open_id: oid, turn_count: 0 });
+              }
+              if (sub === "reset-inferred" && method === "POST") {
+                const p = profs.find((x) => x.open_id === oid);
+                if (p) {
+                  for (const k of ["how_to_address", "role", "ask_style", "reply_style", "notes"]) {
+                    if (p[k] && typeof p[k] === "object") delete p[k].inferred;
+                  }
+                  if (p.donts) delete p.donts.inferred;
+                  return JSON.stringify(p);
+                }
+                return JSON.stringify({ open_id: oid, turn_count: 0 });
+              }
+              if (method === "PATCH") {
+                const body = JSON.parse(bodyRaw || "{}") as Record<string, unknown>;
+                const p = profs.find((x) => x.open_id === oid);
+                const target = p || { open_id: oid, turn_count: 0 };
+                if (body.display_name !== undefined) target.display_name = body.display_name;
+                for (const k of ["how_to_address", "role", "ask_style", "reply_style", "notes"]) {
+                  const v = body[k] as { manual?: string } | undefined;
+                  if (v === undefined) continue;
+                  target[k] = {
+                    ...(target[k] || {}),
+                    manual: v.manual || "",
+                  };
+                }
+                if (body.donts) {
+                  target.donts = {
+                    ...(target.donts || {}),
+                    manual: (body.donts as { manual?: string[] }).manual || [],
+                  };
+                }
+                if (!p) (state as any).memoryProfiles = [target, ...profs];
+                return JSON.stringify(target);
               }
               return JSON.stringify({ open_id: "mock", turn_count: 0 });
             }
@@ -1301,4 +1349,112 @@ test("日志问答内容、无双时间戳、下拉不超宽", async ({ page }) 
   const select = page.getByTestId("log-bot-select");
   const width = await select.evaluate((el) => el.getBoundingClientRect().width);
   expect(width).toBeLessThanOrEqual(200);
+});
+
+test("记忆页：推断值只读展示不固化，手动编辑保存不覆盖推断", async ({ page }) => {
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.memoryProfiles = [
+      {
+        open_id: "mem-user-1",
+        display_name: "测试用户",
+        how_to_address: { inferred: "小王", locked: false },
+        role: { manual: "运营" },
+        ask_style: { inferred: "简洁" },
+        reply_style: {},
+        notes: {},
+        donts: { inferred: ["不刷屏"] },
+        turn_count: 12,
+        profiled_count: 5,
+        last_seen: "2026-08-21T00:00:00Z",
+      },
+    ];
+  });
+  await page.getByTestId("nav-memory").click();
+  await page.getByTestId("memory-user-mem-user-1").click();
+  await expect(page.getByTestId("memory-detail")).toContainText("测试用户");
+
+  // 推断字段：输入框 placeholder 显示推断值，正文有推断值小字 + 徽标
+  const field = page.getByTestId("memory-field-how_to_address");
+  await expect(field).toHaveAttribute("placeholder", "小王");
+  await expect(page.getByTestId("memory-src-how_to_address")).toHaveText("推断");
+  await expect(page.getByTestId("memory-inferred-how_to_address")).toContainText("小王");
+  // 手动字段：输入框直接显示 manual，徽标为「手动」
+  await expect(page.getByTestId("memory-field-role")).toHaveValue("运营");
+  await expect(page.getByTestId("memory-src-role")).toHaveText("手动");
+  // 空字段无徽标
+  await expect(page.getByTestId("memory-src-reply_style")).toHaveCount(0);
+
+  // 用户输入手动值保存：不应覆盖推断
+  await field.fill("老李");
+  await page.getByTestId("memory-save").click();
+  await expect(page.getByTestId("save-toast").filter({ hasText: "手动字段已保存" })).toBeVisible();
+  const saved = await page.evaluate(() => (window as any).__E2E_STATE__.memoryProfiles[0]);
+  expect(saved.how_to_address.manual).toBe("老李");
+  expect(saved.how_to_address.inferred).toBe("小王");
+  expect(saved.role.manual).toBe("运营");
+  // 未编辑的推断字段不被发送、不被固化：manual 不存在
+  expect(saved.ask_style.manual).toBeUndefined();
+  expect(saved.ask_style.inferred).toBe("简洁");
+});
+
+test("记忆页：锁定按钮语义清晰，点击后锁定徽标出现且推断仍展示", async ({ page }) => {
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.memoryProfiles = [
+      {
+        open_id: "mem-user-2",
+        display_name: "锁定测试",
+        how_to_address: { inferred: "小李", locked: false },
+        role: {},
+        ask_style: {},
+        reply_style: {},
+        notes: {},
+        donts: { inferred: ["不刷屏"] },
+        turn_count: 3,
+        profiled_count: 1,
+      },
+    ];
+  });
+  await page.getByTestId("nav-memory").click();
+  await page.getByTestId("memory-user-mem-user-2").click();
+
+  const lockBtn = page.getByTestId("memory-lock-how_to_address");
+  await expect(lockBtn).toContainText("锁定");
+  await expect(lockBtn).toHaveAttribute("title", /锁定后画像器不会自动覆盖/);
+  await lockBtn.click();
+  await expect(page.getByTestId("memory-locked-how_to_address")).toHaveText("已锁定");
+  await expect(lockBtn).toContainText("已锁定");
+  // 推断值仍在 placeholder，未被破坏
+  await expect(page.getByTestId("memory-field-how_to_address")).toHaveAttribute("placeholder", "小李");
+  // donts 也有锁定按钮
+  await expect(page.getByTestId("memory-lock-donts")).toBeVisible();
+});
+
+test("记忆页：清空手动值后可保存删除 manual", async ({ page }) => {
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.memoryProfiles = [
+      {
+        open_id: "mem-user-3",
+        display_name: "清空测试",
+        how_to_address: { manual: "老张", inferred: "小张" },
+        role: {},
+        ask_style: {},
+        reply_style: {},
+        notes: {},
+        donts: {},
+        turn_count: 3,
+        profiled_count: 1,
+      },
+    ];
+  });
+  await page.getByTestId("nav-memory").click();
+  await page.getByTestId("memory-user-mem-user-3").click();
+  const field = page.getByTestId("memory-field-how_to_address");
+  await expect(field).toHaveValue("老张");
+  await field.fill("");
+  await page.getByTestId("memory-save").click();
+  await expect(page.getByTestId("save-toast").filter({ hasText: "手动字段已保存" })).toBeVisible();
+  const saved = await page.evaluate(() => (window as any).__E2E_STATE__.memoryProfiles[0]);
+  expect(saved.how_to_address.manual).toBe("");
+  // 推断值仍在，placeholder 回退到推断值
+  await expect(field).toHaveAttribute("placeholder", "小张");
 });
