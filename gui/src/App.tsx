@@ -1724,6 +1724,8 @@ function App() {
   }
 
   // 进入 AI 设置页时自动拉模型：Cursor/Claude 有 bin 则各一次；OpenAI 凭据齐全后 debounce，避免打字中途锁死。
+  // 自动扫描（cliDiscoverTried）会话内只做一次：首次进入设置页扫描 cursor/claude/dsh/node 并 autofill，
+  // 之后点开不再重复；需要最新状态可手动点"重新扫描"。
   useEffect(() => {
     if (!ready || page !== "settings") return;
 
@@ -1790,12 +1792,6 @@ function App() {
     probeOpenai,
     discoverCli,
   ]);
-
-  useEffect(() => {
-    if (page !== "settings") {
-      cliDiscoverTried.current = false;
-    }
-  }, [page]);
 
   async function toggleCloseToTray(v: boolean) {
     await withMinLoading(setLoadingCloseTray, async () => {
