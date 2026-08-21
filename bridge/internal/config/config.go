@@ -42,6 +42,9 @@ func defaultMap() map[string]any {
 		"openai_max_tool_rounds": 8, "openai_model": "",
 		"openai_compact": true, "openai_compact_keep": 6,
 		"openai_compact_after_turns": 10, "openai_compact_after_runes": 8000,
+		"node_bin": "node", "dsh_entry": "", "dsh_profile": "jsonrpc",
+		"dsh_provider": "kuaidi100", "dsh_model": "", "dsh_timeout": 600,
+		"dsh_ttl_seconds": 300, "dsh_max_warm": 3, "dsh_home": "",
 		"memory": map[string]any{
 			"enabled": false, "after_turns": 8, "idle_sec": 1800,
 			"appendix_runes": 800, "style_runes": 400, "donts_max": 8,
@@ -296,6 +299,8 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		model = firstNonEmpty(model, asString(m["openai_model"]))
 	case "claude_code", "claude":
 		model = firstNonEmpty(model, asString(m["claude_model"]))
+	case "dsh", "dsh_jsonrpc":
+		model = firstNonEmpty(model, asString(m["dsh_model"]))
 	default:
 		model = firstNonEmpty(model, asString(m["cursor_model"]))
 	}
@@ -317,6 +322,15 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		PermissionMode:   firstNonEmpty(asString(m["permission_mode"]), "bypassPermissions"),
 		AllowedTools:     asStringSlice(m["allowed_tools"]), MaxBudgetUSD: asFloat(m["max_budget_usd"], 0),
 		OpenCodeBin:   firstNonEmpty(asString(m["opencode_bin"]), "opencode"),
+		NodeBin:       firstNonEmpty(asString(m["node_bin"]), "node"),
+		DSHEntry:      asString(m["dsh_entry"]),
+		DSHProfile:    firstNonEmpty(asString(m["dsh_profile"]), "jsonrpc"),
+		DSHProvider:   firstNonEmpty(asString(m["dsh_provider"]), "kuaidi100"),
+		DSHModel:      asString(m["dsh_model"]),
+		DSHTimeout:    asInt(m["dsh_timeout"], 600),
+		DSHTTLSeconds: asInt(m["dsh_ttl_seconds"], 300),
+		DSHMaxWarm:    asInt(m["dsh_max_warm"], 3),
+		DSHHome:       asString(m["dsh_home"]),
 		OpenAIBaseURL: asString(m["openai_base_url"]), OpenAIAPIKey: asString(m["openai_api_key"]),
 		OpenAITimeout: asInt(m["openai_timeout"], 120), OpenAIMaxRounds: asInt(m["openai_max_tool_rounds"], 8),
 		ConversationsDir:        asString(m["conversations_dir"]),
