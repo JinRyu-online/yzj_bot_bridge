@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ChatPage } from "./ChatPage";
 import { FancySelect } from "./FancySelect";
 import { MemoryPage } from "./MemoryPage";
@@ -32,6 +34,17 @@ type SkillInfo = {
   author?: string;
   tags?: string[];
   dir?: string;
+};
+
+type UpdateCheckResult = {
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  notes: string;
+  downloadUrl: string;
+  publishedAt: string;
+  skipped: boolean;
+  message: string;
 };
 
 type BotForm = {
@@ -810,6 +823,11 @@ function App() {
   const [closeToTray, setCloseToTray] = useState(true);
   const [loadingCloseTray, setLoadingCloseTray] = useState(false);
   const [appVersion, setAppVersion] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
+  const [updateModal, setUpdateModal] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updatingApp, setUpdatingApp] = useState(false);
+  const updateAutoChecked = useRef(false);
   const cursorModelsAutoTried = useRef(false);
   const claudeModelsAutoTried = useRef(false);
   /** 已自动探测过的 OpenAI base\\nkey 指纹，变更凭据后可再次自动探测。 */
@@ -864,6 +882,25 @@ function App() {
   });
   const [memoryEnableHint, setMemoryEnableHint] = useState("");
   const [memoryEnableBusy, setMemoryEnableBusy] = useState(false);
+  const [cursorDiscover, setCursorDiscover] = useState<{
+    found: boolean;
+    path?: string;
+    version?: string;
+    message?: string;
+    install?: { shell: string; command: string; hint: string };
+  } | null>(null);
+  const [claudeDiscover, setClaudeDiscover] = useState<{
+    found: boolean;
+    path?: string;
+    version?: string;
+    message?: string;
+    install?: { shell: string; command: string; hint: string };
+  } | null>(null);
+  const [discoveringCursor, setDiscoveringCursor] = useState(false);
+  const [discoveringClaude, setDiscoveringClaude] = useState(false);
+  const [installingCursor, setInstallingCursor] = useState(false);
+  const [installingClaude, setInstallingClaude] = useState(false);
+  const cliDiscoverTried = useRef(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -871,16 +908,106 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!botModal && !channelModal) return;
+    if (!botModal && !channelModal && !updateModal) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (updatingApp) return;
         setBotModal(null);
         setChannelModal(false);
+        setUpdateModal(false);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [botModal, channelModal]);
+  }, [botModal, channelModal, updateModal, updatingApp]);
+
+  const showToast = useCallback((msg: string) => {
+    if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
+    setSaveToast(msg);
+    saveToastTimer.current = window.setTimeout(() => {
+      setSaveToast("");
+      saveToastTimer.current = null;
+    }, 2200);
+  }, []);
+
+  const runCheckForUpdate = useCallback(async (force: boolean) => {
+    const info = await invoke<UpdateCheckResult>("check_for_update", { force });
+    if (info.available) {
+      setUpdateInfo(info);
+      setUpdateModal(true);
+    }
+    return info;
+  }, []);
+
+  const checkUpdateManual = useCallback(async () => {
+    setCheckingUpdate(true);
+    try {
+      const info = await runCheckForUpdate(true);
+      if (info.available) {
+        return;
+      }
+      if (info.message?.trim()) {
+        showToast(info.message.trim());
+        return;
+      }
+      showToast(`已是最新（v${info.currentVersion || appVersion || "?"}）`);
+    } catch (e) {
+      showToast(`检查更新失败：${e}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, [appVersion, runCheckForUpdate, showToast]);
+
+  const skipUpdateVersion = useCallback(async () => {
+    if (!updateInfo?.latestVersion) {
+      setUpdateModal(false);
+      return;
+    }
+    try {
+      await invoke("set_skipped_update_version", { version: updateInfo.latestVersion });
+      setUpdateModal(false);
+      showToast(`已跳过 v${updateInfo.latestVersion}`);
+    } catch (e) {
+      showToast(`跳过失败：${e}`);
+    }
+  }, [showToast, updateInfo]);
+
+  const confirmUpdate = useCallback(async () => {
+    if (!updateInfo?.downloadUrl) return;
+    setUpdatingApp(true);
+    try {
+      await invoke("download_and_launch_update", { downloadUrl: updateInfo.downloadUrl });
+    } catch (e) {
+      setUpdatingApp(false);
+      showToast(`更新失败：${e}`);
+    }
+  }, [showToast, updateInfo]);
+
+  useEffect(() => {
+    if (!ready || updateAutoChecked.current) return;
+    // tauri/vite 本地开发不自动弹更新，避免干扰调试；系统设置里仍可手动检查。
+    if (import.meta.env.DEV) {
+      updateAutoChecked.current = true;
+      return;
+    }
+    updateAutoChecked.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const info = await invoke<UpdateCheckResult>("check_for_update", { force: false });
+        if (cancelled || !info.available) {
+          return;
+        }
+        setUpdateInfo(info);
+        setUpdateModal(true);
+      } catch {
+        // 启动自动检测失败静默忽略
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready]);
 
   const boot = useCallback(async () => {
     setBooting(true);
@@ -965,6 +1092,77 @@ function App() {
       void guiLog(`拉取 Claude 模型失败: ${e}`, "ERROR");
     } finally {
       setLoadingClaudeModels(false);
+    }
+  }, []);
+
+  const discoverCli = useCallback(
+    async (engine: "cursor" | "claude", opts?: { autofill?: boolean }) => {
+      const autofill = opts?.autofill !== false;
+      const setBusy = engine === "cursor" ? setDiscoveringCursor : setDiscoveringClaude;
+      const setResult = engine === "cursor" ? setCursorDiscover : setClaudeDiscover;
+      const currentBin = engine === "cursor" ? cliForm.cursor_bin : cliForm.claude_bin;
+      setBusy(true);
+      try {
+        const raw = await api("POST", "/v1/backends/cli/discover", {
+          engine,
+          bin: currentBin,
+        });
+        const data = JSON.parse(raw) as {
+          found?: boolean;
+          path?: string;
+          version?: string;
+          message?: string;
+          install?: { shell: string; command: string; hint: string };
+        };
+        setResult({
+          found: !!data.found,
+          path: data.path,
+          version: data.version,
+          message: data.message,
+          install: data.install,
+        });
+        if (autofill && data.found && data.path) {
+          const cur = currentBin.trim();
+          const bare =
+            !cur ||
+            cur === "agent" ||
+            cur === "claude" ||
+            cur === "cursor-agent" ||
+            (!cur.includes("/") && !cur.includes("\\") && !cur.includes(":"));
+          if (bare && data.path !== cur) {
+            if (engine === "cursor") {
+              setCliForm((prev) => ({ ...prev, cursor_bin: data.path || prev.cursor_bin }));
+            } else {
+              setCliForm((prev) => ({ ...prev, claude_bin: data.path || prev.claude_bin }));
+            }
+            void guiLog(`自动填入 ${engine} 路径: ${data.path}`);
+          }
+        }
+        return data;
+      } catch (e) {
+        setResult({
+          found: false,
+          message: String(e),
+        });
+        return null;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [cliForm.cursor_bin, cliForm.claude_bin],
+  );
+
+  const openCliInstall = useCallback(async (engine: "cursor" | "claude") => {
+    const setBusy = engine === "cursor" ? setInstallingCursor : setInstallingClaude;
+    setBusy(true);
+    try {
+      await invoke("open_cli_install_terminal", { engine });
+      void guiLog(`已打开 ${engine === "cursor" ? "Cursor CLI" : "Claude Code"} 安装终端`);
+    } catch (e) {
+      setError(String(e));
+      void guiLog(`打开安装终端失败: ${e}`, "ERROR");
+    } finally {
+      setBusy(false);
     }
   }, []);
 
@@ -1331,6 +1529,12 @@ function App() {
   useEffect(() => {
     if (!ready || page !== "settings") return;
 
+    if (!cliDiscoverTried.current) {
+      cliDiscoverTried.current = true;
+      void discoverCli("cursor");
+      void discoverCli("claude");
+    }
+
     if (!cursorModelsAutoTried.current && !loadingCursorModels) {
       const bin = cliForm.cursor_bin.trim();
       if (bin) {
@@ -1371,7 +1575,14 @@ function App() {
     refreshCursorModels,
     refreshClaudeModels,
     probeOpenai,
+    discoverCli,
   ]);
+
+  useEffect(() => {
+    if (page !== "settings") {
+      cliDiscoverTried.current = false;
+    }
+  }, [page]);
 
   async function toggleCloseToTray(v: boolean) {
     await withMinLoading(setLoadingCloseTray, async () => {
@@ -1750,12 +1961,7 @@ function App() {
       defaults.memory = prevMem;
       await saveConfig({ ...rawConfig, defaults });
       await refreshConfig();
-      if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
-      setSaveToast("设置已保存");
-      saveToastTimer.current = window.setTimeout(() => {
-        setSaveToast("");
-        saveToastTimer.current = null;
-      }, 2200);
+      showToast("设置已保存");
       void guiLog("保存 AI 设置成功");
     });
   }
@@ -1964,6 +2170,16 @@ function App() {
                       {appVersion ? `v${appVersion}` : "—"}
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    data-testid="check-update-btn"
+                    className={`action-chip${checkingUpdate ? " loading" : ""}`}
+                    disabled={checkingUpdate || updatingApp}
+                    onClick={() => void checkUpdateManual()}
+                  >
+                    {checkingUpdate ? <span className="spinner dark" /> : null}
+                    <span>{checkingUpdate ? "检查中" : "检查更新"}</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1997,12 +2213,52 @@ function App() {
                 <div className="form-grid">
                   <label className="full">
                     可执行路径（cursor_bin）
-        <input
-                      data-testid="cursor-bin"
-                      value={cliForm.cursor_bin}
-                      onChange={(e) => setCliForm({ ...cliForm, cursor_bin: e.target.value })}
-                      placeholder="agent"
-                    />
+                    <div className="inline-field cli-bin-row">
+                      <input
+                        data-testid="cursor-bin"
+                        value={cliForm.cursor_bin}
+                        onChange={(e) => setCliForm({ ...cliForm, cursor_bin: e.target.value })}
+                        placeholder="agent 或绝对路径"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${discoveringCursor ? " loading" : ""}`}
+                        data-testid="discover-cursor"
+                        disabled={discoveringCursor}
+                        onClick={() => void discoverCli("cursor", { autofill: true })}
+                      >
+                        {discoveringCursor ? <span className="spinner dark" /> : null}
+                        <span>{discoveringCursor ? "扫描中" : "重新扫描"}</span>
+                      </button>
+                      {cursorDiscover && !cursorDiscover.found ? (
+                        <button
+                          type="button"
+                          className={`action-chip side${installingCursor ? " loading" : ""}`}
+                          data-testid="install-cursor"
+                          disabled={installingCursor}
+                          onClick={() => void openCliInstall("cursor")}
+                        >
+                          {installingCursor ? <span className="spinner dark" /> : null}
+                          <span>{installingCursor ? "打开中" : "一键安装"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {cursorDiscover ? (
+                      <span
+                        className={`field-hint${cursorDiscover.found ? " ok" : " error"}`}
+                        data-testid="cursor-discover-hint"
+                      >
+                        {cursorDiscover.found
+                          ? `已找到${cursorDiscover.version ? `（${cursorDiscover.version}）` : ""}：${cursorDiscover.path || ""}`
+                          : cursorDiscover.message ||
+                            cursorDiscover.install?.hint ||
+                            "未找到 Cursor CLI，可一键打开终端安装"}
+                      </span>
+                    ) : (
+                      <span className="field-hint spacer" aria-hidden="true">
+                        &nbsp;
+                      </span>
+                    )}
                   </label>
                   <label className="full">
                     API Key（cursor_api_key）
@@ -2055,12 +2311,52 @@ function App() {
                 <div className="form-grid">
                   <label className="full">
                     可执行路径（claude_bin）
-                    <input
-                      data-testid="claude-bin"
-                      value={cliForm.claude_bin}
-                      onChange={(e) => setCliForm({ ...cliForm, claude_bin: e.target.value })}
-                      placeholder="claude"
-                    />
+                    <div className="inline-field cli-bin-row">
+                      <input
+                        data-testid="claude-bin"
+                        value={cliForm.claude_bin}
+                        onChange={(e) => setCliForm({ ...cliForm, claude_bin: e.target.value })}
+                        placeholder="claude 或绝对路径"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${discoveringClaude ? " loading" : ""}`}
+                        data-testid="discover-claude"
+                        disabled={discoveringClaude}
+                        onClick={() => void discoverCli("claude", { autofill: true })}
+                      >
+                        {discoveringClaude ? <span className="spinner dark" /> : null}
+                        <span>{discoveringClaude ? "扫描中" : "重新扫描"}</span>
+                      </button>
+                      {claudeDiscover && !claudeDiscover.found ? (
+                        <button
+                          type="button"
+                          className={`action-chip side${installingClaude ? " loading" : ""}`}
+                          data-testid="install-claude"
+                          disabled={installingClaude}
+                          onClick={() => void openCliInstall("claude")}
+                        >
+                          {installingClaude ? <span className="spinner dark" /> : null}
+                          <span>{installingClaude ? "打开中" : "一键安装"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {claudeDiscover ? (
+                      <span
+                        className={`field-hint${claudeDiscover.found ? " ok" : " error"}`}
+                        data-testid="claude-discover-hint"
+                      >
+                        {claudeDiscover.found
+                          ? `已找到${claudeDiscover.version ? `（${claudeDiscover.version}）` : ""}：${claudeDiscover.path || ""}`
+                          : claudeDiscover.message ||
+                            claudeDiscover.install?.hint ||
+                            "未找到 Claude Code，可一键打开终端安装"}
+                      </span>
+                    ) : (
+                      <span className="field-hint spacer" aria-hidden="true">
+                        &nbsp;
+                      </span>
+                    )}
                   </label>
                   <label className="full">
                     API Key（anthropic_api_key）
@@ -2575,7 +2871,7 @@ function App() {
             <header className="page-head">
               <div>
                 <h1>运行日志</h1>
-                <p className="subtitle">桥与面板事件 · 可按来源过滤</p>
+                <p className="subtitle">桥与面板事件 · 可按来源过滤 · 同时写入 ~/.yzj-bridge/logs/runtime-日期.jsonl</p>
               </div>
               <div className="head-actions">
                 <FancySelect
@@ -3292,6 +3588,80 @@ function App() {
           </div>
         </div>
       )}
+
+      {updateModal && updateInfo ? (
+        <div className="modal-backdrop" data-testid="update-modal">
+          <div className="modal update-modal" role="dialog" aria-modal="true" aria-labelledby="update-modal-title">
+            <div className="modal-head">
+              <div>
+                <h3 id="update-modal-title">发现新版本 v{updateInfo.latestVersion}</h3>
+                <p className="subtitle update-modal-sub">
+                  当前版本 v{updateInfo.currentVersion || appVersion || "—"}
+                  {updateInfo.publishedAt
+                    ? ` · 发布于 ${updateInfo.publishedAt.slice(0, 10)}`
+                    : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                data-testid="update-modal-close"
+                aria-label="关闭"
+                disabled={updatingApp}
+                onClick={() => setUpdateModal(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-scroll update-notes" data-testid="update-notes">
+              {updateInfo.notes.trim() ? (
+                <Markdown remarkPlugins={[remarkGfm]}>{updateInfo.notes}</Markdown>
+              ) : (
+                <p className="field-hint">暂无更新日志</p>
+              )}
+            </div>
+            <p className="field-hint update-install-hint">
+              确认后将下载安装包并启动安装向导；安装前会退出本应用以便覆盖文件。
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                data-testid="update-later"
+                disabled={updatingApp}
+                onClick={() => setUpdateModal(false)}
+              >
+                稍后提醒
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                data-testid="update-skip"
+                disabled={updatingApp}
+                onClick={() => void skipUpdateVersion()}
+              >
+                跳过此版本
+              </button>
+              <button
+                type="button"
+                className="btn"
+                data-testid="update-confirm"
+                disabled={updatingApp || !updateInfo.downloadUrl}
+                onClick={() => void confirmUpdate()}
+              >
+                {updatingApp ? (
+                  <>
+                    <span className="spinner dark" />
+                    <span>下载中…</span>
+                  </>
+                ) : (
+                  "立即更新"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

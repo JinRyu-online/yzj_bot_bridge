@@ -75,7 +75,8 @@ func main() {
 		}
 	}
 
-	logs := logbuf.New(2000)
+	logs := logbuf.NewWithDir(2000, paths.LogsDir())
+	defer logs.Close()
 	// Avoid double timestamps: logbuf already stores Time; keep stdlog prefix-free.
 	log.SetFlags(0)
 	log.SetOutput(io.MultiWriter(os.Stderr, &logWriter{buf: logs}))

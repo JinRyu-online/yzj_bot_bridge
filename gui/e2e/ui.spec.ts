@@ -1,12 +1,26 @@
 import { test, expect, type Page } from "@playwright/test";
 
-async function installTauriMock(page: Page) {
-  await page.addInitScript(() => {
+async function installTauriMock(
+  page: Page,
+  opts?: {
+    updateCheck?: Record<string, unknown>;
+    updateCheckThrow?: string;
+    updateDownloadDelayMs?: number;
+  },
+) {
+  await page.addInitScript((boot) => {
     localStorage.setItem("yzj-theme", "ice");
     type Bot = Record<string, unknown>;
     const state = {
       autostart: false,
       seq: 65,
+      updateCheck: boot.updateCheck || null,
+      updateCheckThrow: boot.updateCheckThrow || "",
+      updateDownloadDelayMs: boot.updateDownloadDelayMs || 0,
+      updateCheckCalls: [] as { force: boolean }[],
+      skippedUpdateVersion: "",
+      updateLaunched: "",
+      updateDownloadThrow: "",
       config: {
         defaults: {
           cursor_bin: "agent",
@@ -233,6 +247,9 @@ async function installTauriMock(page: Page) {
           case "open_path_default":
             state.opened.push(String(args.path || ""));
             return null;
+          case "open_cli_install_terminal":
+            state.opened.push(`install:${String(args.engine || "")}`);
+            return null;
           case "plugin:opener|open_path":
             state.opened.push(String(args.path || ""));
             return null;
@@ -323,6 +340,34 @@ async function installTauriMock(page: Page) {
                   { id: "gpt-4o-mini", label: "gpt-4o-mini" },
                   { id: "gpt-4o", label: "gpt-4o" },
                 ],
+              });
+            }
+            if (path.startsWith("/v1/backends/cli/discover")) {
+              const body = JSON.parse(bodyRaw || "{}") as { engine?: string };
+              const engine = String(body.engine || "cursor");
+              if (engine === "claude") {
+                return JSON.stringify({
+                  engine: "claude",
+                  found: false,
+                  message: "未在 PATH 或常见安装目录找到，可一键打开终端安装",
+                  install: {
+                    shell: "powershell",
+                    command: "irm https://claude.ai/install.ps1 | iex",
+                    hint: "将打开 PowerShell，确认后执行 Claude Code 官方安装脚本",
+                  },
+                });
+              }
+              return JSON.stringify({
+                engine: "cursor",
+                found: true,
+                path: "C:\\\\Users\\\\mock\\\\AppData\\\\Local\\\\cursor-agent\\\\agent.exe",
+                version: "2026.08.11",
+                message: "已找到可执行文件",
+                install: {
+                  shell: "powershell",
+                  command: "irm 'https://cursor.com/install?win32=true' | iex",
+                  hint: "将打开 PowerShell，确认后执行 Cursor 官方安装脚本",
+                },
               });
             }
             if (path === "/v1/memory/enable-check" && method === "POST") {
@@ -454,6 +499,74 @@ async function installTauriMock(page: Page) {
           case "set_close_to_tray":
             (state as any).closeToTray = !!args.enabled;
             return (state as any).closeToTray;
+          case "check_for_update": {
+            const force = !!(args as { force?: boolean }).force;
+            (state as any).updateCheckCalls = [
+              ...((state as any).updateCheckCalls || []),
+              { force },
+            ];
+            if ((state as any).updateCheckThrow) {
+              throw new Error(String((state as any).updateCheckThrow));
+            }
+            const mock = (state as any).updateCheck as
+              | {
+                  available?: boolean;
+                  currentVersion?: string;
+                  latestVersion?: string;
+                  notes?: string;
+                  downloadUrl?: string;
+                  publishedAt?: string;
+                  skipped?: boolean;
+                  message?: string;
+                }
+              | undefined;
+            if (mock) {
+              const skipped = !!mock.skipped;
+              const availableBase = !!mock.available;
+              const available = availableBase && (force || !skipped);
+              return {
+                available,
+                currentVersion: mock.currentVersion || "0.2.6",
+                latestVersion: mock.latestVersion || "0.2.6",
+                notes: mock.notes || "",
+                downloadUrl: mock.downloadUrl || "",
+                publishedAt: mock.publishedAt || "",
+                skipped,
+                message: mock.message || "",
+              };
+            }
+            return {
+              available: false,
+              currentVersion: "0.2.6",
+              latestVersion: "0.2.6",
+              notes: "",
+              downloadUrl: "",
+              publishedAt: "",
+              skipped: false,
+              message: "",
+            };
+          }
+          case "set_skipped_update_version": {
+            const version = String((args as { version?: string }).version || "");
+            (state as any).skippedUpdateVersion = version;
+            if ((state as any).updateCheck) {
+              (state as any).updateCheck.skipped = true;
+            }
+            return null;
+          }
+          case "download_and_launch_update": {
+            const delay = Number((state as any).updateDownloadDelayMs || 0);
+            if (delay > 0) {
+              await new Promise((r) => setTimeout(r, delay));
+            }
+            if ((state as any).updateDownloadThrow) {
+              throw new Error(String((state as any).updateDownloadThrow));
+            }
+            (state as any).updateLaunched = String(
+              (args as { downloadUrl?: string }).downloadUrl || "",
+            );
+            return null;
+          }
           default:
             throw new Error(`unknown mock command: ${cmd}`);
         }
@@ -464,8 +577,24 @@ async function installTauriMock(page: Page) {
 
     // @ts-expect-error expose for assertions
     window.__E2E_STATE__ = state;
+  }, {
+    updateCheck: opts?.updateCheck || null,
+    updateCheckThrow: opts?.updateCheckThrow || "",
+    updateDownloadDelayMs: opts?.updateDownloadDelayMs || 0,
   });
 }
+
+const SAMPLE_UPDATE = {
+  available: true,
+  currentVersion: "0.2.6",
+  latestVersion: "0.3.0",
+  notes: "## 变更\n\n- 新增自动更新\n- 修复若干问题",
+  downloadUrl:
+    "https://github.com/JinRyu-online/yzj_bot_bridge/releases/download/v0.3.0/YZJBridge-0.3.0-Windows-x64-setup.exe",
+  publishedAt: "2026-08-21T00:00:00Z",
+  skipped: false,
+  message: "",
+};
 
 test.beforeEach(async ({ page }) => {
   await installTauriMock(page);
@@ -515,6 +644,116 @@ test("系统页：主题下拉可读、热重载按钮、路径可点", async ({
   await expect(system).toContainText("从磁盘重新加载 config.yaml");
   await expect(system).not.toContainText("WSS 启停状态");
   await expect(page.getByTestId("app-version")).toHaveText("v0.2.6");
+  await expect(page.getByTestId("check-update-btn")).toBeVisible();
+  await page.getByTestId("check-update-btn").click();
+  await expect(page.getByTestId("save-toast")).toContainText("已是最新");
+});
+
+test("更新：启动自动检测有新版本时弹窗", async ({ page }) => {
+  test.setTimeout(60_000);
+  await installTauriMock(page, { updateCheck: SAMPLE_UPDATE });
+  await page.goto("/");
+  await expect(page.getByTestId("app-root")).toBeVisible();
+  await expect(page.getByTestId("update-modal")).toBeVisible();
+  await expect(page.getByTestId("update-modal")).toContainText("发现新版本 v0.3.0");
+  const calls = await page.evaluate(() => (window as any).__E2E_STATE__.updateCheckCalls);
+  expect(calls.some((c: { force: boolean }) => c.force === false)).toBeTruthy();
+});
+
+test("更新：启动检测失败时静默（无弹窗无 toast）", async ({ page }) => {
+  await installTauriMock(page, { updateCheckThrow: "network down" });
+  await page.goto("/");
+  await expect(page.getByTestId("app-root")).toBeVisible();
+  await expect(page.getByTestId("update-modal")).toHaveCount(0);
+  await expect(page.getByTestId("save-toast")).toHaveCount(0);
+  // 手动检查仍应提示失败
+  await page.getByTestId("nav-system").click();
+  await page.getByTestId("check-update-btn").click();
+  await expect(page.getByTestId("save-toast")).toContainText("检查更新失败");
+});
+
+test("系统页：发现更新时弹窗展示日志并可确认", async ({ page }) => {
+  await page.evaluate((u) => {
+    (window as any).__E2E_STATE__.updateCheck = u;
+  }, SAMPLE_UPDATE);
+  await page.getByTestId("nav-system").click();
+  await page.getByTestId("check-update-btn").click();
+  const modal = page.getByTestId("update-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText("发现新版本 v0.3.0");
+  await expect(page.getByTestId("update-notes")).toContainText("新增自动更新");
+  await expect(page.getByTestId("update-later")).toBeVisible();
+  await expect(page.getByTestId("update-skip")).toBeVisible();
+  await expect(page.getByTestId("update-confirm")).toBeVisible();
+  await page.getByTestId("update-confirm").click();
+  const launched = await page.evaluate(() => (window as any).__E2E_STATE__.updateLaunched);
+  expect(launched).toContain("YZJBridge-0.3.0-Windows-x64-setup.exe");
+});
+
+test("更新：稍后提醒不持久化跳过", async ({ page }) => {
+  await page.evaluate((u) => {
+    (window as any).__E2E_STATE__.updateCheck = { ...u };
+  }, SAMPLE_UPDATE);
+  await page.getByTestId("nav-system").click();
+  await page.getByTestId("check-update-btn").click();
+  await expect(page.getByTestId("update-modal")).toBeVisible();
+  await page.getByTestId("update-later").click();
+  await expect(page.getByTestId("update-modal")).toHaveCount(0);
+  const skipped = await page.evaluate(() => (window as any).__E2E_STATE__.skippedUpdateVersion);
+  expect(skipped).toBe("");
+});
+
+test("更新：跳过此版本后自动检测不再弹，手动 force 仍可弹", async ({ page }) => {
+  await installTauriMock(page, {
+    updateCheck: { ...SAMPLE_UPDATE, skipped: true },
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("app-root")).toBeVisible();
+  await expect(page.getByTestId("update-modal")).toHaveCount(0);
+
+  await page.getByTestId("nav-system").click();
+  await page.getByTestId("check-update-btn").click();
+  await expect(page.getByTestId("update-modal")).toBeVisible();
+  await page.getByTestId("update-skip").click();
+  await expect(page.getByTestId("save-toast")).toContainText("已跳过 v0.3.0");
+  const skipped = await page.evaluate(() => (window as any).__E2E_STATE__.skippedUpdateVersion);
+  expect(skipped).toBe("0.3.0");
+});
+
+test("更新：下载中禁用按钮并显示进度文案", async ({ page }) => {
+  await page.evaluate((u) => {
+    (window as any).__E2E_STATE__.updateCheck = { ...u };
+    (window as any).__E2E_STATE__.updateDownloadDelayMs = 800;
+  }, SAMPLE_UPDATE);
+  await page.getByTestId("nav-system").click();
+  await page.getByTestId("check-update-btn").click();
+  await expect(page.getByTestId("update-modal")).toBeVisible();
+  await page.getByTestId("update-confirm").click();
+  await expect(page.getByTestId("update-confirm")).toContainText("下载中");
+  await expect(page.getByTestId("update-later")).toBeDisabled();
+  await expect(page.getByTestId("update-skip")).toBeDisabled();
+  await expect
+    .poll(async () => page.evaluate(() => (window as any).__E2E_STATE__.updateLaunched))
+    .toContain("YZJBridge-0.3.0-Windows-x64-setup.exe");
+});
+
+test("更新：缺少安装包时手动检查提示明确文案", async ({ page }) => {
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.updateCheck = {
+      available: false,
+      currentVersion: "0.2.6",
+      latestVersion: "0.3.0",
+      notes: "",
+      downloadUrl: "",
+      publishedAt: "",
+      skipped: false,
+      message: "发现新版本 v0.3.0，但 Release 中缺少 YZJBridge-0.3.0-Windows-x64-setup.exe",
+    };
+  });
+  await page.getByTestId("nav-system").click();
+  await page.getByTestId("check-update-btn").click();
+  await expect(page.getByTestId("update-modal")).toHaveCount(0);
+  await expect(page.getByTestId("save-toast")).toContainText("缺少");
 });
 
 test("系统页：关闭到托盘开关", async ({ page }) => {
@@ -523,6 +762,19 @@ test("系统页：关闭到托盘开关", async ({ page }) => {
   await expect(sw).toHaveAttribute("aria-checked", "true");
   await sw.click();
   await expect(sw).toHaveAttribute("aria-checked", "false");
+});
+
+test("AI 设置：CLI 自动扫描与一键安装入口", async ({ page }) => {
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("group-cursor")).toBeVisible();
+  await expect(page.getByTestId("discover-cursor")).toBeVisible();
+  await expect(page.getByTestId("discover-claude")).toBeVisible();
+  // Mock: cursor found → autofill absolute path; claude missing → install button.
+  await expect(page.getByTestId("cursor-discover-hint")).toContainText("已找到");
+  await expect(page.getByTestId("cursor-bin")).toHaveValue(/cursor-agent/);
+  await expect(page.getByTestId("claude-discover-hint")).toContainText("未在 PATH");
+  await expect(page.getByTestId("install-claude")).toBeVisible();
+  await page.getByTestId("install-claude").click();
 });
 
 test("AI 设置：Cursor 模型下拉与 OpenAI 连通性", async ({ page }) => {

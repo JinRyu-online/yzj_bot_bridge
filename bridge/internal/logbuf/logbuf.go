@@ -1,6 +1,9 @@
 package logbuf
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,17 +18,46 @@ type Line struct {
 }
 
 type Buffer struct {
-	mu    sync.Mutex
-	cap   int
-	seq   int64
-	lines []Line
+	mu         sync.Mutex
+	cap        int
+	seq        int64
+	lines      []Line
+	persistDir string
+	file       *os.File
+	fileDay    string
 }
 
 func New(capacity int) *Buffer {
+	return NewWithDir(capacity, "")
+}
+
+// NewWithDir keeps a live ring buffer and appends each line as jsonl under dir.
+// Daily files are named runtime-YYYY-MM-DD.jsonl. Empty dir disables persist.
+func NewWithDir(capacity int, persistDir string) *Buffer {
 	if capacity <= 0 {
 		capacity = 2000
 	}
-	return &Buffer{cap: capacity, lines: make([]Line, 0, capacity)}
+	return &Buffer{cap: capacity, lines: make([]Line, 0, capacity), persistDir: strings.TrimSpace(persistDir)}
+}
+
+func (b *Buffer) PersistDir() string {
+	if b == nil {
+		return ""
+	}
+	return b.persistDir
+}
+
+func (b *Buffer) Close() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.file != nil {
+		_ = b.file.Close()
+		b.file = nil
+		b.fileDay = ""
+	}
 }
 
 func (b *Buffer) Append(level, bot, message string) Line {
@@ -35,9 +67,10 @@ func (b *Buffer) Append(level, bot, message string) Line {
 	if bot == "" {
 		bot = guessBot(message)
 	}
+	now := time.Now()
 	line := Line{
 		Seq:     b.seq,
-		Time:    time.Now().Format("2006-01-02 15:04:05"),
+		Time:    now.Format("2006-01-02 15:04:05"),
 		Level:   level,
 		Bot:     bot,
 		Message: message,
@@ -46,7 +79,36 @@ func (b *Buffer) Append(level, bot, message string) Line {
 	if len(b.lines) > b.cap {
 		b.lines = b.lines[len(b.lines)-b.cap:]
 	}
+	b.persistLocked(now, line)
 	return line
+}
+
+func (b *Buffer) persistLocked(now time.Time, line Line) {
+	if b.persistDir == "" {
+		return
+	}
+	day := now.Format("2006-01-02")
+	if b.file == nil || b.fileDay != day {
+		if b.file != nil {
+			_ = b.file.Close()
+			b.file = nil
+		}
+		if err := os.MkdirAll(b.persistDir, 0o755); err != nil {
+			return
+		}
+		path := filepath.Join(b.persistDir, "runtime-"+day+".jsonl")
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return
+		}
+		b.file = f
+		b.fileDay = day
+	}
+	raw, err := json.Marshal(line)
+	if err != nil {
+		return
+	}
+	_, _ = b.file.Write(append(raw, '\n'))
 }
 
 func (b *Buffer) Since(seq int64, botFilter string) []Line {

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -44,12 +44,16 @@ impl Default for GuiPrefs {
     }
 }
 
-fn gui_prefs_path() -> PathBuf {
+fn yzj_bridge_home() -> PathBuf {
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".yzj-bridge").join("gui-prefs.json")
+    home.join(".yzj-bridge")
+}
+
+fn gui_prefs_path() -> PathBuf {
+    yzj_bridge_home().join("gui-prefs.json")
 }
 
 fn load_gui_prefs() -> GuiPrefs {
@@ -417,6 +421,255 @@ fn get_app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+const GITHUB_OWNER: &str = "JinRyu-online";
+const GITHUB_REPO: &str = "yzj_bot_bridge";
+const UPDATE_USER_AGENT: &str = "YZJBridge-Updater";
+
+#[derive(Serialize, Deserialize, Default)]
+struct UpdatePrefs {
+    #[serde(default)]
+    skipped_version: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCheckResult {
+    available: bool,
+    current_version: String,
+    latest_version: String,
+    notes: String,
+    download_url: String,
+    published_at: String,
+    skipped: bool,
+    /// Non-empty when check succeeded but update cannot be offered (e.g. missing installer).
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct GhRelease {
+    tag_name: String,
+    body: Option<String>,
+    published_at: Option<String>,
+    assets: Vec<GhAsset>,
+}
+
+#[derive(Deserialize)]
+struct GhAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+fn update_prefs_path() -> PathBuf {
+    yzj_bridge_home().join("update-prefs.json")
+}
+
+fn load_update_prefs() -> UpdatePrefs {
+    let path = update_prefs_path();
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return UpdatePrefs::default();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn save_update_prefs(prefs: &UpdatePrefs) -> Result<(), String> {
+    let path = update_prefs_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建更新偏好目录失败: {e}"))?;
+    }
+    let raw = serde_json::to_string_pretty(prefs).map_err(|e| e.to_string())?;
+    fs::write(&path, raw).map_err(|e| format!("写入更新偏好失败: {e}"))
+}
+
+fn normalize_version(raw: &str) -> String {
+    raw.trim().trim_start_matches('v').trim_start_matches('V').to_string()
+}
+
+fn parse_version_tuple(raw: &str) -> Option<(u64, u64, u64)> {
+    let core = normalize_version(raw);
+    let core = core.split('-').next().unwrap_or(&core);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    let patch = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+fn version_is_newer(latest: &str, current: &str) -> bool {
+    match (parse_version_tuple(latest), parse_version_tuple(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => false,
+    }
+}
+
+fn is_versioned_setup_asset(name: &str, latest_version: &str) -> bool {
+    let expected = format!("YZJBridge-{latest_version}-Windows-x64-setup.exe");
+    name.eq_ignore_ascii_case(&expected)
+}
+
+fn pick_setup_download_url(assets: &[GhAsset], latest_version: &str) -> Option<String> {
+    assets
+        .iter()
+        .find(|a| is_versioned_setup_asset(&a.name, latest_version))
+        .map(|a| a.browser_download_url.clone())
+}
+
+fn is_allowed_download_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if !lower.starts_with("https://") {
+        return false;
+    }
+    let rest = &lower["https://".len()..];
+    let host = rest.split('/').next().unwrap_or("");
+    let host = host.rsplit('@').next().unwrap_or(host);
+    matches!(
+        host,
+        "github.com"
+            | "www.github.com"
+            | "objects.githubusercontent.com"
+            | "release-assets.githubusercontent.com"
+            | "github-releases.githubusercontent.com"
+    )
+}
+
+fn fetch_latest_release() -> Result<GhRelease, String> {
+    let url = format!(
+        "https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+    );
+    let resp = ureq::get(&url)
+        .set("User-Agent", UPDATE_USER_AGENT)
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| format!("请求 GitHub Releases 失败: {e}"))?;
+    let status = resp.status();
+    let text = resp
+        .into_string()
+        .map_err(|e| format!("读取 GitHub 响应失败: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("GitHub API HTTP {status}: {text}"));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("解析 GitHub Release 失败: {e}"))
+}
+
+fn fetch_update_candidate(current_version: &str) -> Result<UpdateCheckResult, String> {
+    let release = fetch_latest_release()?;
+    let latest_version = normalize_version(&release.tag_name);
+    let current_version = normalize_version(current_version);
+    let notes = release.body.unwrap_or_default();
+    let published_at = release.published_at.unwrap_or_default();
+    let download_url = pick_setup_download_url(&release.assets, &latest_version).unwrap_or_default();
+    let prefs = load_update_prefs();
+    let skipped = !prefs.skipped_version.is_empty()
+        && normalize_version(&prefs.skipped_version) == latest_version;
+    Ok(UpdateCheckResult {
+        available: false,
+        current_version,
+        latest_version,
+        notes,
+        download_url,
+        published_at,
+        skipped,
+        message: String::new(),
+    })
+}
+
+/// Decide visibility: force=true still shows a previously skipped version.
+fn apply_update_visibility(
+    mut result: UpdateCheckResult,
+    force: bool,
+) -> UpdateCheckResult {
+    let newer = version_is_newer(&result.latest_version, &result.current_version);
+    let has_url = !result.download_url.is_empty();
+    if newer && !has_url {
+        result.available = false;
+        result.message = format!(
+            "发现新版本 v{}，但 Release 中缺少 YZJBridge-{}-Windows-x64-setup.exe",
+            result.latest_version, result.latest_version
+        );
+        return result;
+    }
+    result.available = newer && has_url && (force || !result.skipped);
+    result.message = String::new();
+    result
+}
+
+#[tauri::command]
+async fn check_for_update(app: AppHandle, force: bool) -> Result<UpdateCheckResult, String> {
+    let current = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let raw = fetch_update_candidate(&current)?;
+        Ok(apply_update_visibility(raw, force))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_skipped_update_version(version: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut prefs = load_update_prefs();
+        prefs.skipped_version = normalize_version(&version);
+        save_update_prefs(&prefs)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn download_update_installer(download_url: &str) -> Result<PathBuf, String> {
+    if !is_allowed_download_url(download_url) {
+        return Err("下载地址不在允许的域名白名单内".into());
+    }
+    let resp = ureq::get(download_url)
+        .set("User-Agent", UPDATE_USER_AGENT)
+        .call()
+        .map_err(|e| format!("下载更新包失败: {e}"))?;
+    let status = resp.status();
+    if !(200..300).contains(&status) {
+        return Err(format!("下载更新包 HTTP {status}"));
+    }
+    let dest = std::env::temp_dir().join("YZJBridge-update-setup.exe");
+    let mut reader = resp.into_reader();
+    let mut file = fs::File::create(&dest).map_err(|e| format!("创建临时安装包失败: {e}"))?;
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("读取更新包失败: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("写入临时安装包失败: {e}"))?;
+    }
+    file.flush()
+        .map_err(|e| format!("刷新临时安装包失败: {e}"))?;
+    Ok(dest)
+}
+
+fn launch_installer(path: &PathBuf) -> Result<(), String> {
+    let mut cmd = Command::new(path);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd.spawn()
+        .map_err(|e| format!("启动安装器失败: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn download_and_launch_update(
+    app: AppHandle,
+    state: State<'_, BridgeState>,
+    download_url: String,
+) -> Result<(), String> {
+    let path = tauri::async_runtime::spawn_blocking(move || download_update_installer(&download_url))
+        .await
+        .map_err(|e| e.to_string())??;
+    launch_installer(&path)?;
+    let _ = do_fetch(&state, "POST", "/v1/shutdown", None);
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 async fn get_autostart() -> bool {
     tauri::async_runtime::spawn_blocking(is_autostart_enabled)
@@ -590,6 +843,74 @@ fn open_path_default_sync(path: &str) -> Result<(), String> {
     }
 }
 
+/// Open a visible terminal with the official Cursor/Claude install command.
+/// User confirms with Enter before the installer runs.
+fn open_cli_install_terminal_sync(engine: &str) -> Result<(), String> {
+    let engine = engine.trim().to_lowercase();
+    let (title, command) = match engine.as_str() {
+        "cursor" | "cursor_cli" | "agent" => (
+            "YZJ Bridge · 安装 Cursor CLI",
+            "irm 'https://cursor.com/install?win32=true' | iex",
+        ),
+        "claude" | "claude_code" => (
+            "YZJ Bridge · 安装 Claude Code",
+            "irm https://claude.ai/install.ps1 | iex",
+        ),
+        _ => return Err(format!("未知引擎: {engine}")),
+    };
+
+    #[cfg(windows)]
+    {
+        let ps = format!(
+            "$Host.UI.RawUI.WindowTitle = {title}; \
+Write-Host {title} -ForegroundColor Cyan; \
+Write-Host ''; \
+Write-Host '将执行官方安装命令:' -ForegroundColor Yellow; \
+Write-Host {cmd} -ForegroundColor White; \
+Write-Host ''; \
+Read-Host '按 Enter 开始安装（Ctrl+C 取消）' | Out-Null; \
+Write-Host ''; \
+Write-Host '安装中…' -ForegroundColor Cyan; \
+{raw}; \
+Write-Host ''; \
+Write-Host '若安装成功，请回到 YZJ Bridge → AI 设置 → 重新扫描' -ForegroundColor Green; \
+Read-Host '按 Enter 关闭窗口' | Out-Null",
+            title = ps_single_quote(title),
+            cmd = ps_single_quote(command),
+            raw = command,
+        );
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-NoExit",
+                "-Command",
+                &ps,
+            ])
+            .spawn()
+            .map_err(|e| format!("无法打开 PowerShell: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (title, command);
+        Err("当前仅 Windows 支持一键打开安装终端".into())
+    }
+}
+
+fn ps_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+#[tauri::command]
+async fn open_cli_install_terminal(engine: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_cli_install_terminal_sync(&engine))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn remove_autostart_cmd() -> Result<(), String> {
     if let Some(path) = autostart_cmd_path() {
         if path.exists() {
@@ -632,6 +953,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_app_version,
+            check_for_update,
+            set_skipped_update_version,
+            download_and_launch_update,
             get_endpoint,
             ensure_bridge,
             bridge_fetch,
@@ -640,6 +964,7 @@ pub fn run() {
             set_autostart,
             reveal_path,
             open_path_default,
+            open_cli_install_terminal,
             get_close_to_tray,
             set_close_to_tray
         ])
