@@ -8,6 +8,24 @@
 
 ---
 
+## 客户端自动更新（轻量 GitHub Releases）
+
+正式安装包启动后会请求 `https://api.github.com/repos/JinRyu-online/yzj_bot_bridge/releases/latest`：
+
+1. 若远端 tag 大于本机 `tauri.conf.json` 版本，且资源里有  
+   `YZJBridge-<version>-Windows-x64-setup.exe`，则弹窗展示 Release 正文（更新日志）。
+2. 用户可 **稍后提醒**（仅关弹窗）、**跳过此版本**（写入 `%USERPROFILE%\.yzj-bridge\update-prefs.json`）、或 **立即更新**（下载安装包到临时目录、启动安装向导并退出本应用）。
+3. 系统设置页「检查更新」可手动再查；手动检查会忽略「跳过」，仍能打开弹窗。
+4. **`tauri dev` / Vite 开发模式不会自动检测**，避免干扰调试；设置页手动检查仍可用。
+5. 启动时网络失败静默忽略；手动检查失败会 toast 提示。若有新版本但缺少上述安装包文件名，会提示缺少资源而不是「已是最新」。
+
+发版时请保证：
+
+- 安装包文件名与 tag 版本一致（含版本号那段）。
+- Release notes 写清用户可见变更（会直接出现在弹窗里）。
+
+---
+
 ## 推荐流程（Actions 自动打包）
 
 本机 Cursor 往往推不上 GitHub，请在 **系统终端 / Git Bash** 里操作（已配置 SSH 或已 `gh auth login`）。
@@ -105,6 +123,8 @@ gh auth login
 ## 注意
 
 - 已经发布成功的 tag **不要** `git tag -f` / `git push --force` 改指向；下个版本用新号。
-- 安装包文件名来自 `tauri.conf.json` 的 `version`，和 tag 对不上会让人搞混。
+- 安装包文件名来自 `tauri.conf.json` 的 `version`，和 tag 对不上会让人搞混（也会导致客户端匹配不到更新包）。
 - 不要只发 `YZJBridge.exe`：缺 `WebView2Loader.dll` 和 `yzj-bridge.exe` 会打不开或起不了桥。
 - 用户配置在 `%USERPROFILE%\.yzj-bridge\`，安装包不会覆盖对方已有的 `config.yaml`。
+  「跳过此版本」偏好保存在同目录下的 `update-prefs.json`。
+- 客户端更新行为详见上文「客户端自动更新」。

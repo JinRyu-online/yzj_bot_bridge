@@ -2473,6 +2473,67 @@ textarea {
   margin-top: 18px;
 }
 
+.update-modal {
+  width: min(680px, 100%);
+}
+
+.update-modal .modal-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.update-modal-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.update-notes {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.update-notes h1,
+.update-notes h2,
+.update-notes h3 {
+  font-size: 14px;
+  margin: 0.75em 0 0.35em;
+}
+
+.update-notes h1:first-child,
+.update-notes h2:first-child,
+.update-notes h3:first-child {
+  margin-top: 0;
+}
+
+.update-notes ul,
+.update-notes ol {
+  margin: 0.35em 0;
+  padding-left: 1.25em;
+}
+
+.update-notes p {
+  margin: 0.4em 0;
+}
+
+.update-notes a {
+  color: var(--accent);
+}
+
+.update-install-hint {
+  margin: 12px 0 0;
+  flex-shrink: 0;
+}
+
+.update-modal .modal-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* —— Chat test page —— */
 .chat-page-host {
   height: 100%;

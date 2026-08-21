@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ChatPage } from "./ChatPage";
 import { FancySelect } from "./FancySelect";
 import { MemoryPage } from "./MemoryPage";
@@ -32,6 +34,17 @@ type SkillInfo = {
   author?: string;
   tags?: string[];
   dir?: string;
+};
+
+type UpdateCheckResult = {
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  notes: string;
+  downloadUrl: string;
+  publishedAt: string;
+  skipped: boolean;
+  message: string;
 };
 
 type BotForm = {
@@ -810,6 +823,11 @@ function App() {
   const [closeToTray, setCloseToTray] = useState(true);
   const [loadingCloseTray, setLoadingCloseTray] = useState(false);
   const [appVersion, setAppVersion] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
+  const [updateModal, setUpdateModal] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updatingApp, setUpdatingApp] = useState(false);
+  const updateAutoChecked = useRef(false);
   const cursorModelsAutoTried = useRef(false);
   const claudeModelsAutoTried = useRef(false);
   /** 已自动探测过的 OpenAI base\\nkey 指纹，变更凭据后可再次自动探测。 */
@@ -890,16 +908,106 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!botModal && !channelModal) return;
+    if (!botModal && !channelModal && !updateModal) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (updatingApp) return;
         setBotModal(null);
         setChannelModal(false);
+        setUpdateModal(false);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [botModal, channelModal]);
+  }, [botModal, channelModal, updateModal, updatingApp]);
+
+  const showToast = useCallback((msg: string) => {
+    if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
+    setSaveToast(msg);
+    saveToastTimer.current = window.setTimeout(() => {
+      setSaveToast("");
+      saveToastTimer.current = null;
+    }, 2200);
+  }, []);
+
+  const runCheckForUpdate = useCallback(async (force: boolean) => {
+    const info = await invoke<UpdateCheckResult>("check_for_update", { force });
+    if (info.available) {
+      setUpdateInfo(info);
+      setUpdateModal(true);
+    }
+    return info;
+  }, []);
+
+  const checkUpdateManual = useCallback(async () => {
+    setCheckingUpdate(true);
+    try {
+      const info = await runCheckForUpdate(true);
+      if (info.available) {
+        return;
+      }
+      if (info.message?.trim()) {
+        showToast(info.message.trim());
+        return;
+      }
+      showToast(`已是最新（v${info.currentVersion || appVersion || "?"}）`);
+    } catch (e) {
+      showToast(`检查更新失败：${e}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, [appVersion, runCheckForUpdate, showToast]);
+
+  const skipUpdateVersion = useCallback(async () => {
+    if (!updateInfo?.latestVersion) {
+      setUpdateModal(false);
+      return;
+    }
+    try {
+      await invoke("set_skipped_update_version", { version: updateInfo.latestVersion });
+      setUpdateModal(false);
+      showToast(`已跳过 v${updateInfo.latestVersion}`);
+    } catch (e) {
+      showToast(`跳过失败：${e}`);
+    }
+  }, [showToast, updateInfo]);
+
+  const confirmUpdate = useCallback(async () => {
+    if (!updateInfo?.downloadUrl) return;
+    setUpdatingApp(true);
+    try {
+      await invoke("download_and_launch_update", { downloadUrl: updateInfo.downloadUrl });
+    } catch (e) {
+      setUpdatingApp(false);
+      showToast(`更新失败：${e}`);
+    }
+  }, [showToast, updateInfo]);
+
+  useEffect(() => {
+    if (!ready || updateAutoChecked.current) return;
+    // tauri/vite 本地开发不自动弹更新，避免干扰调试；系统设置里仍可手动检查。
+    if (import.meta.env.DEV) {
+      updateAutoChecked.current = true;
+      return;
+    }
+    updateAutoChecked.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const info = await invoke<UpdateCheckResult>("check_for_update", { force: false });
+        if (cancelled || !info.available) {
+          return;
+        }
+        setUpdateInfo(info);
+        setUpdateModal(true);
+      } catch {
+        // 启动自动检测失败静默忽略
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready]);
 
   const boot = useCallback(async () => {
     setBooting(true);
@@ -1853,12 +1961,7 @@ function App() {
       defaults.memory = prevMem;
       await saveConfig({ ...rawConfig, defaults });
       await refreshConfig();
-      if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
-      setSaveToast("设置已保存");
-      saveToastTimer.current = window.setTimeout(() => {
-        setSaveToast("");
-        saveToastTimer.current = null;
-      }, 2200);
+      showToast("设置已保存");
       void guiLog("保存 AI 设置成功");
     });
   }
@@ -2067,6 +2170,16 @@ function App() {
                       {appVersion ? `v${appVersion}` : "—"}
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    data-testid="check-update-btn"
+                    className={`action-chip${checkingUpdate ? " loading" : ""}`}
+                    disabled={checkingUpdate || updatingApp}
+                    onClick={() => void checkUpdateManual()}
+                  >
+                    {checkingUpdate ? <span className="spinner dark" /> : null}
+                    <span>{checkingUpdate ? "检查中" : "检查更新"}</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -3475,6 +3588,80 @@ function App() {
           </div>
         </div>
       )}
+
+      {updateModal && updateInfo ? (
+        <div className="modal-backdrop" data-testid="update-modal">
+          <div className="modal update-modal" role="dialog" aria-modal="true" aria-labelledby="update-modal-title">
+            <div className="modal-head">
+              <div>
+                <h3 id="update-modal-title">发现新版本 v{updateInfo.latestVersion}</h3>
+                <p className="subtitle update-modal-sub">
+                  当前版本 v{updateInfo.currentVersion || appVersion || "—"}
+                  {updateInfo.publishedAt
+                    ? ` · 发布于 ${updateInfo.publishedAt.slice(0, 10)}`
+                    : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                data-testid="update-modal-close"
+                aria-label="关闭"
+                disabled={updatingApp}
+                onClick={() => setUpdateModal(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-scroll update-notes" data-testid="update-notes">
+              {updateInfo.notes.trim() ? (
+                <Markdown remarkPlugins={[remarkGfm]}>{updateInfo.notes}</Markdown>
+              ) : (
+                <p className="field-hint">暂无更新日志</p>
+              )}
+            </div>
+            <p className="field-hint update-install-hint">
+              确认后将下载安装包并启动安装向导；安装前会退出本应用以便覆盖文件。
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                data-testid="update-later"
+                disabled={updatingApp}
+                onClick={() => setUpdateModal(false)}
+              >
+                稍后提醒
+              </button>
+              <button
+                type="button"
+                className="btn ghost"
+                data-testid="update-skip"
+                disabled={updatingApp}
+                onClick={() => void skipUpdateVersion()}
+              >
+                跳过此版本
+              </button>
+              <button
+                type="button"
+                className="btn"
+                data-testid="update-confirm"
+                disabled={updatingApp || !updateInfo.downloadUrl}
+                onClick={() => void confirmUpdate()}
+              >
+                {updatingApp ? (
+                  <>
+                    <span className="spinner dark" />
+                    <span>下载中…</span>
+                  </>
+                ) : (
+                  "立即更新"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
