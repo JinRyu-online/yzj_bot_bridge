@@ -11,6 +11,7 @@ import {
 export type ToastTone = "ok" | "err" | "neutral";
 
 type ToastState = {
+  id: number;
   message: string;
   tone: ToastTone;
 };
@@ -22,33 +23,60 @@ type ToastApi = {
 const ToastContext = createContext<ToastApi | null>(null);
 
 const TOAST_MS = 2200;
+const TOAST_MAX = 3;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toast, setToast] = useState<ToastState | null>(null);
-  const timerRef = useRef<number | null>(null);
+  const [toasts, setToasts] = useState<ToastState[]>([]);
+  const seqRef = useRef(0);
+  /** 当前在列 toast 的 id（按出现顺序），用于超限时挤出最旧一条。 */
+  const activeIdsRef = useRef<number[]>([]);
+  /** id → 自动关闭定时器，便于挤出时取消。 */
+  const timersRef = useRef(new Map<number, number>());
 
-  const showToast = useCallback((message: string, tone: ToastTone = "neutral") => {
-    if (timerRef.current) window.clearTimeout(timerRef.current);
-    setToast({ message, tone });
-    timerRef.current = window.setTimeout(() => {
-      setToast(null);
-      timerRef.current = null;
-    }, TOAST_MS);
+  const dismiss = useCallback((id: number) => {
+    const t = timersRef.current.get(id);
+    if (t) {
+      window.clearTimeout(t);
+      timersRef.current.delete(id);
+    }
+    activeIdsRef.current = activeIdsRef.current.filter((x) => x !== id);
+    setToasts((prev) => prev.filter((x) => x.id !== id));
   }, []);
+
+  const showToast = useCallback(
+    (message: string, tone: ToastTone = "neutral") => {
+      seqRef.current += 1;
+      const id = seqRef.current;
+      activeIdsRef.current.push(id);
+      // 最多 3 条：第 4 条出现时立即关闭最旧的一条。
+      if (activeIdsRef.current.length > TOAST_MAX) {
+        const oldest = activeIdsRef.current.shift()!;
+        dismiss(oldest);
+      }
+      setToasts((prev) => [...prev, { id, message, tone }]);
+      timersRef.current.set(id, window.setTimeout(() => dismiss(id), TOAST_MS));
+    },
+    [dismiss],
+  );
 
   const api = useMemo(() => ({ showToast }), [showToast]);
 
   return (
     <ToastContext.Provider value={api}>
       {children}
-      {toast ? (
-        <div
-          className={`toast ${toast.tone}`}
-          data-testid="save-toast"
-          data-tone={toast.tone}
-          role="status"
-        >
-          {toast.message}
+      {toasts.length ? (
+        <div className="toast-stack" data-testid="toast-stack">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className={`toast ${t.tone}`}
+              data-testid="save-toast"
+              data-tone={t.tone}
+              role="status"
+            >
+              {t.message}
+            </div>
+          ))}
         </div>
       ) : null}
     </ToastContext.Provider>

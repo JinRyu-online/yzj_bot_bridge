@@ -703,7 +703,7 @@ test("系统页：主题下拉可读、热重载按钮、路径可点", async ({
   await expect(page.getByTestId("app-version")).toHaveText("v0.2.6");
   await expect(page.getByTestId("check-update-btn")).toBeVisible();
   await page.getByTestId("check-update-btn").click();
-  await expect(page.getByTestId("save-toast")).toContainText("已是最新");
+  await expect(page.getByTestId("save-toast").filter({ hasText: "已是最新" })).toBeVisible();
 });
 
 test("更新：启动自动检测有新版本时弹窗", async ({ page }) => {
@@ -726,7 +726,7 @@ test("更新：启动检测失败时静默（无弹窗无 toast）", async ({ pa
   // 手动检查仍应提示失败
   await page.getByTestId("nav-system").click();
   await page.getByTestId("check-update-btn").click();
-  await expect(page.getByTestId("save-toast")).toContainText("检查更新失败");
+  await expect(page.getByTestId("save-toast").filter({ hasText: "检查更新失败" })).toBeVisible();
 });
 
 test("系统页：发现更新时弹窗展示日志并可确认", async ({ page }) => {
@@ -772,7 +772,7 @@ test("更新：跳过此版本后自动检测不再弹，手动 force 仍可弹"
   await page.getByTestId("check-update-btn").click();
   await expect(page.getByTestId("update-modal")).toBeVisible();
   await page.getByTestId("update-skip").click();
-  await expect(page.getByTestId("save-toast")).toContainText("已跳过 v0.3.0");
+  await expect(page.getByTestId("save-toast").filter({ hasText: "已跳过 v0.3.0" })).toBeVisible();
   const skipped = await page.evaluate(() => (window as any).__E2E_STATE__.skippedUpdateVersion);
   expect(skipped).toBe("0.3.0");
 });
@@ -810,7 +810,7 @@ test("更新：缺少安装包时手动检查提示明确文案", async ({ page 
   await page.getByTestId("nav-system").click();
   await page.getByTestId("check-update-btn").click();
   await expect(page.getByTestId("update-modal")).toHaveCount(0);
-  await expect(page.getByTestId("save-toast")).toContainText("缺少");
+  await expect(page.getByTestId("save-toast").filter({ hasText: "缺少" })).toBeVisible();
 });
 
 test("系统页：关闭到托盘开关", async ({ page }) => {
@@ -889,14 +889,14 @@ test("AI 设置：DSH 精简卡片（入口/Node/模型）与保存回读", asyn
   await expect(page.getByTestId("dsh-entry")).toHaveValue(/bin\.js/);
   // 默认模型：进入设置页已自动拉取一次；手动刷新仍可用。
   await page.getByTestId("refresh-dsh-models").click();
-  await expect(page.getByTestId("save-toast")).toContainText("已拉取 2 个 DSH 模型");
+  await expect(page.getByTestId("save-toast").filter({ hasText: "已拉取 2 个 DSH 模型" })).toBeVisible();
   await page.getByTestId("dsh-model").locator(".fancy-select-trigger").click();
   const dshMenu = page.getByTestId("dsh-model-menu");
   await expect(dshMenu.getByRole("option", { name: "DeepSeek-V4-Flash" })).toBeVisible();
   await dshMenu.getByRole("option", { name: "DeepSeek-V4-Flash" }).click();
   // 保存 → 回读保留 dsh_model。
   await page.getByTestId("save-settings").click();
-  await expect(page.getByTestId("save-toast")).toBeVisible();
+  await expect(page.getByTestId("save-toast").filter({ hasText: "设置已保存" })).toBeVisible();
   await expect(page.getByTestId("dsh-model")).toContainText("DeepSeek-V4-Flash");
 });
 
