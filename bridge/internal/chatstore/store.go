@@ -32,11 +32,12 @@ type Message struct {
 
 // Session groups a sequence of Messages for one GUI chat test conversation.
 type Session struct {
-	ID        string    `json:"id"`
-	Title      string    `json:"title"`
-	BotID      string    `json:"bot_id"`
-	UpdatedAt string    `json:"updated_at"`
-	Messages   []Message `json:"messages"`
+	ID           string    `json:"id"`
+	Title         string    `json:"title"`
+	BotID         string    `json:"bot_id"`
+	BoundOpenID  string    `json:"bound_open_id,omitempty"` // optional real Yunzhijia openID when memory.gui_bind_enabled
+	UpdatedAt     string    `json:"updated_at"`
+	Messages      []Message `json:"messages"`
 }
 
 // Summary is a List-friendly projection of Session: full messages are
@@ -177,6 +178,11 @@ func (s *Store) Create(botID, title string) (*Session, error) {
 // Empty arguments are ignored (left unchanged). Returns the updated
 // session copy or nil if the id was not found.
 func (s *Store) Update(id, title, botID string) (*Session, error) {
+	return s.UpdateFields(id, title, botID, nil)
+}
+
+// UpdateFields is Update plus optional bound_open_id (nil = leave unchanged).
+func (s *Store) UpdateFields(id, title, botID string, boundOpenID *string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i := range s.data.Sessions {
@@ -186,6 +192,9 @@ func (s *Store) Update(id, title, botID string) (*Session, error) {
 			}
 			if botID != "" {
 				s.data.Sessions[i].BotID = botID
+			}
+			if boundOpenID != nil {
+				s.data.Sessions[i].BoundOpenID = strings.TrimSpace(*boundOpenID)
 			}
 			s.data.Sessions[i].UpdatedAt = nowRFC3339()
 			cp := s.data.Sessions[i]

@@ -37,9 +37,17 @@ func SkillsDir() string {
 	return filepath.Join(UserDataDir(), "skills")
 }
 
+// MemoryDir returns ~/.yzj-bridge/memory.
+func MemoryDir() string {
+	return filepath.Join(UserDataDir(), "memory")
+}
+
 func EnsureUserData() error {
 	if err := os.MkdirAll(UserDataDir(), 0o755); err != nil {
 		return err
 	}
-	return os.MkdirAll(SkillsDir(), 0o755)
+	if err := os.MkdirAll(SkillsDir(), 0o755); err != nil {
+		return err
+	}
+	return os.MkdirAll(MemoryDir(), 0o755)
 }

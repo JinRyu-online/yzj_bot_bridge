@@ -78,6 +78,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/skills/", s.auth(s.skillsRoot))
 	mux.HandleFunc("/v1/chat/sessions", s.auth(s.chatSessions))
 	mux.HandleFunc("/v1/chat/sessions/", s.auth(s.chatSessionsPath))
+	mux.HandleFunc("/v1/memory/profiles", s.auth(s.memoryProfiles))
+	mux.HandleFunc("/v1/memory/profiles/", s.auth(s.memoryProfilesPath))
+	mux.HandleFunc("/v1/memory/enable-check", s.auth(s.memoryEnableCheck))
 
 	s.srv = &http.Server{Addr: s.Addr, Handler: mux}
 	path, _ := s.WriteTokenFile()

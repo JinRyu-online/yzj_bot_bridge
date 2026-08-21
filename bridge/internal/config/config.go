@@ -42,6 +42,15 @@ func defaultMap() map[string]any {
 		"openai_max_tool_rounds": 8, "openai_model": "",
 		"openai_compact": true, "openai_compact_keep": 6,
 		"openai_compact_after_turns": 10, "openai_compact_after_runes": 8000,
+		"memory": map[string]any{
+			"enabled": false, "after_turns": 8, "idle_sec": 1800,
+			"appendix_runes": 800, "style_runes": 400, "donts_max": 8,
+			"profiler_max_turns": 24, "profiler_max_runes": 12000,
+			"fact_cards_enabled": false, "fact_card_ttl_days": 14, "fact_cards_max": 12,
+			"model": "", "openai_base_url": "", "openai_api_key": "", "timeout": 0,
+			"gui_bind_enabled": false,
+		},
+		"memory_enabled": true,
 	}
 }
 
@@ -322,6 +331,7 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		CommandsEnabled: asBool(m["commands_enabled"], true),
 		InboundMode:     firstNonEmpty(asString(m["inbound_mode"]), "websocket"),
 		WebhookPath:     asString(m["webhook_path"]), Secret: asString(m["secret"]),
+		MemoryEnabled:   asBool(m["memory_enabled"], true),
 	}
 }
 

@@ -31,6 +31,29 @@ func TestParseHelpListsStop(t *testing.T) {
 	if !got.Handled || !strings.Contains(got.Reply, "--stop") || !strings.Contains(got.Reply, "--jobs") {
 		t.Fatalf("%+v", got)
 	}
+	if !strings.Contains(got.Reply, "--memory") || !strings.Contains(got.Reply, "--forget") {
+		t.Fatalf("help missing memory/forget: %+v", got)
+	}
+}
+
+func TestParseMemoryAndForget(t *testing.T) {
+	b := &bot.Bot{Config: bot.Config{ID: "logbot", CommandsEnabled: true}}
+	got := Parse("/memory off", b, nil)
+	if got.Overrides["memory"] != "off" || !got.Handled || got.RestText != "" {
+		t.Fatalf("%+v", got)
+	}
+	got = Parse("--memory on", b, nil)
+	if got.Overrides["memory"] != "on" || !got.Handled {
+		t.Fatalf("%+v", got)
+	}
+	got = Parse("/memory", b, nil)
+	if got.Overrides["memory"] != "show" {
+		t.Fatalf("%+v", got)
+	}
+	got = Parse("/forget", b, nil)
+	if got.Overrides["forget"] != "1" || !got.Handled || got.RestText != "" {
+		t.Fatalf("%+v", got)
+	}
 }
 
 func TestParseJobsAlwaysAvailable(t *testing.T) {

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { ChatPage } from "./ChatPage";
+import { FancySelect } from "./FancySelect";
+import { MemoryPage } from "./MemoryPage";
 import { findWebhookConflict } from "./webhookUnique";
 import "./App.css";
 
@@ -21,7 +22,7 @@ type StatusItem = {
 
 type LogLine = { seq: number; time: string; level: string; bot?: string; message: string };
 type ThemeId = "aurora" | "midnight" | "sand" | "ice";
-type PageId = "chat" | "system" | "bots" | "settings" | "skills" | "logs" | "help";
+type PageId = "chat" | "memory" | "system" | "bots" | "settings" | "skills" | "logs" | "help";
 
 type SkillInfo = {
   id: string;
@@ -349,239 +350,6 @@ function ModalFloatMessage({
   );
 }
 
-function fuzzyMatch(text: string, query: string): boolean {
-  const t = text.toLowerCase();
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  if (t.includes(q)) return true;
-  let i = 0;
-  for (const ch of t) {
-    if (ch === q[i]) i += 1;
-    if (i >= q.length) return true;
-  }
-  return false;
-}
-
-function FancySelect<T extends string>({
-  value,
-  options,
-  onChange,
-  testId,
-  className,
-  placeholder,
-  searchable = true,
-  disabled = false,
-  onOpen,
-}: {
-  value: T;
-  options: { id: T; label: string }[];
-  onChange: (v: T) => void;
-  testId?: string;
-  className?: string;
-  placeholder?: string;
-  searchable?: boolean;
-  disabled?: boolean;
-  onOpen?: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [activeIdx, setActiveIdx] = useState(0);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
-  const merged = useMemo(() => {
-    const list = [...options];
-    if (value && !list.some((o) => o.id === value)) {
-      list.unshift({ id: value, label: value });
-    }
-    return list;
-  }, [options, value]);
-  const filtered = useMemo(() => {
-    if (!searchable || !query.trim()) return merged;
-    return merged.filter((o) => fuzzyMatch(o.label, query) || fuzzyMatch(o.id, query));
-  }, [merged, query, searchable]);
-  const current = merged.find((o) => o.id === value);
-
-  useEffect(() => {
-    if (disabled && open) setOpen(false);
-  }, [disabled, open]);
-
-  const placeMenu = useCallback(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const width = Math.max(rect.width, 220);
-    const maxH = 320;
-    const gap = 8;
-    const spaceBelow = window.innerHeight - rect.bottom - gap;
-    const spaceAbove = rect.top - gap;
-    const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
-    const height = Math.max(140, Math.min(maxH, openUp ? spaceAbove : spaceBelow));
-    const top = openUp ? Math.max(8, rect.top - gap - height) : rect.bottom + gap;
-    let left = rect.left;
-    if (left + width > window.innerWidth - 12) {
-      left = Math.max(12, window.innerWidth - width - 12);
-    }
-    setMenuStyle({
-      position: "fixed",
-      top,
-      left,
-      width,
-      maxHeight: height,
-      zIndex: 10000,
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    placeMenu();
-    setQuery("");
-    setActiveIdx(0);
-    const t = window.setTimeout(() => searchRef.current?.focus(), 0);
-    return () => window.clearTimeout(t);
-  }, [open, placeMenu]);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    placeMenu();
-  }, [open, placeMenu, filtered.length, searchable]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (rootRef.current?.contains(t) || menuRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    const onReposition = () => placeMenu();
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("resize", onReposition);
-    window.addEventListener("scroll", onReposition, true);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("resize", onReposition);
-      window.removeEventListener("scroll", onReposition, true);
-    };
-  }, [open, placeMenu]);
-
-  useEffect(() => {
-    setActiveIdx(0);
-  }, [query]);
-
-  const pick = (id: T) => {
-    onChange(id);
-    setOpen(false);
-    setQuery("");
-  };
-
-  const onSearchKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      setOpen(false);
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveIdx((i) => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveIdx((i) => Math.max(i - 1, 0));
-      return;
-    }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const hit = filtered[activeIdx];
-      if (hit) pick(hit.id);
-    }
-  };
-
-  const menu =
-    open && typeof document !== "undefined"
-      ? createPortal(
-          <div
-            ref={menuRef}
-            className="fancy-select-menu portal"
-            role="listbox"
-            data-testid={testId ? `${testId}-menu` : undefined}
-            style={menuStyle}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            {searchable ? (
-              <div className="fancy-select-search">
-                <input
-                  ref={searchRef}
-                  data-testid={testId ? `${testId}-search` : undefined}
-                  value={query}
-                  placeholder="输入搜索…"
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={onSearchKeyDown}
-                />
-              </div>
-            ) : null}
-            <div className="fancy-select-options">
-              {filtered.length ? (
-                filtered.map((o, idx) => (
-                  <button
-                    key={o.id || "__empty"}
-                    type="button"
-                    role="option"
-                    aria-selected={o.id === value}
-                    className={`fancy-option${o.id === value ? " active" : ""}${idx === activeIdx ? " focus" : ""}`}
-                    title={o.label}
-                    onMouseEnter={() => setActiveIdx(idx)}
-                    onClick={() => pick(o.id)}
-                  >
-                    {o.label}
-                  </button>
-                ))
-              ) : (
-                <div className="fancy-option muted">
-                  {merged.length ? "无匹配项" : "暂无选项，请先拉取"}
-                </div>
-              )}
-            </div>
-          </div>,
-          document.body,
-        )
-      : null;
-
-  return (
-    <div
-      className={`fancy-select${open ? " open" : ""}${disabled ? " disabled" : ""}${className ? ` ${className}` : ""}`}
-      ref={rootRef}
-      data-testid={testId}
-    >
-      <button
-        type="button"
-        className="fancy-select-trigger"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        disabled={disabled}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (disabled) return;
-          setOpen((v) => {
-            const next = !v;
-            if (next) onOpen?.();
-            return next;
-          });
-        }}
-        title={current?.label || value || placeholder || ""}
-      >
-        <span className="fancy-select-label">
-          {current?.label || value || placeholder || "请选择"}
-        </span>
-        <span className="fancy-caret" />
-      </button>
-      {menu}
-    </div>
-  );
-}
-
 function SecretInput({
   value,
   onChange,
@@ -726,6 +494,16 @@ function NavIcon({ id }: { id: PageId }) {
           {...stroke}
           d="M6.5 5.75h11a2.25 2.25 0 012.25 2.25v7a2.25 2.25 0 01-2.25 2.25H11.2L7 19.6v-2.35H6.5A2.25 2.25 0 014.25 15V8A2.25 2.25 0 016.5 5.75z"
         />
+      ) : null}
+      {id === "memory" ? (
+        <>
+          <path
+            {...stroke}
+            d="M8.2 6.2h7.6A2.3 2.3 0 0118.1 8.5v7A2.3 2.3 0 0115.8 17.8H8.2A2.3 2.3 0 015.9 15.5v-7A2.3 2.3 0 018.2 6.2z"
+          />
+          <path {...stroke} d="M9.4 10.2h5.2M9.4 13h3.6" />
+          <circle cx="12" cy="7.4" r="0.9" fill="currentColor" />
+        </>
       ) : null}
       {id === "bots" ? (
         <>
@@ -1081,7 +859,11 @@ function App() {
     cursor_model: "",
     claude_model: "",
     openai_model: "",
+    memory_enabled: false,
+    memory_gui_bind_enabled: false,
   });
+  const [memoryEnableHint, setMemoryEnableHint] = useState("");
+  const [memoryEnableBusy, setMemoryEnableBusy] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -1269,6 +1051,13 @@ function App() {
       cursor_model: String(defaults.cursor_model || ""),
       claude_model: String(defaults.claude_model || ""),
       openai_model: String(defaults.openai_model || ""),
+      memory_enabled: Boolean(
+        ((defaults.memory as Record<string, unknown> | undefined)?.enabled ?? false) === true,
+      ),
+      memory_gui_bind_enabled: Boolean(
+        ((defaults.memory as Record<string, unknown> | undefined)?.gui_bind_enabled ?? false) ===
+          true,
+      ),
     });
   }, []);
 
@@ -1437,7 +1226,13 @@ function App() {
     if (page !== "logs") return;
     logNearBottomRef.current = true;
     setShowLogScrollBottom(false);
-    const jump = () => jumpLogsToBottom();
+    const jump = () => {
+      // 用户已上滑时不要再强制贴底，否则会吞掉「滚到底部」按钮（e2e / 快速操作会踩中 80ms 定时器）。
+      if (!logNearBottomRef.current) {
+        return;
+      }
+      jumpLogsToBottom();
+    };
     jump();
     const id = window.requestAnimationFrame(jump);
     const t = window.setTimeout(jump, 80);
@@ -1773,8 +1568,18 @@ function App() {
         delete prev.openai_api_key;
         delete prev.model;
       }
-      if (botForm.backend !== "openai" && !botForm.model.trim()) {
-        delete prev.model;
+      if (botForm.backend !== "openai") {
+        // 切离 OpenAI 后清掉角色/通道上的旧 model，避免 Cursor CLI 误用 deepseek 等网关模型名。
+        delete prev.openai_base_url;
+        delete prev.openai_api_key;
+        if (!botForm.model.trim()) delete prev.model;
+        if (Array.isArray(prev.channels)) {
+          prev.channels = (prev.channels as Record<string, unknown>[]).map((ch) => {
+            const next = { ...ch };
+            delete next.model;
+            return next;
+          });
+        }
       }
       if (!Array.isArray(prev.channels)) {
         prev.group = botForm.group || prev.group || "default";
@@ -1875,7 +1680,10 @@ function App() {
       send_msg_url: channelForm.send_msg_url.trim(),
     };
     if (channelForm.id.trim()) entry.id = channelForm.id.trim();
-    if (channelForm.model.trim()) entry.model = channelForm.model.trim();
+    // 通道模型覆盖仅对 OpenAI 有意义；非 OpenAI 保存时显式丢掉，避免残留网关模型名。
+    if (String(bot.backend || "") === "openai" && channelForm.model.trim()) {
+      entry.model = channelForm.model.trim();
+    }
     if (editingChannelIdx === null) channels.push(entry);
     else channels[editingChannelIdx] = entry;
     bot.channels = channels;
@@ -1931,6 +1739,15 @@ function App() {
       defaults.cursor_model = cliForm.cursor_model.trim();
       defaults.claude_model = cliForm.claude_model.trim();
       defaults.openai_model = cliForm.openai_model.trim();
+      const prevMem = {
+        ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
+          string,
+          unknown
+        >),
+      };
+      prevMem.enabled = cliForm.memory_enabled;
+      prevMem.gui_bind_enabled = cliForm.memory_gui_bind_enabled;
+      defaults.memory = prevMem;
       await saveConfig({ ...rawConfig, defaults });
       await refreshConfig();
       if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
@@ -2013,6 +1830,7 @@ function App() {
             ["bots", "机器人"],
             ["settings", "AI 设置"],
             ["skills", "Skills"],
+            ["memory", "记忆"],
             ["logs", "运行日志"],
             ["help", "帮助"],
             ["system", "系统设置"],
@@ -2058,8 +1876,12 @@ function App() {
               ready={ready}
               active={page === "chat"}
               bots={status.map((b) => ({ id: b.id, name: b.name, backend: b.backend }))}
+              guiBindEnabled={cliForm.memory_gui_bind_enabled}
             />
           </div>
+        ) : null}
+        {page === "memory" ? (
+          <MemoryPage api={api} ready={ready} />
         ) : null}
         {page === "system" && (
           <section className="page" key="system" data-testid="page-system">
@@ -2346,6 +2168,63 @@ function App() {
                       </span>
                     ) : null}
                   </div>
+                </div>
+              </div>
+
+              <div className="card soft pad settings-group" data-testid="group-memory">
+                <h3 className="section-inline">用户记忆</h3>
+                <p className="group-desc">
+                  按云之家 openID 维护画像并在回复时注入附录；默认关闭。开启前会探测 OpenAI 或 Claude。
+                </p>
+                <div className="row">
+                  <div className="row-text">
+                    <strong>启用用户记忆</strong>
+                    <span>defaults.memory.enabled（默认关）</span>
+                  </div>
+                  <Switch
+                    testId="memory-enabled-switch"
+                    checked={cliForm.memory_enabled}
+                    loading={memoryEnableBusy}
+                    onChange={async (v) => {
+                      if (!v) {
+                        setCliForm({ ...cliForm, memory_enabled: false });
+                        setMemoryEnableHint("");
+                        return;
+                      }
+                      setMemoryEnableBusy(true);
+                      setMemoryEnableHint("");
+                      try {
+                        const raw = await api("POST", "/v1/memory/enable-check");
+                        const res = JSON.parse(raw) as { ok?: boolean; reason?: string };
+                        if (!res.ok) {
+                          setMemoryEnableHint(res.reason || "探测失败，无法开启");
+                          return;
+                        }
+                        setCliForm({ ...cliForm, memory_enabled: true });
+                        setMemoryEnableHint("探测通过，保存设置后生效");
+                      } catch (e) {
+                        setMemoryEnableHint(String(e));
+                      } finally {
+                        setMemoryEnableBusy(false);
+                      }
+                    }}
+                  />
+                </div>
+                {memoryEnableHint ? (
+                  <span className="field-hint" data-testid="memory-enable-hint">
+                    {memoryEnableHint}
+                  </span>
+                ) : null}
+                <div className="row">
+                  <div className="row-text">
+                    <strong>GUI 聊天绑定 openID</strong>
+                    <span>仅调试；默认关。开启后聊天页可绑定真人 openID 走记忆</span>
+                  </div>
+                  <Switch
+                    testId="memory-gui-bind-switch"
+                    checked={cliForm.memory_gui_bind_enabled}
+                    onChange={(v) => setCliForm({ ...cliForm, memory_gui_bind_enabled: v })}
+                  />
                 </div>
               </div>
 
@@ -2972,6 +2851,8 @@ function App() {
                     setBotForm({
                       ...botForm,
                       backend: v,
+                      // 离开 OpenAI 时清空角色模型，改用对应引擎的全局默认（如 cursor_model）。
+                      model: v === "openai" ? botForm.model : "",
                       openai_use_defaults: v === "openai" ? botForm.openai_use_defaults : true,
                     });
                     if (v === "openai" && !openaiModels.length) {

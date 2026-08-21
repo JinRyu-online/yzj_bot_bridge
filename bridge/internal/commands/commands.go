@@ -10,12 +10,14 @@ import (
 )
 
 var (
-	cmdFlagRe  = regexp.MustCompile(`(?i)(?:^|\s)(?:--|/)(clear|new|help|status|whoami|plan|ask|agent|prompt|stop|abort|interrupt|停止|中断|jobs|queue|list|tasks|任务|队列|列表)(?:\s|$)`)
+	cmdFlagRe  = regexp.MustCompile(`(?i)(?:^|\s)(?:--|/)(clear|new|help|status|whoami|plan|ask|agent|prompt|stop|abort|interrupt|停止|中断|jobs|queue|list|tasks|任务|队列|列表|memory|forget)(?:\s|$)`)
 	stopFlagRe = regexp.MustCompile(`(?i)(?:^|\s)(?:--|/)(stop|abort|interrupt|停止|中断)(?:\s|$)`)
 	jobsFlagRe = regexp.MustCompile(`(?i)(?:^|\s)(?:--|/)(jobs|queue|list|tasks|任务|队列|列表)(?:\s|$)`)
-	projectRe = regexp.MustCompile(`(?i)(?:--|/)project(?:\s+(\S+))?`)
-	modelRe   = regexp.MustCompile(`(?i)(?:--|/)model(?:\s+(\S+))`)
-	atRe      = regexp.MustCompile(`(?i)@([^\s@]+)\b\s*`)
+	memoryRe   = regexp.MustCompile(`(?i)(?:--|/)memory(?:\s+(off|on|show))?`)
+	forgetRe   = regexp.MustCompile(`(?i)(?:--|/)forget(?:\s|$)`)
+	projectRe  = regexp.MustCompile(`(?i)(?:--|/)project(?:\s+(\S+))?`)
+	modelRe    = regexp.MustCompile(`(?i)(?:--|/)model(?:\s+(\S+))`)
+	atRe       = regexp.MustCompile(`(?i)@([^\s@]+)\b\s*`)
 )
 
 type Result struct {
@@ -83,6 +85,20 @@ func Parse(text string, b *bot.Bot, reg *registry.Registry) Result {
 		text = projectRe.ReplaceAllString(text, "")
 		res.Handled = strings.TrimSpace(text) == "" && arg != ""
 	}
+	if m := memoryRe.FindStringSubmatch(text); m != nil {
+		sub := "show"
+		if len(m) > 1 && strings.TrimSpace(m[1]) != "" {
+			sub = strings.ToLower(strings.TrimSpace(m[1]))
+		}
+		res.Overrides["memory"] = sub
+		text = memoryRe.ReplaceAllString(text, "")
+		res.Handled = true
+	}
+	if forgetRe.MatchString(text) {
+		res.Overrides["forget"] = "1"
+		text = forgetRe.ReplaceAllString(text, "")
+		res.Handled = true
+	}
 	flags := cmdFlagRe.FindAllStringSubmatch(text, -1)
 	for _, f := range flags {
 		if len(f) < 2 {
@@ -97,7 +113,7 @@ func Parse(text string, b *bot.Bot, reg *registry.Registry) Result {
 			res.Overrides["stop"] = "1"
 			res.Handled = true
 		case "help":
-			res.Reply += "命令: --clear/--new/--stop/--jobs/--help/--status/--whoami/--plan/--ask/--agent/--prompt --project --model\n"
+			res.Reply += "命令: --clear/--new/--stop/--jobs/--help/--status/--whoami/--plan/--ask/--agent/--prompt --project --model --memory off|on|show --forget\n"
 			res.Handled = true
 		case "status":
 			st := b.SnapshotStatus()
@@ -112,6 +128,9 @@ func Parse(text string, b *bot.Bot, reg *registry.Registry) Result {
 			res.Reply += fmt.Sprintf("本轮模式: %s\n", f[1])
 		case "prompt":
 			res.Reply += "system_prompt:\n" + b.Config.SystemPrompt + "\n"
+			res.Handled = true
+		case "memory", "forget":
+			// Handled above via dedicated regex; keep Handled if only these remain.
 			res.Handled = true
 		}
 	}

@@ -51,6 +51,8 @@ type Config struct {
 	InboundMode             string   `json:"inbound_mode"`
 	WebhookPath             string   `json:"webhook_path"`
 	Secret                  string   `json:"secret"`
+	// MemoryEnabled defaults true; only effective when defaults.memory.enabled is on.
+	MemoryEnabled bool `json:"memory_enabled"`
 }
 
 type RuntimeStatus struct {
@@ -82,6 +84,8 @@ type RunOpts struct {
 	SkillPrompt    string
 	SkillTools     []ToolSpec
 	SkillDispatch  func(toolName, argsJSON, workspace string) string
+	// MemoryPrompt is the user-profile appendix; backends append it after SkillPrompt.
+	MemoryPrompt   string
 	Model          string
 	OperatorOpenID string
 	OperatorName   string
