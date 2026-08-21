@@ -742,6 +742,13 @@ textarea {
   font-weight: 500;
 }
 
+/* 成功提示（FadingHint）5 秒后渐隐：opacity 过渡 400ms，随后组件卸载释放空间。 */
+.field-hint.fade-out {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
 .skill-list {
   display: grid;
   gap: 10px;

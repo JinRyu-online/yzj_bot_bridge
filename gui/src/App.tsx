@@ -454,6 +454,49 @@ function SecretInput({
   );
 }
 
+/**
+ * 设置页提示：ok（成功，如"已找到…"）显示 delayMs 毫秒后渐隐并释放占位空间；
+ * error（失败）常驻，便于用户阅读错误原因。ok 从 false→true 时重新计时。
+ */
+function FadingHint({
+  ok,
+  testId,
+  children,
+  delayMs = 5000,
+}: {
+  ok: boolean;
+  testId?: string;
+  children: React.ReactNode;
+  delayMs?: number;
+}) {
+  const [fading, setFading] = useState(false);
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    if (!ok) {
+      setFading(false);
+      setGone(false);
+      return;
+    }
+    setFading(false);
+    setGone(false);
+    const t1 = window.setTimeout(() => setFading(true), delayMs);
+    const t2 = window.setTimeout(() => setGone(true), delayMs + 400);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [ok, delayMs]);
+  if (gone) return null;
+  return (
+    <span
+      className={`field-hint${ok ? " ok" : " error"}${fading ? " fade-out" : ""}`}
+      data-testid={testId}
+    >
+      {children}
+    </span>
+  );
+}
+
 function emptyBotForm(): BotForm {
   return {
     id: "",
@@ -2495,16 +2538,13 @@ function App() {
                       ) : null}
                     </div>
                     {cursorDiscover ? (
-                      <span
-                        className={`field-hint${cursorDiscover.found ? " ok" : " error"}`}
-                        data-testid="cursor-discover-hint"
-                      >
+                      <FadingHint ok={cursorDiscover.found} testId="cursor-discover-hint">
                         {cursorDiscover.found
                           ? `已找到${cursorDiscover.version ? `（${cursorDiscover.version}）` : ""}：${cursorDiscover.path || ""}`
                           : cursorDiscover.message ||
                             cursorDiscover.install?.hint ||
                             "未找到 Cursor CLI，可一键打开终端安装"}
-                      </span>
+                      </FadingHint>
                     ) : null}
                   </label>
                   <label className="full">
@@ -2587,16 +2627,13 @@ function App() {
                       ) : null}
                     </div>
                     {dshDiscover ? (
-                      <span
-                        className={`field-hint${dshDiscover.found ? " ok" : " error"}`}
-                        data-testid="dsh-discover-hint"
-                      >
+                      <FadingHint ok={dshDiscover.found} testId="dsh-discover-hint">
                         {dshDiscover.found
                           ? `已找到${dshDiscover.version ? `（${dshDiscover.version}）` : ""}：${dshDiscover.path || ""}`
                           : dshDiscover.message ||
                             dshDiscover.install?.hint ||
                             "未找到 DSH CLI，可一键打开终端安装"}
-                      </span>
+                      </FadingHint>
                     ) : null}
                   </label>
                   <label className="full">
@@ -2632,16 +2669,13 @@ function App() {
                       ) : null}
                     </div>
                     {nodeDiscover ? (
-                      <span
-                        className={`field-hint${nodeDiscover.found ? " ok" : " error"}`}
-                        data-testid="node-discover-hint"
-                      >
+                      <FadingHint ok={nodeDiscover.found} testId="node-discover-hint">
                         {nodeDiscover.found
                           ? `已找到${nodeDiscover.version ? `（${nodeDiscover.version}）` : ""}：${nodeDiscover.path || ""}`
                           : nodeDiscover.message ||
                             nodeDiscover.install?.hint ||
                             "未找到 Node，可一键打开终端安装"}
-                      </span>
+                      </FadingHint>
                     ) : null}
                   </label>
                   <div className="field">
@@ -2777,16 +2811,13 @@ function App() {
                       ) : null}
                     </div>
                     {claudeDiscover ? (
-                      <span
-                        className={`field-hint${claudeDiscover.found ? " ok" : " error"}`}
-                        data-testid="claude-discover-hint"
-                      >
+                      <FadingHint ok={claudeDiscover.found} testId="claude-discover-hint">
                         {claudeDiscover.found
                           ? `已找到${claudeDiscover.version ? `（${claudeDiscover.version}）` : ""}：${claudeDiscover.path || ""}`
                           : claudeDiscover.message ||
                             claudeDiscover.install?.hint ||
                             "未找到 Claude Code，可一键打开终端安装"}
-                      </span>
+                      </FadingHint>
                     ) : null}
                   </label>
                   <label className="full">
