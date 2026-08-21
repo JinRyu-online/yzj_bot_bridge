@@ -1,0 +1,30 @@
+---
+description: YZJ Bridge GUI 视觉与交互约定（按钮、toast、选择器）
+globs: gui/**/*.{tsx,ts,css}
+alwaysApply: false
+---
+
+# GUI 设计规则（摘要）
+
+完整说明见 [docs/gui-design.md](../../docs/gui-design.md)。改 GUI 时必须遵守：
+
+## 按钮
+
+- 语义分轨：`.btn`（primary）/ `.btn.ghost` / `.btn.danger` / `.action-chip`（行内探测刷新）
+- 尺寸用 `sm`/`xs`（别名 `small`/`tiny` 仅兼容）
+- Hover：`translateY(-1px)`；Active：回落；异步：`loading` + spinner + 文案 + disabled
+
+## 反馈
+
+- 结果用 `useToast()`：`ok` | `err` | `neutral`；失败禁止 `ok`
+- 用户点击才 toast；自动探测默认静默（`notify: true`）
+- 表单校验用 ModalFloat；启动失败用页内 `err`
+
+## 勿动 / 专用
+
+- 勿把 Switch、FancySelect、导航/列表行硬改成 `.btn`
+- 新下拉用 `FancySelect`；勿再造第三套主按钮外观
+
+## 标准参照
+
+系统页「检查更新」：`action-chip` + loading + 右上角 toast。
