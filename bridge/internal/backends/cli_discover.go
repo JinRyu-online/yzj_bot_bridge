@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"yzj-bridge/internal/bot"
 )
 
 // CLIDiscoverResult is the payload for GUI auto-scan of Cursor/Claude CLIs.
@@ -52,6 +54,22 @@ func DiscoverCLI(engine, configured string) CLIDiscoverResult {
 		}
 		candidates = claudeInstallCandidates()
 		out.Install = claudeInstallHint()
+	case "dsh", "dsh_jsonrpc":
+		out.Engine = "dsh"
+		if configured != "" {
+			candidates = append(candidates, configured)
+		}
+		// resolveDSHEntry 依次覆盖：dsh_entry(configured) → DSHHome 默认路径 → PATH 上的 dsh。
+		candidates = append(candidates, resolveDSHEntry(bot.Config{DSHEntry: configured}))
+		candidates = append(candidates, dshInstallCandidates()...)
+		out.Install = dshInstallHint()
+	case "node", "nodejs":
+		out.Engine = "node"
+		if configured != "" {
+			candidates = append(candidates, configured)
+		}
+		candidates = append(candidates, nodeInstallCandidates()...)
+		out.Install = nodeInstallHint()
 	default:
 		out.Message = "unknown engine: " + engine
 		return out
@@ -183,6 +201,68 @@ func claudeInstallCandidates() []string {
 	return out
 }
 
+// dshInstallCandidates 常见 DSH 入口位置（node 直调 bin.js）。
+func dshInstallCandidates() []string {
+	var out []string
+	if home := os.Getenv("USERPROFILE"); home != "" {
+		out = append(out, filepath.Join(home, ".dsh", "profiles", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		out = append(out, filepath.Join(home, ".dsh", "profiles", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js"))
+	}
+	return out
+}
+
+// nodeInstallCandidates 常见 Node.js 可执行位置（PATH 上的 node 优先）。
+func nodeInstallCandidates() []string {
+	var out []string
+	if lp, err := exec.LookPath("node"); err == nil {
+		out = append(out, lp)
+	}
+	if pf := os.Getenv("ProgramFiles"); pf != "" {
+		out = append(out, filepath.Join(pf, "nodejs", "node.exe"))
+	}
+	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+		out = append(out, filepath.Join(local, "Programs", "nodejs", "node.exe"))
+	}
+	if up := os.Getenv("USERPROFILE"); up != "" {
+		out = append(out, filepath.Join(up, "nvm4w", "nodejs", "node.exe"))
+	}
+	return out
+}
+
+// dshInstallHint DSH CLI 安装提示（npm 全局安装 @deepseek-ai/dsh）。
+func dshInstallHint() *CLIInstallHint {
+	if runtime.GOOS == "windows" {
+		return &CLIInstallHint{
+			Shell:   "powershell",
+			Command: `npm install -g @deepseek-ai/dsh`,
+			Hint:    "将打开 PowerShell 安装 DSH CLI；安装后请回到 AI 设置重新扫描",
+		}
+	}
+	return &CLIInstallHint{
+		Shell:   "bash",
+		Command: `npm install -g @deepseek-ai/dsh`,
+		Hint:    "将打开终端安装 DSH CLI；安装后请回到 AI 设置重新扫描",
+	}
+}
+
+// nodeInstallHint Node.js 安装提示（Windows 用 winget，其他平台用 nvm）。
+func nodeInstallHint() *CLIInstallHint {
+	if runtime.GOOS == "windows" {
+		return &CLIInstallHint{
+			Shell:   "powershell",
+			Command: `winget install OpenJS.NodeJS.LTS`,
+			Hint:    "将打开 PowerShell，用 winget 安装 Node.js LTS",
+		}
+	}
+	return &CLIInstallHint{
+		Shell:   "bash",
+		Command: `nvm install --lts`,
+		Hint:    "将打开终端，用 nvm 安装 Node.js LTS",
+	}
+}
+
 func cursorInstallHint() *CLIInstallHint {
 	if runtime.GOOS == "windows" {
 		return &CLIInstallHint{
@@ -216,9 +296,19 @@ func claudeInstallHint() *CLIInstallHint {
 func probeCLIVersion(engine, bin string) string {
 	args := []string{"--version"}
 	var cmd *exec.Cmd
-	if engine == "cursor" {
+	switch engine {
+	case "cursor":
 		cmd = cursorCommand(nil, bin, args...)
-	} else {
+	case "dsh":
+		// dsh 入口是 bin.js，需 node 直调：node <entry> --version。
+		nodeBin := resolveNodeBin("")
+		if _, err := exec.LookPath(nodeBin); err != nil {
+			return "" // 找不到 node，跳过版本探测
+		}
+		cmd = exec.Command(nodeBin, bin, "--version")
+	case "node":
+		cmd = exec.Command(bin, args...)
+	default:
 		cmd = exec.Command(bin, args...)
 		if runtime.GOOS == "windows" {
 			resolved := resolveWindowsBin(bin, "claude.exe")

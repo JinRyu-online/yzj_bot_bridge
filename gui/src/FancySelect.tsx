@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 function fuzzyMatch(text: string, query: string): boolean {
@@ -27,7 +27,7 @@ export function FancySelect<T extends string>({
   onOpen,
 }: {
   value: T;
-  options: { id: T; label: string }[];
+  options: { id: T; label: string; icon?: ReactNode }[];
   onChange: (v: T) => void;
   testId?: string;
   className?: string;
@@ -70,7 +70,15 @@ export function FancySelect<T extends string>({
     const spaceBelow = window.innerHeight - rect.bottom - gap;
     const spaceAbove = rect.top - gap;
     const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
-    const height = Math.max(140, Math.min(maxH, openUp ? spaceAbove : spaceBelow));
+    // 向上展开时以菜单实际渲染高度定位（受 maxHeight 约束），保证菜单底边紧贴
+    // trigger 顶边（间隔 gap）；选项少时菜单矮，避免出现一大段空隙。
+    let height = Math.max(140, Math.min(maxH, openUp ? spaceAbove : spaceBelow));
+    if (openUp && menuRef.current) {
+      const actual = menuRef.current.offsetHeight;
+      if (actual > 0) {
+        height = Math.min(actual, height);
+      }
+    }
     const top = openUp ? Math.max(8, rect.top - gap - height) : rect.bottom + gap;
     let left = rect.left;
     if (left + width > window.innerWidth - 12) {
@@ -92,6 +100,14 @@ export function FancySelect<T extends string>({
     setQuery("");
     setActiveIdx(0);
     const t = window.setTimeout(() => searchRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [open, placeMenu]);
+
+  // 首次打开时菜单刚挂载到 portal，offsetHeight 可能为 0；等一帧再精确定位，
+  // 保证向上展开时底边紧贴 trigger（选项多时 maxHeight 生效后高度才稳定）。
+  useLayoutEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(placeMenu, 0);
     return () => window.clearTimeout(t);
   }, [open, placeMenu]);
 
@@ -187,6 +203,7 @@ export function FancySelect<T extends string>({
                     onMouseEnter={() => setActiveIdx(idx)}
                     onClick={() => pick(o.id)}
                   >
+                    {o.icon ? <span className="fancy-option-icon">{o.icon}</span> : null}
                     {o.label}
                   </button>
                 ))
@@ -225,6 +242,9 @@ export function FancySelect<T extends string>({
         }}
         title={current?.label || value || placeholder || ""}
       >
+        {current?.icon ? (
+          <span className="fancy-trigger-icon">{current.icon}</span>
+        ) : null}
         <span className="fancy-select-label">
           {current?.label || value || placeholder || "请选择"}
         </span>

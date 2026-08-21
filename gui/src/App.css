@@ -192,7 +192,15 @@ textarea {
   padding: 10px 12px;
   border-radius: 12px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, transform 0.12s;
+}
+
+.nav-btn:hover:not(.active) {
+  transform: translateY(-1px);
+}
+
+.nav-btn:active:not(.active) {
+  transform: translateY(0);
 }
 
 .nav-icon {
@@ -397,10 +405,17 @@ textarea {
   line-height: 1.4;
   text-decoration: underline;
   text-underline-offset: 2px;
+  transition: filter 0.12s, transform 0.12s;
 }
 
 .path-link:hover {
   filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+
+.path-link:active {
+  transform: translateY(0);
+  filter: brightness(1.05);
 }
 
 .action-chip {
@@ -417,11 +432,16 @@ textarea {
   cursor: pointer;
   font-weight: 600;
   font-size: 13px;
-  transition: opacity 0.15s, transform 0.12s;
+  transition: opacity 0.15s, transform 0.12s, filter 0.12s;
 }
 
 .action-chip:hover:not(:disabled) {
   transform: translateY(-1px);
+}
+
+.action-chip:active:not(:disabled) {
+  transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .action-chip:disabled,
@@ -512,6 +532,22 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fancy-option-icon,
+.fancy-trigger-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.fancy-option-icon svg,
+.fancy-trigger-icon svg {
+  display: block;
 }
 
 .fancy-option:hover {
@@ -722,6 +758,13 @@ textarea {
   font-weight: 500;
 }
 
+/* 成功提示（FadingHint）5 秒后渐隐：opacity 过渡 400ms，随后组件卸载释放空间。 */
+.field-hint.fade-out {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
 .skill-list {
   display: grid;
   gap: 10px;
@@ -923,12 +966,16 @@ textarea {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease, filter 0.12s;
 }
 
 .skills-browse-btn:hover:not(:disabled) {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.skills-browse-btn:active:not(:disabled) {
+  filter: brightness(0.94);
 }
 
 .skills-browse-btn:disabled {
@@ -1134,12 +1181,22 @@ textarea {
   border-bottom-color: rgba(120, 160, 200, 0.22);
 }
 
-.toast {
+.toast-stack {
   position: fixed;
   top: 18px;
   right: 18px;
   z-index: 30000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+  max-width: calc(100vw - 36px);
+}
+
+.toast {
   min-width: 160px;
+  max-width: min(420px, calc(100vw - 36px));
   padding: 12px 16px;
   border-radius: 12px;
   border: 1px solid var(--panel-border);
@@ -1149,11 +1206,21 @@ textarea {
   font-weight: 600;
   color: var(--text);
   animation: toast-in 0.18s ease-out;
+  word-break: break-word;
+}
+
+.toast.neutral {
+  color: var(--text);
 }
 
 .toast.ok {
   border-color: color-mix(in srgb, #1a7f37 35%, var(--panel-border));
   color: #1a7f37;
+}
+
+.toast.err {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--panel-border));
+  color: var(--danger);
 }
 
 @keyframes toast-in {
@@ -1225,11 +1292,6 @@ textarea {
   border-color: rgba(110, 150, 190, 0.32);
 }
 
-.field-hint.spacer {
-  visibility: hidden;
-  user-select: none;
-}
-
 .boot-overlay {
   position: fixed;
   inset: 0;
@@ -1268,7 +1330,7 @@ textarea {
   border-width: 3px;
 }
 
-[data-theme="ice"] .btn {
+[data-theme="ice"] .btn:not(.ghost) {
   color: #fff;
 }
 
@@ -1284,6 +1346,13 @@ textarea {
   margin: 0 0 12px;
   font-size: 14px;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-inline .engine-icon {
+  flex-shrink: 0;
 }
 
 .cli-bot-list {
@@ -1449,12 +1518,17 @@ textarea {
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 0;
   border-radius: 999px;
   padding: 9px 16px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #04140c;
   font-weight: 600;
+  font-size: 13px;
   cursor: pointer;
   transition: transform 0.12s, filter 0.12s, opacity 0.12s;
 }
@@ -1469,7 +1543,13 @@ textarea {
   transform: translateY(-1px);
 }
 
-.btn:disabled {
+.btn:active:not(:disabled) {
+  transform: translateY(0);
+  filter: brightness(0.96);
+}
+
+.btn:disabled,
+.btn.loading {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -1480,10 +1560,11 @@ textarea {
   border: 1px solid var(--panel-border);
 }
 
+.btn.sm,
 .btn.small {
-  padding: 5px 10px;
-  font-size: 0.78rem;
-  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 999px;
 }
 
 .btn.danger {
@@ -1497,10 +1578,11 @@ textarea {
   border-color: color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
+.btn.xs,
 .btn.tiny {
-  padding: 7px 12px;
+  padding: 6px 12px;
   font-size: 12px;
-  border-radius: 10px;
+  border-radius: 999px;
   white-space: nowrap;
 }
 
@@ -1527,12 +1609,17 @@ textarea {
   border-radius: var(--radius-sm);
   padding: 14px;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, transform 0.12s;
+  transition: border-color 0.15s, background 0.15s, transform 0.12s, filter 0.12s;
 }
 
-.role-card:hover {
+.role-card:hover:not(.active) {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.role-card:active:not(.active) {
+  transform: translateY(0);
+  filter: brightness(0.98);
 }
 
 .role-card.active {
@@ -1711,6 +1798,17 @@ textarea {
   cursor: pointer;
   padding: 0;
   font-size: 12px;
+  transition: filter 0.12s, transform 0.12s, opacity 0.12s;
+}
+
+.link:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+
+.link:active {
+  transform: translateY(0);
+  filter: brightness(1.02);
 }
 
 .link.danger {
@@ -1915,11 +2013,16 @@ textarea {
   color: var(--muted);
   padding: 0;
   cursor: pointer;
+  transition: color 0.15s, background 0.15s, filter 0.12s;
 }
 
 .secret-toggle:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.secret-toggle:active {
+  filter: brightness(0.94);
 }
 
 [data-theme="ice"] .secret-input input {
@@ -2390,13 +2493,19 @@ textarea {
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.12s, filter 0.12s;
 }
 
 .modal-close:hover {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg2));
+  transform: translateY(-1px);
+}
+
+.modal-close:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .modal h3 {
@@ -2562,17 +2671,19 @@ textarea {
 
 .chat-main-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--panel-border);
   font-size: 0.88rem;
+  flex-wrap: wrap;
 }
 
 .chat-bot-select {
   position: relative;
   min-width: 0;
+  align-self: center;
 }
 
 .chat-bot-trigger {
@@ -2587,10 +2698,16 @@ textarea {
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 8px;
+  transition: background 0.15s, transform 0.12s;
 }
 
 .chat-bot-trigger:hover {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
+  transform: translateY(-1px);
+}
+
+.chat-bot-trigger:active {
+  transform: translateY(0);
 }
 
 .chat-bot-trigger b {
@@ -2608,6 +2725,7 @@ textarea {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  align-self: center;
 }
 
 .chat-icon-btn {
@@ -2621,6 +2739,7 @@ textarea {
   background: transparent;
   color: color-mix(in srgb, var(--text) 78%, transparent);
   cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, transform 0.12s, filter 0.12s;
 }
 
 .chat-icon-btn:hover,
@@ -2628,6 +2747,15 @@ textarea {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.chat-icon-btn:hover:not(.active) {
+  transform: translateY(-1px);
+}
+
+.chat-icon-btn:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .chat-dropdown,
@@ -2685,6 +2813,16 @@ textarea {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  border-radius: 8px;
+  transition: background 0.15s, transform 0.12s;
+}
+
+.chat-history-main:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.chat-history-main:active {
+  transform: translateY(1px);
 }
 
 .chat-session-title {
@@ -2741,13 +2879,19 @@ textarea {
   cursor: pointer;
   box-shadow: 0 4px 14px color-mix(in srgb, #000 18%, transparent);
   backdrop-filter: blur(8px);
-  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+  transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease, filter 0.12s;
 }
 
 .chat-scroll-bottom:hover,
 .scroll-to-bottom:hover {
-  transform: translateY(1px);
+  transform: translateY(-1px);
   background: color-mix(in srgb, var(--accent) 18%, var(--bg2));
+}
+
+.chat-scroll-bottom:active,
+.scroll-to-bottom:active {
+  transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .chat-bubble {
@@ -3030,11 +3174,16 @@ textarea {
   border-radius: 8px;
   cursor: pointer;
   font: inherit;
+  transition: background 0.15s, transform 0.12s;
 }
 
 .chat-picker-item.active,
 .chat-picker-item:hover {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.chat-picker-item:active {
+  transform: translateY(1px);
 }
 
 .chat-picker-backend {
@@ -3053,11 +3202,22 @@ textarea {
   flex-direction: column;
   gap: 4px;
   font-size: 0.8rem;
-  min-width: 160px;
+  min-width: 200px;
+  max-width: min(320px, 42vw);
+  flex: 1;
+  align-self: center;
 }
-.chat-bind-openid input {
-  font-size: 0.85rem;
-  padding: 6px 8px;
+
+.chat-bind-openid .chat-bind-openid-select {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+.chat-bind-openid .fancy-select-trigger {
+  border-radius: 10px;
+  padding: 7px 12px;
+  font-size: 0.82rem;
 }
 
 .memory-page .page-body {
@@ -3168,11 +3328,17 @@ textarea {
   border-radius: 12px;
   cursor: pointer;
   color: inherit;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s, filter 0.12s;
 }
 
-.memory-user-list button:hover {
+.memory-user-list button:hover:not(.active) {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+  transform: translateY(-1px);
+}
+
+.memory-user-list button:active:not(.active) {
+  transform: translateY(0);
+  filter: brightness(0.98);
 }
 
 .memory-user-list button.active {

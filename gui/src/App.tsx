@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { ChatPage } from "./ChatPage";
 import { FancySelect } from "./FancySelect";
 import { MemoryPage } from "./MemoryPage";
+import { useToast } from "./toast";
 import { findWebhookConflict } from "./webhookUnique";
 import "./App.css";
 
@@ -176,8 +177,25 @@ function FieldLabel({ children, tip }: { children: React.ReactNode; tip?: string
   );
 }
 
-const BACKENDS = ["cursor_cli", "claude_code", "openai", "opencode"];
+const BACKENDS = ["cursor_cli", "claude_code", "openai", "opencode", "dsh"];
+const BACKEND_LABELS: Record<string, string> = {
+  cursor_cli: "Cursor CLI",
+  claude_code: "Claude Code",
+  openai: "OpenAI 兼容",
+  dsh: "DSH（DeepSeek Harness）",
+  opencode: "OpenCode",
+};
 const MIN_LOADING_MS = 500;
+
+type CliEngine = "cursor" | "claude" | "dsh" | "node";
+
+interface CliDiscoverResult {
+  found: boolean;
+  path?: string;
+  version?: string;
+  message?: string;
+  install?: { shell: string; command: string; hint: string };
+}
 
 async function api(method: string, path: string, body?: unknown): Promise<string> {
   return invoke<string>("bridge_fetch", {
@@ -267,7 +285,12 @@ function formatLogLine(l: LogLine): { tag: string; message: string } {
 /** 按后端展示模型：机器人自身 model 优先，否则回退到 AI 设置里的引擎默认。 */
 function resolveDisplayedModel(
   cfg: Record<string, unknown> | null | undefined,
-  defaults?: { cursor_model?: string; claude_model?: string; openai_model?: string },
+  defaults?: {
+    cursor_model?: string;
+    claude_model?: string;
+    openai_model?: string;
+    dsh_model?: string;
+  },
 ): string {
   if (!cfg) return "默认";
   const be = String(cfg.backend || "");
@@ -278,6 +301,9 @@ function resolveDisplayedModel(
   }
   if (be === "claude_code" || be === "claude") {
     return String(cfg.claude_model || defaults?.claude_model || "").trim() || "默认";
+  }
+  if (be === "dsh" || be === "dsh_jsonrpc") {
+    return String(cfg.dsh_model || defaults?.dsh_model || "").trim() || "默认";
   }
   return String(cfg.cursor_model || defaults?.cursor_model || "").trim() || "默认";
 }
@@ -428,6 +454,85 @@ function SecretInput({
   );
 }
 
+/**
+ * 设置页提示：ok（成功，如"已找到…"/"连通成功"）显示 delayMs 毫秒后渐隐并释放
+ * 占位空间；error（失败）常驻，便于用户阅读错误原因。ok 从 false→true 时重新
+ * 计时；resetKey 变化（如重新扫描/重新测试产生新结果对象）时也重新计时，避免
+ * ok 持续为 true 时渐隐一次后不再重新显示。
+ *
+ * 成功提示按 resetKey 记忆：同一结果完整显示过一次（渐隐完成）后，组件
+ * 因切页重挂载时不再重复播放；只有产生新结果（重新扫描/重新测试，即
+ * resetKey 变化）才会再次显示。resetKey 支持对象（WeakSet，不阻止 GC）
+ * 与原始值（Set）两种类型，统一处理，避免漏记。无 resetKey（undefined）
+ * 时保持原行为：每次挂载都显示。
+ */
+const shownOkObjectKeys = new WeakSet<object>();
+const shownOkPrimitiveKeys = new Set<string | number>();
+
+function isOkResetKeyShown(key: unknown): boolean {
+  if (key === undefined || key === null) return false;
+  if (typeof key === "object") return shownOkObjectKeys.has(key);
+  return shownOkPrimitiveKeys.has(key as string | number);
+}
+
+function markOkResetKeyShown(key: unknown): void {
+  if (key === undefined || key === null) return;
+  if (typeof key === "object") shownOkObjectKeys.add(key);
+  else shownOkPrimitiveKeys.add(key as string | number);
+}
+
+function FadingHint({
+  ok,
+  testId,
+  children,
+  delayMs = 5000,
+  resetKey,
+}: {
+  ok: boolean;
+  testId?: string;
+  children: React.ReactNode;
+  delayMs?: number;
+  resetKey?: unknown;
+}) {
+  const [fading, setFading] = useState(false);
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    if (!ok) {
+      setFading(false);
+      setGone(false);
+      return;
+    }
+    // 同一结果已完整显示过成功提示：重挂载时直接隐藏，不重复播放。
+    if (isOkResetKeyShown(resetKey)) {
+      setFading(false);
+      setGone(true);
+      return;
+    }
+    setFading(false);
+    setGone(false);
+    const t1 = window.setTimeout(() => setFading(true), delayMs);
+    const t2 = window.setTimeout(() => {
+      // 仅完整显示（渐隐结束）后才记忆，StrictMode 双调用下第二次 effect
+      // 仍会正常显示；中途卸载则不清除，下次进入可再次看到。
+      markOkResetKeyShown(resetKey);
+      setGone(true);
+    }, delayMs + 400);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [ok, delayMs, resetKey]);
+  if (gone) return null;
+  return (
+    <span
+      className={`field-hint${ok ? " ok" : " error"}${fading ? " fade-out" : ""}`}
+      data-testid={testId}
+    >
+      {children}
+    </span>
+  );
+}
+
 function emptyBotForm(): BotForm {
   return {
     id: "",
@@ -453,6 +558,44 @@ function botUsesOpenaiDefaults(cfg: Record<string, unknown>): boolean {
     !String(cfg.openai_base_url || "").trim() &&
     !String(cfg.openai_api_key || "").trim() &&
     !String(cfg.model || "").trim()
+  );
+}
+
+/** 各后端引擎的品牌图标（simple-icons 官方 path，按引擎 id 取色）。 */
+const ENGINE_ICON_PATHS: Record<string, string> = {
+  cursor_cli:
+    "M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23",
+  claude_code:
+    "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+  openai:
+    "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z",
+  dsh: "M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45",
+  opencode: "M22 24H2V0h20zM17 4.8H7v14.4h10z",
+};
+const ENGINE_ICON_COLORS: Record<string, string> = {
+  cursor_cli: "#0b0b0f",
+  claude_code: "#d97757",
+  openai: "#10a37f",
+  dsh: "#5786FE",
+  opencode: "#0b0b0f",
+};
+
+/** 后端引擎品牌图标：<EngineIcon id="cursor_cli" size={16} /> */
+function EngineIcon({ id, size = 16 }: { id: string; size?: number }) {
+  const d = ENGINE_ICON_PATHS[id];
+  if (!d) return null;
+  return (
+    <svg
+      className="engine-icon"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill={ENGINE_ICON_COLORS[id] || "currentColor"}
+      aria-hidden
+      data-testid={`engine-icon-${id}`}
+    >
+      <path d={d} />
+    </svg>
   );
 }
 
@@ -818,8 +961,7 @@ function App() {
   const [loadingAuto, setLoadingAuto] = useState(false);
   const [loadingReload, setLoadingReload] = useState(false);
   const [savingCli, setSavingCli] = useState(false);
-  const [saveToast, setSaveToast] = useState("");
-  const saveToastTimer = useRef<number | null>(null);
+  const { showToast } = useToast();
   const [closeToTray, setCloseToTray] = useState(true);
   const [loadingCloseTray, setLoadingCloseTray] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -830,6 +972,7 @@ function App() {
   const updateAutoChecked = useRef(false);
   const cursorModelsAutoTried = useRef(false);
   const claudeModelsAutoTried = useRef(false);
+  const dshModelsAutoTried = useRef(false);
   /** 已自动探测过的 OpenAI base\\nkey 指纹，变更凭据后可再次自动探测。 */
   const openaiAutoFingerprint = useRef("");
   const [cursorModels, setCursorModels] = useState<{ id: string; label: string }[]>([]);
@@ -841,6 +984,8 @@ function App() {
   const [openaiModels, setOpenaiModels] = useState<{ id: string; label: string }[]>([]);
   const [openaiProbeInfo, setOpenaiProbeInfo] = useState("");
   const [openaiProbeOk, setOpenaiProbeOk] = useState<boolean | null>(null);
+  /** 每次探测递增，作为 FadingHint 的 resetKey：新探测必显示，切页重挂载不重复。 */
+  const [openaiProbeSeq, setOpenaiProbeSeq] = useState(0);
   const [probingOpenai, setProbingOpenai] = useState(false);
 
   const [botModal, setBotModal] = useState<"create" | "edit" | null>(null);
@@ -870,13 +1015,15 @@ function App() {
     cursor_bin: "agent",
     claude_bin: "claude",
     cursor_api_key: "",
-    anthropic_api_key: "",
     openai_api_key: "",
     openai_base_url: "",
     projects_root: "~",
     cursor_model: "",
     claude_model: "",
     openai_model: "",
+    node_bin: "node",
+    dsh_entry: "",
+    dsh_model: "",
     memory_enabled: false,
     memory_gui_bind_enabled: false,
   });
@@ -900,6 +1047,18 @@ function App() {
   const [discoveringClaude, setDiscoveringClaude] = useState(false);
   const [installingCursor, setInstallingCursor] = useState(false);
   const [installingClaude, setInstallingClaude] = useState(false);
+  const [dshDiscover, setDshDiscover] = useState<CliDiscoverResult | null>(null);
+  const [nodeDiscover, setNodeDiscover] = useState<CliDiscoverResult | null>(null);
+  const [discoveringDsh, setDiscoveringDsh] = useState(false);
+  const [discoveringNode, setDiscoveringNode] = useState(false);
+  const [installingDsh, setInstallingDsh] = useState(false);
+  const [installingNode, setInstallingNode] = useState(false);
+  const [dshModels, setDshModels] = useState<{ id: string; label: string }[]>([]);
+  const [loadingDshModels, setLoadingDshModels] = useState(false);
+  const [dshModelsHint, setDshModelsHint] = useState("");
+  const [availableBackends, setAvailableBackends] = useState<
+    { id: string; label: string; available: boolean; reason?: string }[]
+  >([]);
   const cliDiscoverTried = useRef(false);
 
   useEffect(() => {
@@ -921,15 +1080,6 @@ function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, [botModal, channelModal, updateModal, updatingApp]);
 
-  const showToast = useCallback((msg: string) => {
-    if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
-    setSaveToast(msg);
-    saveToastTimer.current = window.setTimeout(() => {
-      setSaveToast("");
-      saveToastTimer.current = null;
-    }, 2200);
-  }, []);
-
   const runCheckForUpdate = useCallback(async (force: boolean) => {
     const info = await invoke<UpdateCheckResult>("check_for_update", { force });
     if (info.available) {
@@ -947,12 +1097,12 @@ function App() {
         return;
       }
       if (info.message?.trim()) {
-        showToast(info.message.trim());
+        showToast(info.message.trim(), "ok");
         return;
       }
-      showToast(`已是最新（v${info.currentVersion || appVersion || "?"}）`);
+      showToast(`已是最新（v${info.currentVersion || appVersion || "?"}）`, "ok");
     } catch (e) {
-      showToast(`检查更新失败：${e}`);
+      showToast(`检查更新失败：${e}`, "err");
     } finally {
       setCheckingUpdate(false);
     }
@@ -966,9 +1116,9 @@ function App() {
     try {
       await invoke("set_skipped_update_version", { version: updateInfo.latestVersion });
       setUpdateModal(false);
-      showToast(`已跳过 v${updateInfo.latestVersion}`);
+      showToast(`已跳过 v${updateInfo.latestVersion}`, "ok");
     } catch (e) {
-      showToast(`跳过失败：${e}`);
+      showToast(`跳过失败：${e}`, "err");
     }
   }, [showToast, updateInfo]);
 
@@ -979,7 +1129,7 @@ function App() {
       await invoke("download_and_launch_update", { downloadUrl: updateInfo.downloadUrl });
     } catch (e) {
       setUpdatingApp(false);
-      showToast(`更新失败：${e}`);
+      showToast(`更新失败：${e}`, "err");
     }
   }, [showToast, updateInfo]);
 
@@ -1041,7 +1191,8 @@ function App() {
     setError(lastErr || "桥启动超时，请检查 yzj-bridge.exe 与 ~/.yzj-bridge/config.yaml");
   }, []);
 
-  const refreshCursorModels = useCallback(async () => {
+  const refreshCursorModels = useCallback(async (opts?: { notify?: boolean }) => {
+    const notify = !!opts?.notify;
     setLoadingCursorModels(true);
     setCursorModelsHint("");
     try {
@@ -1052,22 +1203,31 @@ function App() {
         error?: string;
       };
       if (data.ok === false) {
-        setCursorModelsHint(data.error || "拉取 Cursor 模型失败");
+        const msg = data.error || "拉取 Cursor 模型失败";
+        setCursorModelsHint(msg);
+        if (notify) showToast(msg, "err");
         return;
       }
       const list = (data.models || []).map((m) => ({ id: m.id, label: m.label || m.id }));
       setCursorModels(list);
-      if (!list.length) setCursorModelsHint("未解析到模型列表");
-      else void guiLog(`拉取 Cursor 模型 ${list.length} 个`);
+      if (!list.length) {
+        setCursorModelsHint("未解析到模型列表");
+        if (notify) showToast("未解析到 Cursor 模型列表", "neutral");
+      } else {
+        void guiLog(`拉取 Cursor 模型 ${list.length} 个`);
+        if (notify) showToast(`已拉取 ${list.length} 个 Cursor 模型`, "ok");
+      }
     } catch (e) {
       setCursorModelsHint(String(e));
       void guiLog(`拉取 Cursor 模型失败: ${e}`, "ERROR");
+      if (notify) showToast(`拉取 Cursor 模型失败：${e}`, "err");
     } finally {
       setLoadingCursorModels(false);
     }
-  }, []);
+  }, [showToast]);
 
-  const refreshClaudeModels = useCallback(async () => {
+  const refreshClaudeModels = useCallback(async (opts?: { notify?: boolean }) => {
+    const notify = !!opts?.notify;
     setLoadingClaudeModels(true);
     setClaudeModelsHint("");
     try {
@@ -1079,28 +1239,123 @@ function App() {
         warning?: string;
       };
       if (data.ok === false) {
-        setClaudeModelsHint(data.error || "拉取 Claude 模型失败");
+        const msg = data.error || "拉取 Claude 模型失败";
+        setClaudeModelsHint(msg);
+        if (notify) showToast(msg, "err");
         return;
       }
       const list = (data.models || []).map((m) => ({ id: m.id, label: m.label || m.id }));
       setClaudeModels(list);
-      if (data.warning) setClaudeModelsHint(data.warning);
-      else if (!list.length) setClaudeModelsHint("未解析到模型列表");
-      else void guiLog(`拉取 Claude 模型 ${list.length} 个`);
+      if (data.warning) {
+        setClaudeModelsHint(data.warning);
+        if (notify) showToast(data.warning, "neutral");
+      } else if (!list.length) {
+        setClaudeModelsHint("未解析到模型列表");
+        if (notify) showToast("未解析到 Claude 模型列表", "neutral");
+      } else {
+        void guiLog(`拉取 Claude 模型 ${list.length} 个`);
+        if (notify) showToast(`已拉取 ${list.length} 个 Claude 模型`, "ok");
+      }
     } catch (e) {
       setClaudeModelsHint(String(e));
       void guiLog(`拉取 Claude 模型失败: ${e}`, "ERROR");
+      if (notify) showToast(`拉取 Claude 模型失败：${e}`, "err");
     } finally {
       setLoadingClaudeModels(false);
+    }
+  }, [showToast]);
+
+  const refreshDSHModels = useCallback(async (opts?: { notify?: boolean }) => {
+    const notify = !!opts?.notify;
+    setLoadingDshModels(true);
+    setDshModelsHint("");
+    try {
+      const raw = await api("GET", "/v1/backends/dsh/models");
+      const data = JSON.parse(raw) as {
+        ok?: boolean;
+        models?: { id: string; label: string }[];
+        error?: string;
+      };
+      if (data.ok === false) {
+        const msg = data.error || "拉取 DSH 模型失败";
+        setDshModelsHint(msg);
+        if (notify) showToast(msg, "err");
+        return;
+      }
+      const list = (data.models || []).map((m) => ({ id: m.id, label: m.label || m.id }));
+      setDshModels(list);
+      if (!list.length) {
+        setDshModelsHint("未解析到模型列表");
+        if (notify) showToast("未解析到 DSH 模型列表", "neutral");
+      } else {
+        void guiLog(`拉取 DSH 模型 ${list.length} 个`);
+        if (notify) showToast(`已拉取 ${list.length} 个 DSH 模型`, "ok");
+      }
+    } catch (e) {
+      setDshModelsHint(String(e));
+      void guiLog(`拉取 DSH 模型失败: ${e}`, "ERROR");
+      if (notify) showToast(`拉取 DSH 模型失败：${e}`, "err");
+    } finally {
+      setLoadingDshModels(false);
+    }
+  }, [showToast]);
+
+  const refreshAvailableBackends = useCallback(async () => {
+    try {
+      const raw = await api("GET", "/v1/backends/available");
+      const data = JSON.parse(raw) as {
+        backends?: { id: string; label?: string; available?: boolean; reason?: string }[];
+      };
+      const list = (data.backends || []).map((b) => ({
+        id: b.id,
+        label: b.label || b.id,
+        available: !!b.available,
+        reason: b.reason,
+      }));
+      setAvailableBackends(list);
+    } catch (e) {
+      // 拉取失败时清空，backendOptions 兜底显示全部引擎，避免下拉空白。
+      setAvailableBackends([]);
+      void guiLog(`拉取可用后端失败: ${e}`, "WARN");
     }
   }, []);
 
   const discoverCli = useCallback(
-    async (engine: "cursor" | "claude", opts?: { autofill?: boolean }) => {
+    async (engine: CliEngine, opts?: { autofill?: boolean; notify?: boolean }) => {
       const autofill = opts?.autofill !== false;
-      const setBusy = engine === "cursor" ? setDiscoveringCursor : setDiscoveringClaude;
-      const setResult = engine === "cursor" ? setCursorDiscover : setClaudeDiscover;
-      const currentBin = engine === "cursor" ? cliForm.cursor_bin : cliForm.claude_bin;
+      const notify = !!opts?.notify;
+      const setBusy =
+        engine === "cursor"
+          ? setDiscoveringCursor
+          : engine === "claude"
+            ? setDiscoveringClaude
+            : engine === "dsh"
+              ? setDiscoveringDsh
+              : setDiscoveringNode;
+      const setResult =
+        engine === "cursor"
+          ? setCursorDiscover
+          : engine === "claude"
+            ? setClaudeDiscover
+            : engine === "dsh"
+              ? setDshDiscover
+              : setNodeDiscover;
+      const currentBin =
+        engine === "cursor"
+          ? cliForm.cursor_bin
+          : engine === "claude"
+            ? cliForm.claude_bin
+            : engine === "dsh"
+              ? cliForm.dsh_entry
+              : cliForm.node_bin;
+      const label =
+        engine === "cursor"
+          ? "Cursor CLI"
+          : engine === "claude"
+            ? "Claude Code"
+            : engine === "dsh"
+              ? "DSH CLI"
+              : "Node";
       setBusy(true);
       try {
         const raw = await api("POST", "/v1/backends/cli/discover", {
@@ -1123,19 +1378,36 @@ function App() {
         });
         if (autofill && data.found && data.path) {
           const cur = currentBin.trim();
-          const bare =
+          let bare =
             !cur ||
             cur === "agent" ||
             cur === "claude" ||
             cur === "cursor-agent" ||
             (!cur.includes("/") && !cur.includes("\\") && !cur.includes(":"));
+          // dsh/node 入口常见的纯名称默认值（如 "node"）也视为 bare，命中后自动填绝对路径。
+          if (engine === "dsh") bare = bare || cur === "node" || cur === "dsh";
+          if (engine === "node") bare = bare || cur === "node";
           if (bare && data.path !== cur) {
             if (engine === "cursor") {
               setCliForm((prev) => ({ ...prev, cursor_bin: data.path || prev.cursor_bin }));
-            } else {
+            } else if (engine === "claude") {
               setCliForm((prev) => ({ ...prev, claude_bin: data.path || prev.claude_bin }));
+            } else if (engine === "dsh") {
+              setCliForm((prev) => ({ ...prev, dsh_entry: data.path || prev.dsh_entry }));
+            } else {
+              setCliForm((prev) => ({ ...prev, node_bin: data.path || prev.node_bin }));
             }
             void guiLog(`自动填入 ${engine} 路径: ${data.path}`);
+          }
+        }
+        if (notify) {
+          if (data.found) {
+            showToast(
+              data.version ? `已找到 ${label}（${data.version}）` : `已找到 ${label}`,
+              "ok",
+            );
+          } else {
+            showToast(data.message?.trim() || `未找到 ${label}`, "err");
           }
         }
         return data;
@@ -1144,33 +1416,53 @@ function App() {
           found: false,
           message: String(e),
         });
+        if (notify) showToast(`探测 ${label} 失败：${e}`, "err");
         return null;
       } finally {
         setBusy(false);
       }
     },
-    [cliForm.cursor_bin, cliForm.claude_bin],
+    [cliForm.cursor_bin, cliForm.claude_bin, cliForm.dsh_entry, cliForm.node_bin, showToast],
   );
 
-  const openCliInstall = useCallback(async (engine: "cursor" | "claude") => {
-    const setBusy = engine === "cursor" ? setInstallingCursor : setInstallingClaude;
+  const openCliInstall = useCallback(async (engine: CliEngine) => {
+    const setBusy =
+      engine === "cursor"
+        ? setInstallingCursor
+        : engine === "claude"
+          ? setInstallingClaude
+          : engine === "dsh"
+            ? setInstallingDsh
+            : setInstallingNode;
+    const label =
+      engine === "cursor"
+        ? "Cursor CLI"
+        : engine === "claude"
+          ? "Claude Code"
+          : engine === "dsh"
+            ? "DSH CLI"
+            : "Node";
     setBusy(true);
     try {
       await invoke("open_cli_install_terminal", { engine });
-      void guiLog(`已打开 ${engine === "cursor" ? "Cursor CLI" : "Claude Code"} 安装终端`);
+      void guiLog(`已打开 ${label} 安装终端`);
+      showToast(`已打开 ${label} 安装终端`, "ok");
     } catch (e) {
       setError(String(e));
       void guiLog(`打开安装终端失败: ${e}`, "ERROR");
+      showToast(`打开安装终端失败：${e}`, "err");
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [showToast]);
 
   const probeOpenai = useCallback(
-    async (baseURL?: string, apiKey?: string) => {
+    async (baseURL?: string, apiKey?: string, opts?: { notify?: boolean }) => {
+      const notify = !!opts?.notify;
       setProbingOpenai(true);
       setOpenaiProbeInfo("");
       setOpenaiProbeOk(null);
+      setOpenaiProbeSeq((s) => s + 1);
       try {
         const raw = await api("POST", "/v1/backends/openai/probe", {
           base_url: baseURL ?? cliForm.openai_base_url,
@@ -1185,8 +1477,10 @@ function App() {
         };
         if (!data.ok) {
           setOpenaiProbeOk(false);
-          setOpenaiProbeInfo(data.error || "连通性测试失败");
-          void guiLog(`OpenAI 连通失败: ${data.error || "未知错误"}`, "ERROR");
+          const msg = data.error || "连通性测试失败";
+          setOpenaiProbeInfo(msg);
+          void guiLog(`OpenAI 连通失败: ${msg}`, "ERROR");
+          if (notify) showToast(msg, "err");
           return false;
         }
         const models = (data.models || []).map((m) => ({
@@ -1195,19 +1489,22 @@ function App() {
         }));
         setOpenaiModels(models);
         setOpenaiProbeOk(true);
-        setOpenaiProbeInfo(`连通成功 · ${data.latency_ms ?? 0}ms · ${models.length} 个模型`);
+        const okMsg = `连通成功 · ${data.latency_ms ?? 0}ms · ${models.length} 个模型`;
+        setOpenaiProbeInfo(okMsg);
         void guiLog(`OpenAI 连通成功 · ${models.length} 个模型 · ${data.latency_ms ?? 0}ms`);
+        if (notify) showToast(okMsg, "ok");
         return true;
       } catch (e) {
         setOpenaiProbeOk(false);
         setOpenaiProbeInfo(String(e));
         void guiLog(`OpenAI 连通失败: ${e}`, "ERROR");
+        if (notify) showToast(`OpenAI 连通失败：${e}`, "err");
         return false;
       } finally {
         setProbingOpenai(false);
       }
     },
-    [cliForm.openai_base_url, cliForm.openai_api_key],
+    [cliForm.openai_base_url, cliForm.openai_api_key, showToast],
   );
 
   const refreshStatus = useCallback(async () => {
@@ -1242,13 +1539,15 @@ function App() {
       cursor_bin: pick("cursor_bin", "agent"),
       claude_bin: pick("claude_bin", "claude"),
       cursor_api_key: String(defaults.cursor_api_key || ""),
-      anthropic_api_key: String(defaults.anthropic_api_key || ""),
       openai_api_key: String(defaults.openai_api_key || ""),
       openai_base_url: String(defaults.openai_base_url || ""),
       projects_root: pick("projects_root", "~"),
       cursor_model: String(defaults.cursor_model || ""),
       claude_model: String(defaults.claude_model || ""),
       openai_model: String(defaults.openai_model || ""),
+      node_bin: pick("node_bin", "node"),
+      dsh_entry: String(defaults.dsh_entry || ""),
+      dsh_model: String(defaults.dsh_model || ""),
       memory_enabled: Boolean(
         ((defaults.memory as Record<string, unknown> | undefined)?.enabled ?? false) === true,
       ),
@@ -1259,18 +1558,25 @@ function App() {
     });
   }, []);
 
-  const refreshSkills = useCallback(async () => {
+  const refreshSkills = useCallback(async (opts?: { notify?: boolean }) => {
+    const notify = !!opts?.notify;
+    setSkillsBusy(true);
     try {
       const installedRaw = await api("GET", "/v1/skills");
       const installed = JSON.parse(installedRaw) as { skills?: SkillInfo[] };
       setInstalledSkills(installed.skills || []);
+      if (notify) showToast(`已刷新 Skills（${(installed.skills || []).length}）`, "ok");
     } catch (e) {
+      const msg = String(e);
       setSkillsPageError((prev) => ({
-        text: String(e),
+        text: msg,
         seq: (prev?.seq ?? 0) + 1,
       }));
+      if (notify) showToast(`刷新 Skills 失败：${msg}`, "err");
+    } finally {
+      setSkillsBusy(false);
     }
-  }, []);
+  }, [showToast]);
 
   const openInstalledSkill = useCallback(async (sk: SkillInfo) => {
     try {
@@ -1285,12 +1591,14 @@ function App() {
       }
       await openLocalPath(dir);
     } catch (e) {
+      const msg = String(e);
       setSkillsPageError((prev) => ({
-        text: String(e),
+        text: msg,
         seq: (prev?.seq ?? 0) + 1,
       }));
+      showToast(msg, "err");
     }
-  }, []);
+  }, [showToast]);
 
   const installSkillFromPath = useCallback(
     async (rawPath: string) => {
@@ -1303,16 +1611,19 @@ function App() {
         setSkillInstallPath("");
         await refreshSkills();
         void guiLog(`导入 Skill（${source}） ${p}`);
+        showToast("Skill 导入成功", "ok");
       } catch (e) {
+        const msg = String(e);
         setSkillsPageError((prev) => ({
-          text: String(e),
+          text: msg,
           seq: (prev?.seq ?? 0) + 1,
         }));
+        showToast(`导入失败：${msg}`, "err");
       } finally {
         setSkillsBusy(false);
       }
     },
-    [refreshSkills],
+    [refreshSkills, showToast],
   );
 
   useEffect(() => {
@@ -1356,7 +1667,12 @@ function App() {
       await boot();
       if (cancelled) return;
       try {
-        await Promise.all([refreshStatus(), refreshConfig(), refreshSkills()]);
+        await Promise.all([
+          refreshStatus(),
+          refreshConfig(),
+          refreshSkills(),
+          refreshAvailableBackends(),
+        ]);
       } catch {
         /* ignore until next poll */
       }
@@ -1526,6 +1842,8 @@ function App() {
   }
 
   // 进入 AI 设置页时自动拉模型：Cursor/Claude 有 bin 则各一次；OpenAI 凭据齐全后 debounce，避免打字中途锁死。
+  // 自动扫描（cliDiscoverTried）会话内只做一次：首次进入设置页扫描 cursor/claude/dsh/node 并 autofill，
+  // 之后点开不再重复；需要最新状态可手动点"重新扫描"。
   useEffect(() => {
     if (!ready || page !== "settings") return;
 
@@ -1533,6 +1851,8 @@ function App() {
       cliDiscoverTried.current = true;
       void discoverCli("cursor");
       void discoverCli("claude");
+      void discoverCli("dsh");
+      void discoverCli("node");
     }
 
     if (!cursorModelsAutoTried.current && !loadingCursorModels) {
@@ -1548,6 +1868,16 @@ function App() {
       if (bin) {
         claudeModelsAutoTried.current = true;
         void refreshClaudeModels();
+      }
+    }
+
+    // DSH：入口与 Node 有值时自动拉一次模型（扫描结果可能异步填充 dsh_entry，
+    // 依赖数组含 dsh_entry，填充后此分支会在下一次 effect 运行中触发）。
+    if (!dshModelsAutoTried.current && !loadingDshModels) {
+      const entry = cliForm.dsh_entry.trim();
+      if (entry) {
+        dshModelsAutoTried.current = true;
+        void refreshDSHModels();
       }
     }
 
@@ -1567,22 +1897,19 @@ function App() {
     page,
     cliForm.cursor_bin,
     cliForm.claude_bin,
+    cliForm.dsh_entry,
     cliForm.openai_base_url,
     cliForm.openai_api_key,
     loadingCursorModels,
     loadingClaudeModels,
+    loadingDshModels,
     probingOpenai,
     refreshCursorModels,
     refreshClaudeModels,
+    refreshDSHModels,
     probeOpenai,
     discoverCli,
   ]);
-
-  useEffect(() => {
-    if (page !== "settings") {
-      cliDiscoverTried.current = false;
-    }
-  }, [page]);
 
   async function toggleCloseToTray(v: boolean) {
     await withMinLoading(setLoadingCloseTray, async () => {
@@ -1614,11 +1941,13 @@ function App() {
     await withMinLoading(setLoadingReload, async () => {
       try {
         await api("POST", "/v1/reload?keep_wss_state=1");
-        await Promise.all([refreshStatus(), refreshConfig()]);
+        await Promise.all([refreshStatus(), refreshConfig(), refreshAvailableBackends()]);
         void guiLog("热重载配置完成");
+        showToast("配置已重载", "ok");
       } catch (e) {
         setError(String(e));
         void guiLog(`热重载失败: ${e}`, "ERROR");
+        showToast(`热重载失败：${e}`, "err");
       }
     });
   }
@@ -1634,6 +1963,7 @@ function App() {
       await invoke("reveal_path", { path: paths.config });
     } catch (e) {
       setError(String(e));
+      showToast(`打开路径失败：${e}`, "err");
     }
   }
 
@@ -1802,10 +2132,12 @@ function App() {
       await saveConfig({ ...rawConfig, bots });
     } catch (e) {
       flashBotModalError(String(e));
+      showToast(`保存失败：${e}`, "err");
       return;
     }
     setBotModal(null);
     setSelected(String(payload.id));
+    showToast(botModal === "create" ? "机器人已创建" : "机器人已保存", "ok");
     void guiLog(
       botModal === "create"
         ? `新建机器人 ${payload.id}（backend=${payload.backend}）`
@@ -1816,12 +2148,17 @@ function App() {
   async function deleteBot() {
     if (!rawConfig || !selectedRoleId) return;
     if (!confirm(`确认删除机器人 ${selectedRoleId}？`)) return;
-    const bots = ((rawConfig.bots as Record<string, unknown>[]) || []).filter(
-      (b) => String(b.id) !== selectedRoleId,
-    );
-    await saveConfig({ ...rawConfig, bots });
-    setSelected("");
-    void guiLog(`删除机器人 ${selectedRoleId}`, "WARN");
+    try {
+      const bots = ((rawConfig.bots as Record<string, unknown>[]) || []).filter(
+        (b) => String(b.id) !== selectedRoleId,
+      );
+      await saveConfig({ ...rawConfig, bots });
+      setSelected("");
+      void guiLog(`删除机器人 ${selectedRoleId}`, "WARN");
+      showToast(`已删除机器人 ${selectedRoleId}`, "ok");
+    } catch (e) {
+      showToast(`删除失败：${e}`, "err");
+    }
   }
 
   function openAddChannel() {
@@ -1901,8 +2238,15 @@ function App() {
     delete bot.group;
     delete bot.send_msg_url;
     bots[idx] = bot;
-    await saveConfig({ ...rawConfig, bots });
+    try {
+      await saveConfig({ ...rawConfig, bots });
+    } catch (e) {
+      flashChannelModalError(String(e));
+      showToast(`保存失败：${e}`, "err");
+      return;
+    }
     setChannelModal(false);
+    showToast(editingChannelIdx === null ? "通道已添加" : "通道已保存", "ok");
     void guiLog(
       editingChannelIdx === null
         ? `机器人 ${selectedRoleId} 新增通道 ${entry.group}`
@@ -1914,6 +2258,7 @@ function App() {
     if (!rawConfig || !selectedRoleConfig) return;
     if (selectedChannels.length <= 1) {
       setError("至少保留一个通道");
+      showToast("至少保留一个通道", "err");
       return;
     }
     if (!confirm("确认删除该通道？")) return;
@@ -1928,41 +2273,55 @@ function App() {
     delete bot.group;
     delete bot.send_msg_url;
     bots[bidx] = bot;
-    await saveConfig({ ...rawConfig, bots });
-    void guiLog(`机器人 ${selectedRoleId} 删除通道 ${removed}`, "WARN");
+    try {
+      await saveConfig({ ...rawConfig, bots });
+      void guiLog(`机器人 ${selectedRoleId} 删除通道 ${removed}`, "WARN");
+      showToast(`已删除通道 ${removed}`, "ok");
+    } catch (e) {
+      showToast(`删除通道失败：${e}`, "err");
+    }
   }
 
   async function saveCliSettings() {
     if (!rawConfig) return;
     await withMinLoading(setSavingCli, async () => {
-      const defaults = { ...((rawConfig.defaults as Record<string, unknown>) || {}) };
-      defaults.cursor_bin = cliForm.cursor_bin.trim() || "agent";
-      defaults.claude_bin = cliForm.claude_bin.trim() || "claude";
-      defaults.cursor_api_key = cliForm.cursor_api_key.trim();
-      defaults.anthropic_api_key = cliForm.anthropic_api_key.trim();
-      defaults.openai_api_key = cliForm.openai_api_key.trim();
-      defaults.openai_base_url = cliForm.openai_base_url.trim();
-      delete defaults.workspace;
-      delete defaults.cursor_workspace;
-      delete defaults.claude_workspace;
-      defaults.projects_root = cliForm.projects_root.trim() || "~";
-      // 引擎模型分字段保存，不写共享 defaults.model，避免 Cursor/Claude/OpenAI 互相覆盖。
-      defaults.cursor_model = cliForm.cursor_model.trim();
-      defaults.claude_model = cliForm.claude_model.trim();
-      defaults.openai_model = cliForm.openai_model.trim();
-      const prevMem = {
-        ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
-          string,
-          unknown
-        >),
-      };
-      prevMem.enabled = cliForm.memory_enabled;
-      prevMem.gui_bind_enabled = cliForm.memory_gui_bind_enabled;
-      defaults.memory = prevMem;
-      await saveConfig({ ...rawConfig, defaults });
-      await refreshConfig();
-      showToast("设置已保存");
-      void guiLog("保存 AI 设置成功");
+      try {
+        const defaults = { ...((rawConfig.defaults as Record<string, unknown>) || {}) };
+        defaults.cursor_bin = cliForm.cursor_bin.trim() || "agent";
+        defaults.claude_bin = cliForm.claude_bin.trim() || "claude";
+        defaults.cursor_api_key = cliForm.cursor_api_key.trim();
+        defaults.openai_api_key = cliForm.openai_api_key.trim();
+        defaults.openai_base_url = cliForm.openai_base_url.trim();
+        delete defaults.workspace;
+        delete defaults.cursor_workspace;
+        delete defaults.claude_workspace;
+        defaults.projects_root = cliForm.projects_root.trim() || "~";
+        // 引擎模型分字段保存，不写共享 defaults.model，避免 Cursor/Claude/OpenAI 互相覆盖。
+        defaults.cursor_model = cliForm.cursor_model.trim();
+        defaults.claude_model = cliForm.claude_model.trim();
+        defaults.openai_model = cliForm.openai_model.trim();
+        defaults.node_bin = cliForm.node_bin.trim() || "node";
+        defaults.dsh_entry = cliForm.dsh_entry.trim();
+        // dsh_profile/dsh_provider/dsh_timeout/dsh_ttl_seconds/dsh_max_warm/dsh_home 不再由 GUI 编辑，
+        // 通过上面展开 defaults 自然保留 config.yaml 中的既有值（后端仍读取）。
+        defaults.dsh_model = cliForm.dsh_model.trim();
+        const prevMem = {
+          ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
+            string,
+            unknown
+          >),
+        };
+        prevMem.enabled = cliForm.memory_enabled;
+        prevMem.gui_bind_enabled = cliForm.memory_gui_bind_enabled;
+        defaults.memory = prevMem;
+        await saveConfig({ ...rawConfig, defaults });
+        await refreshConfig();
+        showToast("设置已保存", "ok");
+        void guiLog("保存 AI 设置成功");
+      } catch (e) {
+        showToast(`保存失败：${e}`, "err");
+        void guiLog(`保存 AI 设置失败: ${e}`, "ERROR");
+      }
     });
   }
 
@@ -1975,7 +2334,25 @@ function App() {
     [status],
   );
 
-  const backendOptions = BACKENDS.map((b) => ({ id: b, label: b }));
+  const backendOptions = useMemo(() => {
+    const withIcon = (id: string, label: string) => ({
+      id,
+      label,
+      icon: <EngineIcon id={id} size={14} />,
+    });
+    const list = availableBackends
+      .filter((b) => b.available)
+      .map((b) => withIcon(b.id, b.label));
+    // 编辑已有 bot 时，原后端可能已不可用，仍附加该项以便保存原配置。
+    if (botForm.backend && !list.some((o) => o.id === botForm.backend)) {
+      list.push(withIcon(botForm.backend, botForm.backend));
+    }
+    // 空兜底：全部不可用或列表为空时仍显示全部引擎，避免下拉空白。
+    if (!list.length) {
+      return BACKENDS.map((b) => withIcon(b, BACKEND_LABELS[b] || b));
+    }
+    return list;
+  }, [availableBackends, botForm.backend]);
   const inboundOptions = [
     { id: "websocket", label: "websocket" },
     { id: "webhook", label: "webhook" },
@@ -1989,11 +2366,6 @@ function App() {
 
   return (
     <div className="app" data-testid="app-root">
-      {saveToast ? (
-        <div className="toast ok" data-testid="save-toast" role="status">
-          {saveToast}
-        </div>
-      ) : null}
       {(booting || !ready) && (
         <div className="boot-overlay" data-testid="boot-overlay">
           <div className="boot-card">
@@ -2195,20 +2567,24 @@ function App() {
               </div>
               <div className="head-actions">
                 <button
-                  className="btn"
+                  className={`btn${savingCli ? " loading" : ""}`}
                   data-testid="save-settings"
                   disabled={savingCli || !rawConfig}
                   onClick={async () => {
                     await saveCliSettings();
                   }}
                 >
-                  {savingCli ? "保存中…" : "保存设置"}
+                  {savingCli ? <span className="spinner dark" /> : null}
+                  <span>{savingCli ? "保存中" : "保存设置"}</span>
                 </button>
               </div>
             </header>
             <div className="stack page-body settings-groups">
               <div className="card soft pad settings-group" data-testid="group-cursor">
-                <h3 className="section-inline">Cursor CLI</h3>
+                <h3 className="section-inline">
+                  <EngineIcon id="cursor_cli" size={16} />
+                  Cursor CLI
+                </h3>
                 <p className="group-desc">agent 可执行文件、API Key、默认模型与启动目录</p>
                 <div className="form-grid">
                   <label className="full">
@@ -2225,7 +2601,7 @@ function App() {
                         className={`action-chip side${discoveringCursor ? " loading" : ""}`}
                         data-testid="discover-cursor"
                         disabled={discoveringCursor}
-                        onClick={() => void discoverCli("cursor", { autofill: true })}
+                        onClick={() => void discoverCli("cursor", { autofill: true, notify: true })}
                       >
                         {discoveringCursor ? <span className="spinner dark" /> : null}
                         <span>{discoveringCursor ? "扫描中" : "重新扫描"}</span>
@@ -2244,21 +2620,18 @@ function App() {
                       ) : null}
                     </div>
                     {cursorDiscover ? (
-                      <span
-                        className={`field-hint${cursorDiscover.found ? " ok" : " error"}`}
-                        data-testid="cursor-discover-hint"
+                      <FadingHint
+                        ok={cursorDiscover.found}
+                        testId="cursor-discover-hint"
+                        resetKey={cursorDiscover}
                       >
                         {cursorDiscover.found
                           ? `已找到${cursorDiscover.version ? `（${cursorDiscover.version}）` : ""}：${cursorDiscover.path || ""}`
                           : cursorDiscover.message ||
                             cursorDiscover.install?.hint ||
                             "未找到 Cursor CLI，可一键打开终端安装"}
-                      </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                      </FadingHint>
+                    ) : null}
                   </label>
                   <label className="full">
                     API Key（cursor_api_key）
@@ -2286,7 +2659,7 @@ function App() {
                         className={`action-chip side${loadingCursorModels ? " loading" : ""}`}
                         data-testid="refresh-cursor-models"
                         disabled={loadingCursorModels}
-                        onClick={() => void refreshCursorModels()}
+                        onClick={() => void refreshCursorModels({ notify: true })}
                       >
                         {loadingCursorModels ? <span className="spinner dark" /> : null}
                         <span>{loadingCursorModels ? "拉取中" : "刷新模型"}</span>
@@ -2296,115 +2669,149 @@ function App() {
                       <span className="field-hint error" data-testid="cursor-models-hint">
                         {cursorModelsHint}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
 
-              <div className="card soft pad settings-group" data-testid="group-claude">
-                <h3 className="section-inline">Claude Code</h3>
-                <p className="group-desc">claude 可执行文件、Anthropic Key 与默认模型</p>
+              <div className="card soft pad settings-group" data-testid="group-dsh">
+                <h3 className="section-inline">
+                  <EngineIcon id="dsh" size={16} />
+                  DSH（DeepSeek Harness）
+                </h3>
+                <p className="group-desc">
+                  每模型一个共享进程池 + resume 插件；node 直调 bin.js，工作目录按会话隔离
+                </p>
                 <div className="form-grid">
                   <label className="full">
-                    可执行路径（claude_bin）
+                    DSH CLI 入口（dsh_entry）
                     <div className="inline-field cli-bin-row">
                       <input
-                        data-testid="claude-bin"
-                        value={cliForm.claude_bin}
-                        onChange={(e) => setCliForm({ ...cliForm, claude_bin: e.target.value })}
-                        placeholder="claude 或绝对路径"
+                        data-testid="dsh-entry"
+                        value={cliForm.dsh_entry}
+                        onChange={(e) => setCliForm({ ...cliForm, dsh_entry: e.target.value })}
+                        placeholder="留空自动从 ~/.dsh 定位 dsh 包 bin.js"
                       />
                       <button
                         type="button"
-                        className={`action-chip side${discoveringClaude ? " loading" : ""}`}
-                        data-testid="discover-claude"
-                        disabled={discoveringClaude}
-                        onClick={() => void discoverCli("claude", { autofill: true })}
+                        className={`action-chip side${discoveringDsh ? " loading" : ""}`}
+                        data-testid="discover-dsh"
+                        disabled={discoveringDsh}
+                        onClick={() => void discoverCli("dsh", { autofill: true, notify: true })}
                       >
-                        {discoveringClaude ? <span className="spinner dark" /> : null}
-                        <span>{discoveringClaude ? "扫描中" : "重新扫描"}</span>
+                        {discoveringDsh ? <span className="spinner dark" /> : null}
+                        <span>{discoveringDsh ? "扫描中" : "重新扫描"}</span>
                       </button>
-                      {claudeDiscover && !claudeDiscover.found ? (
+                      {dshDiscover && !dshDiscover.found ? (
                         <button
                           type="button"
-                          className={`action-chip side${installingClaude ? " loading" : ""}`}
-                          data-testid="install-claude"
-                          disabled={installingClaude}
-                          onClick={() => void openCliInstall("claude")}
+                          className={`action-chip side${installingDsh ? " loading" : ""}`}
+                          data-testid="install-dsh"
+                          disabled={installingDsh}
+                          onClick={() => void openCliInstall("dsh")}
                         >
-                          {installingClaude ? <span className="spinner dark" /> : null}
-                          <span>{installingClaude ? "打开中" : "一键安装"}</span>
+                          {installingDsh ? <span className="spinner dark" /> : null}
+                          <span>{installingDsh ? "打开中" : "一键安装"}</span>
                         </button>
                       ) : null}
                     </div>
-                    {claudeDiscover ? (
-                      <span
-                        className={`field-hint${claudeDiscover.found ? " ok" : " error"}`}
-                        data-testid="claude-discover-hint"
+                    {dshDiscover ? (
+                      <FadingHint
+                        ok={dshDiscover.found}
+                        testId="dsh-discover-hint"
+                        resetKey={dshDiscover}
                       >
-                        {claudeDiscover.found
-                          ? `已找到${claudeDiscover.version ? `（${claudeDiscover.version}）` : ""}：${claudeDiscover.path || ""}`
-                          : claudeDiscover.message ||
-                            claudeDiscover.install?.hint ||
-                            "未找到 Claude Code，可一键打开终端安装"}
-                      </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                        {dshDiscover.found
+                          ? `已找到${dshDiscover.version ? `（${dshDiscover.version}）` : ""}：${dshDiscover.path || ""}`
+                          : dshDiscover.message ||
+                            dshDiscover.install?.hint ||
+                            "未找到 DSH CLI，可一键打开终端安装"}
+                      </FadingHint>
+                    ) : null}
                   </label>
                   <label className="full">
-                    API Key（anthropic_api_key）
-                    <SecretInput
-                      testId="anthropic-api-key"
-                      value={cliForm.anthropic_api_key}
-                      onChange={(v) => setCliForm({ ...cliForm, anthropic_api_key: v })}
-                      placeholder="ANTHROPIC_API_KEY"
-                    />
+                    Node 可执行（node_bin）
+                    <div className="inline-field cli-bin-row">
+                      <input
+                        data-testid="dsh-node-bin"
+                        value={cliForm.node_bin}
+                        onChange={(e) => setCliForm({ ...cliForm, node_bin: e.target.value })}
+                        placeholder="node 或绝对路径"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${discoveringNode ? " loading" : ""}`}
+                        data-testid="discover-node"
+                        disabled={discoveringNode}
+                        onClick={() => void discoverCli("node", { autofill: true, notify: true })}
+                      >
+                        {discoveringNode ? <span className="spinner dark" /> : null}
+                        <span>{discoveringNode ? "扫描中" : "重新扫描"}</span>
+                      </button>
+                      {nodeDiscover && !nodeDiscover.found ? (
+                        <button
+                          type="button"
+                          className={`action-chip side${installingNode ? " loading" : ""}`}
+                          data-testid="install-node"
+                          disabled={installingNode}
+                          onClick={() => void openCliInstall("node")}
+                        >
+                          {installingNode ? <span className="spinner dark" /> : null}
+                          <span>{installingNode ? "打开中" : "一键安装"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {nodeDiscover ? (
+                      <FadingHint
+                        ok={nodeDiscover.found}
+                        testId="node-discover-hint"
+                        resetKey={nodeDiscover}
+                      >
+                        {nodeDiscover.found
+                          ? `已找到${nodeDiscover.version ? `（${nodeDiscover.version}）` : ""}：${nodeDiscover.path || ""}`
+                          : nodeDiscover.message ||
+                            nodeDiscover.install?.hint ||
+                            "未找到 Node，可一键打开终端安装"}
+                      </FadingHint>
+                    ) : null}
                   </label>
                   <div className="field">
                     <span className="field-label">默认模型</span>
                     <div className="inline-field">
                       <FancySelect
-                        testId="claude-model"
+                        testId="dsh-model"
                         className="form-select"
-                        value={cliForm.claude_model}
-                        options={claudeModels}
-                        disabled={loadingClaudeModels}
-                        placeholder={loadingClaudeModels ? "拉取中…" : "选择模型"}
-                        onChange={(v) => setCliForm({ ...cliForm, claude_model: v })}
+                        value={cliForm.dsh_model}
+                        options={dshModels}
+                        disabled={loadingDshModels}
+                        placeholder={loadingDshModels ? "拉取中…" : "选择模型"}
+                        onChange={(v) => setCliForm({ ...cliForm, dsh_model: v })}
                       />
                       <button
                         type="button"
-                        className={`action-chip side${loadingClaudeModels ? " loading" : ""}`}
-                        data-testid="refresh-claude-models"
-                        disabled={loadingClaudeModels}
-                        onClick={() => void refreshClaudeModels()}
+                        className={`action-chip side${loadingDshModels ? " loading" : ""}`}
+                        data-testid="refresh-dsh-models"
+                        disabled={loadingDshModels}
+                        onClick={() => void refreshDSHModels({ notify: true })}
                       >
-                        {loadingClaudeModels ? <span className="spinner dark" /> : null}
-                        <span>{loadingClaudeModels ? "拉取中" : "刷新模型"}</span>
+                        {loadingDshModels ? <span className="spinner dark" /> : null}
+                        <span>{loadingDshModels ? "拉取中" : "刷新模型"}</span>
                       </button>
                     </div>
-                    {claudeModelsHint ? (
-                      <span className="field-hint error" data-testid="claude-models-hint">
-                        {claudeModelsHint}
+                    {dshModelsHint ? (
+                      <span className="field-hint error" data-testid="dsh-models-hint">
+                        {dshModelsHint}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
 
               <div className="card soft pad settings-group" data-testid="group-openai">
-                <h3 className="section-inline">OpenAI 兼容</h3>
+                <h3 className="section-inline">
+                  <EngineIcon id="openai" size={16} />
+                  OpenAI 兼容
+                </h3>
                 <p className="group-desc">全局默认 Base URL、API Key 与模型（可被单个机器人/通道覆盖）</p>
                 <div className="form-grid">
                   <label className="full">
@@ -2424,8 +2831,8 @@ function App() {
                       onChange={(v) => setCliForm({ ...cliForm, openai_api_key: v })}
                     />
                   </label>
-                  <div className="field full">
-                    <span className="field-label">模型名称（model）</span>
+                  <div className="field">
+                    <span className="field-label">默认模型</span>
                     <div className="inline-field">
                       <FancySelect
                         testId="openai-model-global"
@@ -2447,20 +2854,104 @@ function App() {
                         className={`action-chip side${probingOpenai ? " loading" : ""}`}
                         data-testid="probe-openai"
                         disabled={probingOpenai}
-                        onClick={() => void probeOpenai()}
+                        onClick={() => void probeOpenai(undefined, undefined, { notify: true })}
                       >
                         {probingOpenai ? <span className="spinner dark" /> : null}
                         <span>{probingOpenai ? "测试中" : "重新测试"}</span>
                       </button>
                     </div>
                     {openaiProbeInfo ? (
-                      <span
-                        className={`field-hint${
-                          openaiProbeOk === false ? " error" : openaiProbeOk === true ? " ok" : ""
-                        }`}
-                        data-testid="openai-probe-info"
+                      <FadingHint
+                        ok={openaiProbeOk === true}
+                        testId="openai-probe-info"
+                        resetKey={openaiProbeSeq}
                       >
                         {openaiProbeInfo}
+                      </FadingHint>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              <div className="card soft pad settings-group" data-testid="group-claude">
+                <h3 className="section-inline">
+                  <EngineIcon id="claude_code" size={16} />
+                  Claude Code
+                </h3>
+                <p className="group-desc">claude 可执行文件、Anthropic Key 与默认模型</p>
+                <div className="form-grid">
+                  <label className="full">
+                    可执行路径（claude_bin）
+                    <div className="inline-field cli-bin-row">
+                      <input
+                        data-testid="claude-bin"
+                        value={cliForm.claude_bin}
+                        onChange={(e) => setCliForm({ ...cliForm, claude_bin: e.target.value })}
+                        placeholder="claude 或绝对路径"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${discoveringClaude ? " loading" : ""}`}
+                        data-testid="discover-claude"
+                        disabled={discoveringClaude}
+                        onClick={() => void discoverCli("claude", { autofill: true, notify: true })}
+                      >
+                        {discoveringClaude ? <span className="spinner dark" /> : null}
+                        <span>{discoveringClaude ? "扫描中" : "重新扫描"}</span>
+                      </button>
+                      {claudeDiscover && !claudeDiscover.found ? (
+                        <button
+                          type="button"
+                          className={`action-chip side${installingClaude ? " loading" : ""}`}
+                          data-testid="install-claude"
+                          disabled={installingClaude}
+                          onClick={() => void openCliInstall("claude")}
+                        >
+                          {installingClaude ? <span className="spinner dark" /> : null}
+                          <span>{installingClaude ? "打开中" : "一键安装"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {claudeDiscover ? (
+                      <FadingHint
+                        ok={claudeDiscover.found}
+                        testId="claude-discover-hint"
+                        resetKey={claudeDiscover}
+                      >
+                        {claudeDiscover.found
+                          ? `已找到${claudeDiscover.version ? `（${claudeDiscover.version}）` : ""}：${claudeDiscover.path || ""}`
+                          : claudeDiscover.message ||
+                            claudeDiscover.install?.hint ||
+                            "未找到 Claude Code，可一键打开终端安装"}
+                      </FadingHint>
+                    ) : null}
+                  </label>
+                  <div className="field">
+                    <span className="field-label">默认模型</span>
+                    <div className="inline-field">
+                      <FancySelect
+                        testId="claude-model"
+                        className="form-select"
+                        value={cliForm.claude_model}
+                        options={claudeModels}
+                        disabled={loadingClaudeModels}
+                        placeholder={loadingClaudeModels ? "拉取中…" : "选择模型"}
+                        onChange={(v) => setCliForm({ ...cliForm, claude_model: v })}
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${loadingClaudeModels ? " loading" : ""}`}
+                        data-testid="refresh-claude-models"
+                        disabled={loadingClaudeModels}
+                        onClick={() => void refreshClaudeModels({ notify: true })}
+                      >
+                        {loadingClaudeModels ? <span className="spinner dark" /> : null}
+                        <span>{loadingClaudeModels ? "拉取中" : "刷新模型"}</span>
+                      </button>
+                    </div>
+                    {claudeModelsHint ? (
+                      <span className="field-hint error" data-testid="claude-models-hint">
+                        {claudeModelsHint}
                       </span>
                     ) : null}
                   </div>
@@ -2513,8 +3004,8 @@ function App() {
                 ) : null}
                 <div className="row">
                   <div className="row-text">
-                    <strong>GUI 聊天绑定 openID</strong>
-                    <span>仅调试；默认关。开启后聊天页可绑定真人 openID 走记忆</span>
+                    <strong>GUI 聊天绑定记忆用户</strong>
+                    <span>调试用，默认关。开启后聊天页可从记忆档案下拉选择用户，按真人 openID 读写记忆</span>
                   </div>
                   <Switch
                     testId="memory-gui-bind-switch"
@@ -2560,7 +3051,7 @@ function App() {
                   className={`action-chip${skillsBusy ? " loading" : ""}`}
                   disabled={skillsBusy}
                   data-testid="skills-refresh"
-                  onClick={() => void refreshSkills()}
+                  onClick={() => void refreshSkills({ notify: true })}
                 >
                   {skillsBusy ? <span className="spinner dark" /> : null}
                   <span>{skillsBusy ? "刷新中" : "刷新"}</span>
@@ -2610,7 +3101,7 @@ function App() {
                         </div>
                         <button
                           type="button"
-                          className="btn ghost tiny"
+                          className={`btn ghost xs${skillsBusy ? " loading" : ""}`}
                           disabled={skillsBusy}
                           onClick={() =>
                             void (async () => {
@@ -2619,18 +3110,22 @@ function App() {
                                 await api("DELETE", `/v1/skills/${encodeURIComponent(sk.id)}`);
                                 await refreshSkills();
                                 void guiLog(`卸载 Skill ${sk.id}`, "WARN");
+                                showToast(`已卸载 ${sk.id}`, "ok");
                               } catch (e) {
+                                const msg = String(e);
                                 setSkillsPageError((prev) => ({
-                                  text: String(e),
+                                  text: msg,
                                   seq: (prev?.seq ?? 0) + 1,
                                 }));
+                                showToast(`卸载失败：${msg}`, "err");
                               } finally {
                                 setSkillsBusy(false);
                               }
                             })()
                           }
                         >
-                          卸载
+                          {skillsBusy ? <span className="spinner dark" /> : null}
+                          <span>卸载</span>
                         </button>
                       </div>
                     ))}
@@ -2701,12 +3196,13 @@ function App() {
                   </div>
                   <button
                     type="button"
-                    className="btn"
+                    className={`btn${skillsBusy ? " loading" : ""}`}
                     data-testid="skill-import-btn"
                     disabled={skillsBusy || !skillInstallPath.trim()}
                     onClick={() => void installSkillFromPath(skillInstallPath)}
                   >
-                    导入
+                    {skillsBusy ? <span className="spinner dark" /> : null}
+                    <span>{skillsBusy ? "导入中" : "导入"}</span>
                   </button>
                 </div>
                 <span className="field-hint">
@@ -2888,6 +3384,7 @@ function App() {
                     logSeqRef.current = 0;
                     logNearBottomRef.current = true;
                     setShowLogScrollBottom(false);
+                    showToast("已清空日志视图", "ok");
                   }}
                 >
                   清空视图
@@ -3357,7 +3854,9 @@ function App() {
                             data-testid="probe-openai-bot"
                             disabled={probingOpenai}
                             onClick={() =>
-                              void probeOpenai(botForm.openai_base_url, botForm.openai_api_key)
+                              void probeOpenai(botForm.openai_base_url, botForm.openai_api_key, {
+                                notify: true,
+                              })
                             }
                           >
                             {probingOpenai ? <span className="spinner dark" /> : null}
@@ -3459,8 +3958,9 @@ function App() {
               <button className="btn ghost" onClick={() => setBotModal(null)}>
                 取消
               </button>
-              <button className="btn" data-testid="save-bot" disabled={saving} onClick={submitBot}>
-                {saving ? "保存中…" : "保存"}
+              <button className={`btn${saving ? " loading" : ""}`} data-testid="save-bot" disabled={saving} onClick={submitBot}>
+                {saving ? <span className="spinner dark" /> : null}
+                <span>{saving ? "保存中" : "保存"}</span>
               </button>
             </div>
             </div>
@@ -3566,6 +4066,7 @@ function App() {
                         void probeOpenai(
                           String(selectedRoleConfig?.openai_base_url || cliForm.openai_base_url || ""),
                           String(selectedRoleConfig?.openai_api_key || cliForm.openai_api_key || ""),
+                          { notify: true },
                         )
                       }
                     >
@@ -3580,8 +4081,9 @@ function App() {
               <button className="btn ghost" onClick={() => setChannelModal(false)}>
                 取消
               </button>
-              <button className="btn" disabled={saving} onClick={submitChannel}>
-                {saving ? "保存中…" : "保存"}
+              <button className={`btn${saving ? " loading" : ""}`} disabled={saving} onClick={submitChannel}>
+                {saving ? <span className="spinner dark" /> : null}
+                <span>{saving ? "保存中" : "保存"}</span>
               </button>
             </div>
             </div>
@@ -3635,7 +4137,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className="btn ghost"
+                className={`btn ghost${updatingApp ? " loading" : ""}`}
                 data-testid="update-skip"
                 disabled={updatingApp}
                 onClick={() => void skipUpdateVersion()}
@@ -3644,7 +4146,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className="btn"
+                className={`btn${updatingApp ? " loading" : ""}`}
                 data-testid="update-confirm"
                 disabled={updatingApp || !updateInfo.downloadUrl}
                 onClick={() => void confirmUpdate()}
@@ -3652,7 +4154,7 @@ function App() {
                 {updatingApp ? (
                   <>
                     <span className="spinner dark" />
-                    <span>下载中…</span>
+                    <span>下载中</span>
                   </>
                 ) : (
                   "立即更新"

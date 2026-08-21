@@ -3,7 +3,6 @@
 
 defaults:
   cursor_api_key: ""                    # 或环境变量 CURSOR_API_KEY
-  anthropic_api_key: ""                 # 可选；留空则由 Claude Code 读取自身配置
   openai_api_key: ""
   openai_base_url: ""
   openai_model: ""
@@ -19,6 +18,17 @@ defaults:
   claude_bin: "claude"                  # Windows 建议 claude.exe（勿用 claude.cmd）
   cursor_model: ""
   claude_model: ""
+  # DSH（DeepSeek Harness）JSON-RPC 后端：每模型一个共享进程池 + resume 插件。
+  # 前提：~/.dsh/profiles/jsonrpc 已部署（见 scripts/setup-dsh-profile.ps1 与 plugin/dsh-jsonrpc-resume/README.md）。
+  node_bin: "node"                    # node 可执行文件（或绝对路径）
+  dsh_entry: ""                       # DSH CLI 入口；留空自动从 ~/.dsh 定位 dsh 包 bin.js
+  dsh_profile: "jsonrpc"              # DSH profile 名
+  dsh_provider: "kuaidi100"           # LLM provider（settings.yaml 中配置，默认 kuaidi100）
+  dsh_model: ""                       # 空=复用机器人 model，再空=deepseek-v4-flash
+  dsh_timeout: 600                    # 单轮超时秒
+  dsh_ttl_seconds: 300                # 池进程空闲回收秒
+  dsh_max_warm: 3                     # 池进程硬上限（超出按 LRU 提前回收）
+  dsh_home: ""                        # DSH 家目录；留空默认 ~/.dsh
   session_mode: "shared"              # per_user | shared | oneshot。shared=同通道共享上下文，且通道内排队
   job_queue: ""                         # 空=shared 时 channel，否则 user；也可显式 user | channel
   allow_users: []
@@ -59,7 +69,7 @@ defaults:
     openai_base_url: ""
     openai_api_key: ""
     timeout: 0                          # 空/0=复用 openai_timeout
-    gui_bind_enabled: false             # GUI 聊天绑定真人 openID 后才走记忆
+    gui_bind_enabled: false             # GUI 聊天可选记忆档案用户，绑定真人 openID 后才走记忆
 
 groups:
   - id: default
@@ -68,7 +78,7 @@ groups:
 bots:
   - id: fairy
     name: "Fairy"
-    backend: cursor_cli                 # cursor_cli | claude_code | openai | opencode
+    backend: cursor_cli                 # cursor_cli | claude_code | openai | opencode | dsh
     # 也可改为 openai，并设置 model / openai_base_url / openai_api_key
     system_prompt: |
       你是 Fairy，本地编程与排障助手。

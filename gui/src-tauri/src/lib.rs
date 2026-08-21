@@ -843,19 +843,56 @@ fn open_path_default_sync(path: &str) -> Result<(), String> {
     }
 }
 
-/// Open a visible terminal with the official Cursor/Claude install command.
+/// Open a visible terminal with the official Cursor/Claude/Node.js install command,
+/// or the DSH CLI install + jsonrpc profile deployment script.
 /// User confirms with Enter before the installer runs.
-fn open_cli_install_terminal_sync(engine: &str) -> Result<(), String> {
+fn open_cli_install_terminal_sync(engine: &str, resource_dir: Option<PathBuf>) -> Result<(), String> {
     let engine = engine.trim().to_lowercase();
-    let (title, command) = match engine.as_str() {
+    let (title, command): (String, String) = match engine.as_str() {
         "cursor" | "cursor_cli" | "agent" => (
-            "YZJ Bridge · 安装 Cursor CLI",
-            "irm 'https://cursor.com/install?win32=true' | iex",
+            "YZJ Bridge · 安装 Cursor CLI".to_string(),
+            "irm 'https://cursor.com/install?win32=true' | iex".to_string(),
         ),
         "claude" | "claude_code" => (
-            "YZJ Bridge · 安装 Claude Code",
-            "irm https://claude.ai/install.ps1 | iex",
+            "YZJ Bridge · 安装 Claude Code".to_string(),
+            "irm https://claude.ai/install.ps1 | iex".to_string(),
         ),
+        "node" => (
+            "YZJ Bridge · 安装 Node.js".to_string(),
+            "winget install OpenJS.NodeJS.LTS".to_string(),
+        ),
+        "dsh" | "dsh_jsonrpc" => {
+            let res_dir = resource_dir.ok_or_else(|| "无法定位打包资源目录".to_string())?;
+            // 运行时布局与 tauri.conf.json 的 binaries/dsh-resources/** 一致：
+            //   <resource_dir>/binaries/dsh-resources/setup-dsh-profile.ps1
+            //   <resource_dir>/binaries/dsh-resources/plugin/dsh-jsonrpc-resume/
+            let setup_script = res_dir
+                .join("binaries")
+                .join("dsh-resources")
+                .join("setup-dsh-profile.ps1");
+            // dev 兜底：CWD 为 gui/src-tauri 时直接读 staging 目录（prepare-bundle.ps1 产物）。
+            let setup_script = if setup_script.exists() {
+                setup_script
+            } else {
+                PathBuf::from("binaries/dsh-resources/setup-dsh-profile.ps1")
+            };
+            let plugin_dir = setup_script
+                .parent()
+                .map(|p| p.join("plugin").join("dsh-jsonrpc-resume"))
+                .ok_or_else(|| "无法定位插件资源目录".to_string())?;
+            let setup_q = format!("'{}'", setup_script.to_string_lossy().replace('\'', "''"));
+            let plugin_q = format!("'{}'", plugin_dir.to_string_lossy().replace('\'', "''"));
+            let mut cmd = String::new();
+            cmd.push_str(
+                "if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { Write-Host '未检测到 npm：请先安装 Node.js（nodejs.org）后重试' -ForegroundColor Red; Read-Host '按 Enter 关闭窗口' | Out-Null; exit 1 }\n",
+            );
+            cmd.push_str("npm install -g @deepseek-ai/dsh\n");
+            cmd.push_str("& ");
+            cmd.push_str(&setup_q);
+            cmd.push_str(" -PluginSource ");
+            cmd.push_str(&plugin_q);
+            ("YZJ Bridge · 安装 DSH CLI".to_string(), cmd)
+        }
         _ => return Err(format!("未知引擎: {engine}")),
     };
 
@@ -875,8 +912,8 @@ Write-Host '安装中…' -ForegroundColor Cyan; \
 Write-Host ''; \
 Write-Host '若安装成功，请回到 YZJ Bridge → AI 设置 → 重新扫描' -ForegroundColor Green; \
 Read-Host '按 Enter 关闭窗口' | Out-Null",
-            title = ps_single_quote(title),
-            cmd = ps_single_quote(command),
+            title = ps_single_quote(&title),
+            cmd = ps_single_quote(&command),
             raw = command,
         );
         Command::new("powershell.exe")
@@ -905,8 +942,9 @@ fn ps_single_quote(s: &str) -> String {
 }
 
 #[tauri::command]
-async fn open_cli_install_terminal(engine: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || open_cli_install_terminal_sync(&engine))
+async fn open_cli_install_terminal(app: tauri::AppHandle, engine: String) -> Result<(), String> {
+    let resource_dir = app.path().resource_dir().ok();
+    tauri::async_runtime::spawn_blocking(move || open_cli_install_terminal_sync(&engine, resource_dir))
         .await
         .map_err(|e| e.to_string())?
 }

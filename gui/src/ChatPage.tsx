@@ -3,6 +3,8 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { FancySelect } from "./FancySelect";
+import { useToast } from "./toast";
 
 type ChatBotOption = {
   id: string;
@@ -33,6 +35,11 @@ type ChatSummary = {
   bot_id: string;
   updated_at: string;
   message_count?: number;
+};
+
+type MemoryProfileOption = {
+  open_id: string;
+  display_name?: string;
 };
 
 type ApiFn = (method: string, path: string, body?: unknown) => Promise<string>;
@@ -153,6 +160,7 @@ function IconChevron({ open }: { open: boolean }) {
 }
 
 export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = false }: Props) {
+  const { showToast } = useToast();
   const [summaries, setSummaries] = useState<ChatSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => {
     try {
@@ -176,6 +184,7 @@ export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = fal
   const [streamContent, setStreamContent] = useState("");
   const [streamTools, setStreamTools] = useState<string[]>([]);
   const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+  const [memoryProfiles, setMemoryProfiles] = useState<MemoryProfileOption[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -211,6 +220,60 @@ export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = fal
       return sess;
     },
     [api],
+  );
+
+  useEffect(() => {
+    if (!ready || !guiBindEnabled) {
+      setMemoryProfiles([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const raw = await api("GET", "/v1/memory/profiles");
+        if (cancelled) return;
+        const data = JSON.parse(raw) as { profiles?: MemoryProfileOption[] };
+        setMemoryProfiles(data.profiles || []);
+      } catch {
+        if (!cancelled) setMemoryProfiles([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, ready, guiBindEnabled]);
+
+  const memoryBindOptions = useMemo(() => {
+    const opts = [
+      { id: "", label: "不模拟用户调用（不调用记忆）" },
+      ...memoryProfiles.map((p) => {
+        const name = (p.display_name || "").trim();
+        const id = p.open_id;
+        return {
+          id,
+          label: name && name !== id ? `${name}（${id}）` : id,
+        };
+      }),
+    ];
+    return opts;
+  }, [memoryProfiles]);
+
+  const bindMemoryOpenId = useCallback(
+    async (openId: string) => {
+      if (!activeId || !session) return;
+      setSession((prev) => (prev ? { ...prev, bound_open_id: openId } : prev));
+      try {
+        await api("PATCH", `/v1/chat/sessions/${encodeURIComponent(activeId)}`, {
+          bound_open_id: openId,
+        });
+        showToast(openId ? "已绑定记忆用户" : "已取消记忆绑定", "ok");
+      } catch (err) {
+        const msg = String(err);
+        setError(msg);
+        showToast(`绑定失败：${msg}`, "err");
+      }
+    },
+    [activeId, api, session, showToast],
   );
 
   useEffect(() => {
@@ -350,7 +413,9 @@ export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = fal
       setSession(updated);
       await loadSummaries();
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      showToast(`切换机器人失败：${msg}`, "err");
     }
   };
 
@@ -513,8 +578,11 @@ export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = fal
       setSession(created);
       rememberActive(created.id);
       setDraft("");
+      showToast("已新建会话", "ok");
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      showToast(`新建会话失败：${msg}`, "err");
     }
   };
 
@@ -530,8 +598,11 @@ export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = fal
           rememberActive(null);
         }
       }
+      showToast("会话已删除", "ok");
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      showToast(`删除失败：${msg}`, "err");
     }
   };
 
@@ -622,24 +693,30 @@ export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = fal
             </div>
 
             {guiBindEnabled ? (
-              <label className="chat-bind-openid" data-testid="chat-bind-openid">
-                模拟 openID
-                <input
-                  data-testid="chat-bind-openid-input"
+              <div className="chat-bind-openid" data-testid="chat-bind-openid">
+                <FancySelect
+                  testId="chat-bind-openid-select"
+                  className="chat-bind-openid-select"
                   value={session?.bound_open_id || ""}
-                  placeholder="云之家 OperatorOpenID"
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setSession((prev) => (prev ? { ...prev, bound_open_id: v } : prev));
-                  }}
-                  onBlur={() => {
-                    if (!activeId || !session) return;
-                    void api("PATCH", `/v1/chat/sessions/${encodeURIComponent(activeId)}`, {
-                      bound_open_id: session.bound_open_id || "",
-                    }).catch((err) => setError(String(err)));
+                  options={memoryBindOptions}
+                  placeholder={
+                    memoryProfiles.length ? "选择记忆档案用户" : "暂无档案，先去「记忆」页积累"
+                  }
+                  disabled={!session}
+                  onChange={(v) => void bindMemoryOpenId(v)}
+                  onOpen={() => {
+                    if (!ready) return;
+                    void api("GET", "/v1/memory/profiles")
+                      .then((raw) => {
+                        const data = JSON.parse(raw) as { profiles?: MemoryProfileOption[] };
+                        setMemoryProfiles(data.profiles || []);
+                      })
+                      .catch(() => {
+                        /* keep previous list */
+                      });
                   }}
                 />
-              </label>
+              </div>
             ) : null}
 
             <div className="chat-head-actions" ref={historyRef}>
@@ -692,7 +769,7 @@ export function ChatPage({ api, bots, ready, active = true, guiBindEnabled = fal
                         </button>
                         <button
                           type="button"
-                          className="btn ghost small chat-session-del"
+                          className="btn ghost sm chat-session-del"
                           title="删除"
                           onClick={() => void onDelete(s.id)}
                         >

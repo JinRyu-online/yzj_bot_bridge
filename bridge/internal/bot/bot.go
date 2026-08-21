@@ -28,11 +28,20 @@ type Config struct {
 	CursorStreamPart        bool     `json:"cursor_stream_partial"`
 	CursorTimeout           int      `json:"cursor_timeout"`
 	ClaudeBin               string   `json:"claude_bin"`
-	AnthropicAPIKey         string   `json:"anthropic_api_key"`
 	PermissionMode          string   `json:"permission_mode"`
 	AllowedTools            []string `json:"allowed_tools"`
 	MaxBudgetUSD            float64  `json:"max_budget_usd"`
 	OpenCodeBin             string   `json:"opencode_bin"`
+	// DSH 后端：每模型共享进程池 + resume 插件（@bridge/dsh-jsonrpc-resume）。
+	NodeBin       string `json:"node_bin"`
+	DSHEntry      string `json:"dsh_entry"`
+	DSHProfile    string `json:"dsh_profile"`
+	DSHProvider   string `json:"dsh_provider"`
+	DSHModel      string `json:"dsh_model"`
+	DSHTimeout    int    `json:"dsh_timeout"`
+	DSHTTLSeconds int    `json:"dsh_ttl_seconds"`
+	DSHMaxWarm    int    `json:"dsh_max_warm"`
+	DSHHome       string `json:"dsh_home"`
 	OpenAIBaseURL           string   `json:"openai_base_url"`
 	OpenAIAPIKey            string   `json:"openai_api_key"`
 	OpenAITimeout           int      `json:"openai_timeout"`
