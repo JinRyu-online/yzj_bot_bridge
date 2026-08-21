@@ -8,7 +8,7 @@ use tauri::{
     ipc::Channel,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State, WindowEvent,
+    AppHandle, Emitter, Manager, State, WindowEvent,
 };
 
 struct BridgeState {
@@ -614,7 +614,19 @@ async fn set_skipped_update_version(version: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-fn download_update_installer(download_url: &str) -> Result<PathBuf, String> {
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    received: u64,
+    total: u64,
+    phase: String, // "downloading" | "done" | "error"
+    error: String,
+}
+
+fn download_update_installer_progress(
+    download_url: &str,
+    on_progress: impl Fn(u64, u64),
+) -> Result<PathBuf, String> {
     if !is_allowed_download_url(download_url) {
         return Err("下载地址不在允许的域名白名单内".into());
     }
@@ -626,10 +638,15 @@ fn download_update_installer(download_url: &str) -> Result<PathBuf, String> {
     if !(200..300).contains(&status) {
         return Err(format!("下载更新包 HTTP {status}"));
     }
+    let total: u64 = resp
+        .header("Content-Length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let dest = std::env::temp_dir().join("YZJBridge-update-setup.exe");
     let mut reader = resp.into_reader();
     let mut file = fs::File::create(&dest).map_err(|e| format!("创建临时安装包失败: {e}"))?;
     let mut buf = [0u8; 64 * 1024];
+    let mut received: u64 = 0;
     loop {
         let n = reader
             .read(&mut buf)
@@ -639,6 +656,8 @@ fn download_update_installer(download_url: &str) -> Result<PathBuf, String> {
         }
         file.write_all(&buf[..n])
             .map_err(|e| format!("写入临时安装包失败: {e}"))?;
+        received += n as u64;
+        on_progress(received, total);
     }
     file.flush()
         .map_err(|e| format!("刷新临时安装包失败: {e}"))?;
@@ -655,19 +674,71 @@ fn launch_installer(path: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+/// Start downloading the update in the background. The download runs on a
+/// worker thread and reports progress via the "update-download-progress" event
+/// (payload: DownloadProgress). The command returns immediately so the user can
+/// keep working; when the download finishes the app launches the installer and
+/// exits.
 #[tauri::command]
-async fn download_and_launch_update(
-    app: AppHandle,
-    state: State<'_, BridgeState>,
-    download_url: String,
-) -> Result<(), String> {
-    let path = tauri::async_runtime::spawn_blocking(move || download_update_installer(&download_url))
-        .await
-        .map_err(|e| e.to_string())??;
-    launch_installer(&path)?;
-    let _ = do_fetch(&state, "POST", "/v1/shutdown", None);
-    app.exit(0);
-    Ok(())
+async fn start_update_download(app: AppHandle, download_url: String) -> Result<(), String> {
+    if !is_allowed_download_url(&download_url) {
+        return Err("下载地址不在允许的域名白名单内".into());
+    }
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = app2.emit(
+            "update-download-progress",
+            DownloadProgress {
+                received: 0,
+                total: 0,
+                phase: "downloading".into(),
+                error: String::new(),
+            },
+        );
+        let result = download_update_installer_progress(&download_url, |received, total| {
+            let _ = app2.emit(
+                "update-download-progress",
+                DownloadProgress {
+                    received,
+                    total,
+                    phase: "downloading".into(),
+                    error: String::new(),
+                },
+            );
+        });
+        match result {
+            Ok(path) => {
+                let _ = app2.emit(
+                    "update-download-progress",
+                    DownloadProgress {
+                        received: 0,
+                        total: 0,
+                        phase: "done".into(),
+                        error: String::new(),
+                    },
+                );
+                launch_installer(&path)?;
+                let state = app2.state::<BridgeState>();
+                let _ = do_fetch(&state, "POST", "/v1/shutdown", None);
+                app2.exit(0);
+                Ok(())
+            }
+            Err(e) => {
+                let _ = app2.emit(
+                    "update-download-progress",
+                    DownloadProgress {
+                        received: 0,
+                        total: 0,
+                        phase: "error".into(),
+                        error: e.clone(),
+                    },
+                );
+                Err(e)
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -993,7 +1064,7 @@ pub fn run() {
             get_app_version,
             check_for_update,
             set_skipped_update_version,
-            download_and_launch_update,
+            start_update_download,
             get_endpoint,
             ensure_bridge,
             bridge_fetch,

@@ -48,6 +48,13 @@ type UpdateCheckResult = {
   message: string;
 };
 
+type DownloadProgress = {
+  received: number;
+  total: number;
+  phase: "downloading" | "done" | "error";
+  error: string;
+};
+
 type BotForm = {
   id: string;
   name: string;
@@ -969,6 +976,8 @@ function App() {
   const [updateModal, setUpdateModal] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updatingApp, setUpdatingApp] = useState(false);
+  /** 后台更新下载进度：received/total 字节、phase downloading|done|error。 */
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const updateAutoChecked = useRef(false);
   const cursorModelsAutoTried = useRef(false);
   const claudeModelsAutoTried = useRef(false);
@@ -1126,9 +1135,13 @@ function App() {
     if (!updateInfo?.downloadUrl) return;
     setUpdatingApp(true);
     try {
-      await invoke("download_and_launch_update", { downloadUrl: updateInfo.downloadUrl });
+      // 后台下载：命令立即返回，进度经 update-download-progress 事件推送。
+      await invoke("start_update_download", { downloadUrl: updateInfo.downloadUrl });
+      setUpdateModal(false);
+      showToast("更新包开始后台下载，完成后自动安装", "ok");
     } catch (e) {
       setUpdatingApp(false);
+      setDownloadProgress(null);
       showToast(`更新失败：${e}`, "err");
     }
   }, [showToast, updateInfo]);
@@ -1158,6 +1171,81 @@ function App() {
       cancelled = true;
     };
   }, [ready]);
+
+  // 监听后台更新下载进度（start_update_download 启动后由 Rust 侧推送）。
+  useEffect(() => {
+    if (!ready) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      if (disposed) return;
+      unlisten = await listen<DownloadProgress>("update-download-progress", (e) => {
+        setDownloadProgress(e.payload);
+        if (e.payload.phase === "error") {
+          setUpdatingApp(false);
+          showToast(`更新下载失败：${e.payload.error || "未知错误"}`, "err");
+        }
+      });
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [ready, showToast]);
+
+  // 下载成功后清理进度条状态（应用即将退出，无需主动清；此处兜底）。
+  useEffect(() => {
+    if (downloadProgress?.phase === "done") {
+      setUpdatingApp(false);
+    }
+  }, [downloadProgress]);
+
+  /** 后台下载速率跟踪：基于事件流计算瞬时速度与剩余时间。 */
+  const dlSpeed = useRef({ lastT: 0, lastReceived: 0, bytesPerSec: 0 });
+  useEffect(() => {
+    if (!downloadProgress || downloadProgress.phase !== "downloading") return;
+    const now = Date.now();
+    const prev = dlSpeed.current;
+    if (prev.lastT > 0 && now > prev.lastT) {
+      const dt = (now - prev.lastT) / 1000;
+      const db = downloadProgress.received - prev.lastReceived;
+      if (dt > 0 && db >= 0) {
+        prev.bytesPerSec = db / dt;
+      }
+    }
+    prev.lastT = now;
+    prev.lastReceived = downloadProgress.received;
+  }, [downloadProgress]);
+
+  const fmtBytes = (n: number) => {
+    if (!Number.isFinite(n) || n < 0) return "—";
+    if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+    if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+    return `${n} B`;
+  };
+  const fmtSpeed = (bps: number) =>
+    !Number.isFinite(bps) || bps <= 0
+      ? "—"
+      : `${fmtBytes(bps)}/s`;
+  const fmtEta = (sec: number) => {
+    if (!Number.isFinite(sec) || sec <= 0) return "—";
+    if (sec < 60) return `${Math.ceil(sec)} 秒`;
+    const m = Math.floor(sec / 60);
+    const s = Math.ceil(sec % 60);
+    return `${m} 分 ${s} 秒`;
+  };
+
+  const dlPct =
+    downloadProgress && downloadProgress.total > 0
+      ? Math.min(100, Math.round((downloadProgress.received / downloadProgress.total) * 100))
+      : 0;
+  const dlRemaining =
+    downloadProgress && dlSpeed.current.bytesPerSec > 0 && downloadProgress.total > 0
+      ? (downloadProgress.total - downloadProgress.received) / dlSpeed.current.bytesPerSec
+      : 0;
+  const showDlBar = downloadProgress !== null && downloadProgress.phase !== "error";
 
   const boot = useCallback(async () => {
     setBooting(true);
@@ -4161,6 +4249,37 @@ function App() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showDlBar ? (
+        <div
+          className="update-dl-bar"
+          data-testid="update-dl-bar"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="update-dl-track">
+            <div className="update-dl-fill" style={{ width: `${dlPct}%` }} />
+          </div>
+          <span className="update-dl-label">
+            {downloadProgress?.phase === "done"
+              ? "更新包下载完成，正在启动安装…"
+              : `正在后台下载更新包 ${dlPct}%`}
+          </span>
+          <div className="update-dl-tip">
+            {downloadProgress?.phase === "done" ? (
+              "即将退出应用并启动安装向导"
+            ) : (
+              <>
+                <span>已下载 {fmtBytes(downloadProgress?.received ?? 0)}</span>
+                <span className="sep">·</span>
+                <span>速度 {fmtSpeed(dlSpeed.current.bytesPerSec)}</span>
+                <span className="sep">·</span>
+                <span>剩余 {fmtEta(dlRemaining)}</span>
+              </>
+            )}
           </div>
         </div>
       ) : null}

@@ -21,6 +21,15 @@ async function installTauriMock(
       skippedUpdateVersion: "",
       updateLaunched: "",
       updateDownloadThrow: "",
+      eventHandlers: {} as Record<string, ((e: { payload?: unknown }) => void) | null>,
+      eventSeq: 0,
+      _cbSeq: 0,
+      _cbMap: new Map<number, unknown>(),
+      /** 测试辅助：向监听 update-download-progress 的前端推送进度事件。 */
+      __emitUpdateProgress: (payload: unknown) => {
+        const h = (state as any).eventHandlers["update-download-progress"];
+        if (h) h({ payload });
+      },
       config: {
         defaults: {
           cursor_bin: "agent",
@@ -610,25 +619,55 @@ async function installTauriMock(
             }
             return null;
           }
-          case "download_and_launch_update": {
-            const delay = Number((state as any).updateDownloadDelayMs || 0);
-            if (delay > 0) {
-              await new Promise((r) => setTimeout(r, delay));
-            }
+          case "start_update_download": {
             if ((state as any).updateDownloadThrow) {
               throw new Error(String((state as any).updateDownloadThrow));
             }
             (state as any).updateLaunched = String(
               (args as { downloadUrl?: string }).downloadUrl || "",
             );
+            // 后台下载：命令立即返回，进度通过事件推送。
+            const total = 10 * 1024 * 1024;
+            const payload = (received: number, phase = "downloading") => ({
+              received,
+              total,
+              phase,
+              error: "",
+            });
+            (state as any).__emitUpdateProgress(payload(0));
+            return null;
+          }
+          case "plugin:event|listen": {
+            const evt = String((args as { event?: string }).event || "");
+            const handlerId = Number((args as { handler?: unknown }).handler) || 0;
+            const handler = (state as any)._cbMap.get(handlerId) || null;
+            (state as any).eventHandlers[evt] = handler;
+            // eventId 由 mock 内部维护，unlisten 时用相同值即可。
+            return String((state as any).eventSeq);
+          }
+          case "plugin:event|unlisten": {
+            const evt = String((args as { event?: string }).event || "");
+            delete (state as any).eventHandlers[evt];
             return null;
           }
           default:
             throw new Error(`unknown mock command: ${cmd}`);
         }
       },
-      transformCallback: () => 0,
+      transformCallback: (cb: unknown) => {
+        (state as any)._cbSeq += 1;
+        const id = (state as any)._cbSeq;
+        (state as any)._cbMap.set(id, cb);
+        return id;
+      },
       unregisterCallback: () => undefined,
+    };
+
+    // Tauri event plugin internals：前端 _unlisten 会调用这里，必须存在。
+    // @ts-expect-error mock globals for browser
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      registerListener: () => undefined,
+      unregisterListener: () => undefined,
     };
 
     // @ts-expect-error expose for assertions
@@ -742,6 +781,9 @@ test("系统页：发现更新时弹窗展示日志并可确认", async ({ page 
   await expect(page.getByTestId("update-skip")).toBeVisible();
   await expect(page.getByTestId("update-confirm")).toBeVisible();
   await page.getByTestId("update-confirm").click();
+  // 后台下载：命令立即返回，弹窗关闭，左下角出现进度条。
+  await expect(page.getByTestId("update-modal")).toHaveCount(0);
+  await expect(page.getByTestId("update-dl-bar")).toBeVisible();
   const launched = await page.evaluate(() => (window as any).__E2E_STATE__.updateLaunched);
   expect(launched).toContain("YZJBridge-0.3.0-Windows-x64-setup.exe");
 });
@@ -776,21 +818,58 @@ test("更新：跳过此版本后自动检测不再弹，手动 force 仍可弹"
   expect(skipped).toBe("0.3.0");
 });
 
-test("更新：下载中禁用按钮并显示进度文案", async ({ page }) => {
+test("更新：后台下载显示左下角进度条，悬浮气泡展示速度与剩余时间", async ({ page }) => {
   await page.evaluate((u) => {
     (window as any).__E2E_STATE__.updateCheck = { ...u };
-    (window as any).__E2E_STATE__.updateDownloadDelayMs = 800;
   }, SAMPLE_UPDATE);
   await page.getByTestId("nav-system").click();
   await page.getByTestId("check-update-btn").click();
   await expect(page.getByTestId("update-modal")).toBeVisible();
   await page.getByTestId("update-confirm").click();
-  await expect(page.getByTestId("update-confirm")).toContainText("下载中");
-  await expect(page.getByTestId("update-later")).toBeDisabled();
-  await expect(page.getByTestId("update-skip")).toBeDisabled();
-  await expect
-    .poll(async () => page.evaluate(() => (window as any).__E2E_STATE__.updateLaunched))
-    .toContain("YZJBridge-0.3.0-Windows-x64-setup.exe");
+  // 弹窗关闭、进度条出现（后台下载不影响使用）
+  await expect(page.getByTestId("update-modal")).toHaveCount(0);
+  const bar = page.getByTestId("update-dl-bar");
+  await expect(bar).toBeVisible();
+  await expect(bar).toContainText("正在后台下载更新包");
+  // 推送若干进度事件模拟下载中
+  await page.evaluate(() => {
+    const s = (window as any).__E2E_STATE__;
+    s.__emitUpdateProgress({ received: 2 * 1024 * 1024, total: 10 * 1024 * 1024, phase: "downloading", error: "" });
+  });
+  // 悬浮气泡显示已下载 / 速度 / 剩余
+  await expect(bar).toContainText("已下载");
+  await expect(bar).toContainText("速度");
+  await expect(bar).toContainText("剩余");
+  // 下载完成后提示安装中
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.__emitUpdateProgress({
+      received: 10 * 1024 * 1024,
+      total: 10 * 1024 * 1024,
+      phase: "done",
+      error: "",
+    });
+  });
+  await expect(bar).toContainText("下载完成");
+});
+
+test("更新：后台下载失败时进度条消失并 toast 提示", async ({ page }) => {
+  await page.evaluate((u) => {
+    (window as any).__E2E_STATE__.updateCheck = { ...u };
+  }, SAMPLE_UPDATE);
+  await page.getByTestId("nav-system").click();
+  await page.getByTestId("check-update-btn").click();
+  await expect(page.getByTestId("update-modal")).toBeVisible();
+  await page.getByTestId("update-confirm").click();
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.__emitUpdateProgress({
+      received: 0,
+      total: 0,
+      phase: "error",
+      error: "连接被重置",
+    });
+  });
+  await expect(page.getByTestId("update-dl-bar")).toHaveCount(0);
+  await expect(page.getByTestId("save-toast").filter({ hasText: "更新下载失败" })).toBeVisible();
 });
 
 test("更新：缺少安装包时手动检查提示明确文案", async ({ page }) => {

@@ -1223,6 +1223,86 @@ textarea {
   color: var(--danger);
 }
 
+/* 左下角后台更新下载进度条（悬浮气泡显示已下载/速度/剩余时间） */
+.update-dl-bar {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 29000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg2);
+  box-shadow: var(--shadow);
+  animation: dl-bar-in 0.2s ease-out;
+}
+
+@keyframes dl-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.update-dl-track {
+  flex: 1;
+  min-width: 90px;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+
+.update-dl-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2f81f7, #1a7f37);
+  transition: width 0.25s ease;
+}
+
+.update-dl-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* 悬浮气泡：已下载内容、速度、剩余时间 */
+.update-dl-tip {
+  display: none;
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg1);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.update-dl-tip .sep {
+  margin: 0 6px;
+  opacity: 0.45;
+}
+
+.update-dl-bar:hover .update-dl-tip {
+  display: flex;
+  align-items: center;
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;
