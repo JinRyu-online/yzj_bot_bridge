@@ -1,4 +1,5 @@
-# Copy sidecar + default config + (GNU only) WebView2Loader.dll into src-tauri for Tauri NSIS resources.
+# Copy sidecar + default config + DSH resources (setup script + jsonrpc-resume plugin)
+# + (GNU only) WebView2Loader.dll into src-tauri for Tauri NSIS resources.
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $BridgeExe = Join-Path $Root "bridge\bin\yzj-bridge.exe"
@@ -12,6 +13,16 @@ $TauriConfPath = Join-Path $TauriDir "tauri.conf.json"
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 Copy-Item -Force $BridgeExe (Join-Path $BinDir "yzj-bridge.exe")
 Copy-Item -Force (Join-Path $Root "config.default.yaml") (Join-Path $BinDir "config.default.yaml")
+
+# DSH one-click install resources: setup script + self-developed jsonrpc-resume plugin.
+# 与 tauri.conf.json 的 "binaries/dsh-resources/**/*" 及 lib.rs 的运行时路径保持一致。
+$DshResources = Join-Path $BinDir "dsh-resources"
+New-Item -ItemType Directory -Force -Path $DshResources | Out-Null
+Copy-Item -Force (Join-Path $Root "scripts\setup-dsh-profile.ps1") (Join-Path $DshResources "setup-dsh-profile.ps1")
+$DshPluginSrc = Join-Path $Root "plugin\dsh-jsonrpc-resume"
+$DshPluginDest = Join-Path $DshResources "plugin\dsh-jsonrpc-resume"
+if (Test-Path $DshPluginDest) { Remove-Item -Recurse -Force $DshPluginDest }
+Copy-Item -Recurse -Force $DshPluginSrc $DshPluginDest
 
 function Find-WebView2Loader {
     param([string]$TargetRoot)
@@ -35,7 +46,8 @@ function Set-TauriWebView2LoaderResource {
             $text = $text -replace '("resources":\s*\[\s*\r?\n)', "`$1      `"WebView2Loader.dll`",`r`n"
         }
     } else {
-        $text = $text -replace '\s*"WebView2Loader\.dll",\s*\r?\n', ''
+        # [ \t]*（而非 \s*）避免吞掉 "resources": [ 后的换行，保证可重复执行。
+        $text = $text -replace '[ \t]*"WebView2Loader\.dll",\r?\n', ''
     }
     [System.IO.File]::WriteAllText($TauriConfPath, $text, [System.Text.UTF8Encoding]::new($false))
 }
