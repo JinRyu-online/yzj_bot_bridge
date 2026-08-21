@@ -459,7 +459,28 @@ function SecretInput({
  * 占位空间；error（失败）常驻，便于用户阅读错误原因。ok 从 false→true 时重新
  * 计时；resetKey 变化（如重新扫描/重新测试产生新结果对象）时也重新计时，避免
  * ok 持续为 true 时渐隐一次后不再重新显示。
+ *
+ * 成功提示按 resetKey 记忆：同一结果完整显示过一次（渐隐完成）后，组件
+ * 因切页重挂载时不再重复播放；只有产生新结果（重新扫描/重新测试，即
+ * resetKey 变化）才会再次显示。resetKey 支持对象（WeakSet，不阻止 GC）
+ * 与原始值（Set）两种类型，统一处理，避免漏记。无 resetKey（undefined）
+ * 时保持原行为：每次挂载都显示。
  */
+const shownOkObjectKeys = new WeakSet<object>();
+const shownOkPrimitiveKeys = new Set<string | number>();
+
+function isOkResetKeyShown(key: unknown): boolean {
+  if (key === undefined || key === null) return false;
+  if (typeof key === "object") return shownOkObjectKeys.has(key);
+  return shownOkPrimitiveKeys.has(key as string | number);
+}
+
+function markOkResetKeyShown(key: unknown): void {
+  if (key === undefined || key === null) return;
+  if (typeof key === "object") shownOkObjectKeys.add(key);
+  else shownOkPrimitiveKeys.add(key as string | number);
+}
+
 function FadingHint({
   ok,
   testId,
@@ -481,10 +502,21 @@ function FadingHint({
       setGone(false);
       return;
     }
+    // 同一结果已完整显示过成功提示：重挂载时直接隐藏，不重复播放。
+    if (isOkResetKeyShown(resetKey)) {
+      setFading(false);
+      setGone(true);
+      return;
+    }
     setFading(false);
     setGone(false);
     const t1 = window.setTimeout(() => setFading(true), delayMs);
-    const t2 = window.setTimeout(() => setGone(true), delayMs + 400);
+    const t2 = window.setTimeout(() => {
+      // 仅完整显示（渐隐结束）后才记忆，StrictMode 双调用下第二次 effect
+      // 仍会正常显示；中途卸载则不清除，下次进入可再次看到。
+      markOkResetKeyShown(resetKey);
+      setGone(true);
+    }, delayMs + 400);
     return () => {
       window.clearTimeout(t1);
       window.clearTimeout(t2);
@@ -952,6 +984,8 @@ function App() {
   const [openaiModels, setOpenaiModels] = useState<{ id: string; label: string }[]>([]);
   const [openaiProbeInfo, setOpenaiProbeInfo] = useState("");
   const [openaiProbeOk, setOpenaiProbeOk] = useState<boolean | null>(null);
+  /** 每次探测递增，作为 FadingHint 的 resetKey：新探测必显示，切页重挂载不重复。 */
+  const [openaiProbeSeq, setOpenaiProbeSeq] = useState(0);
   const [probingOpenai, setProbingOpenai] = useState(false);
 
   const [botModal, setBotModal] = useState<"create" | "edit" | null>(null);
@@ -1428,6 +1462,7 @@ function App() {
       setProbingOpenai(true);
       setOpenaiProbeInfo("");
       setOpenaiProbeOk(null);
+      setOpenaiProbeSeq((s) => s + 1);
       try {
         const raw = await api("POST", "/v1/backends/openai/probe", {
           base_url: baseURL ?? cliForm.openai_base_url,
@@ -2829,7 +2864,7 @@ function App() {
                       <FadingHint
                         ok={openaiProbeOk === true}
                         testId="openai-probe-info"
-                        resetKey={openaiProbeInfo}
+                        resetKey={openaiProbeSeq}
                       >
                         {openaiProbeInfo}
                       </FadingHint>
