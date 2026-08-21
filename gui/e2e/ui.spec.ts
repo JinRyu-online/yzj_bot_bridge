@@ -730,7 +730,6 @@ test("记忆页入口与默认关", async ({ page }) => {
   await expect(page.getByTestId("page-memory")).toBeVisible();
   await expect(page.getByTestId("memory-list")).toBeVisible();
   await expect(page.getByTestId("memory-list")).not.toContainText(".jsonl");
-  await expect(page.getByTestId("memory-bot-filter")).toBeVisible();
   await expect(page.getByTestId("memory-detail")).toContainText("尚未选择用户");
 
   await page.getByTestId("nav-settings").click();

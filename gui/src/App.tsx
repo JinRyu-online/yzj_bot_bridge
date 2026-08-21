@@ -1881,11 +1881,7 @@ function App() {
           </div>
         ) : null}
         {page === "memory" ? (
-          <MemoryPage
-            api={api}
-            ready={ready}
-            bots={status.map((b) => ({ id: b.id, name: b.name }))}
-          />
+          <MemoryPage api={api} ready={ready} />
         ) : null}
         {page === "system" && (
           <section className="page" key="system" data-testid="page-system">

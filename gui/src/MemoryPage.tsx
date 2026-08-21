@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { FancySelect } from "./FancySelect";
+import { useCallback, useEffect, useState } from "react";
 
 type Field = {
   manual?: string;
@@ -35,7 +34,6 @@ type ApiFn = (method: string, path: string, body?: unknown) => Promise<string>;
 type Props = {
   api: ApiFn;
   ready: boolean;
-  bots: { id: string; name: string }[];
 };
 
 function fieldText(f?: Field): string {
@@ -55,9 +53,8 @@ function formatSeen(iso?: string): string {
   return d.toLocaleString("zh-CN", { hour12: false });
 }
 
-export function MemoryPage({ api, ready, bots }: Props) {
+export function MemoryPage({ api, ready }: Props) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [botFilter, setBotFilter] = useState("");
   const [selected, setSelected] = useState<Profile | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,21 +69,12 @@ export function MemoryPage({ api, ready, bots }: Props) {
     notes: "",
   });
 
-  const botOptions = useMemo(
-    () => [
-      { id: "", label: "全部机器人" },
-      ...bots.map((b) => ({ id: b.id, label: b.name || b.id })),
-    ],
-    [bots],
-  );
-
   const refresh = useCallback(async () => {
     if (!ready) return;
     setError("");
     setRefreshing(true);
     try {
-      const q = botFilter ? `?bot=${encodeURIComponent(botFilter)}` : "";
-      const raw = await api("GET", `/v1/memory/profiles${q}`);
+      const raw = await api("GET", "/v1/memory/profiles");
       const data = JSON.parse(raw) as { profiles?: Profile[] };
       const list = data.profiles || [];
       setProfiles(list);
@@ -97,7 +85,7 @@ export function MemoryPage({ api, ready, bots }: Props) {
     } finally {
       setRefreshing(false);
     }
-  }, [api, ready, botFilter]);
+  }, [api, ready]);
 
   useEffect(() => {
     void refresh().catch((e) => setError(String(e)));
@@ -225,18 +213,7 @@ export function MemoryPage({ api, ready, bots }: Props) {
           <h1>记忆</h1>
           <p className="subtitle">按云之家 openID 维护的用户画像（不含对话原文）</p>
         </div>
-        <div className="head-actions memory-head-actions">
-          <div className="memory-filter" data-testid="memory-filter">
-            <span className="memory-filter-label">机器人</span>
-            <FancySelect
-              testId="memory-bot-filter"
-              className="compact"
-              value={botFilter}
-              options={botOptions}
-              searchable={bots.length > 6}
-              onChange={setBotFilter}
-            />
-          </div>
+        <div className="head-actions">
           <button
             type="button"
             className={`action-chip${refreshing ? " loading" : ""}`}

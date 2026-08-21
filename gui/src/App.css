@@ -2990,32 +2990,6 @@ textarea {
   align-content: start;
 }
 
-.memory-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.memory-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 200px;
-}
-
-.memory-filter-label {
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.memory-filter .fancy-select {
-  min-width: 168px;
-  flex: 1;
-}
-
 .memory-page-error {
   margin: 0 0 12px;
 }
