@@ -28,7 +28,6 @@ type Config struct {
 	CursorStreamPart        bool     `json:"cursor_stream_partial"`
 	CursorTimeout           int      `json:"cursor_timeout"`
 	ClaudeBin               string   `json:"claude_bin"`
-	AnthropicAPIKey         string   `json:"anthropic_api_key"`
 	PermissionMode          string   `json:"permission_mode"`
 	AllowedTools            []string `json:"allowed_tools"`
 	MaxBudgetUSD            float64  `json:"max_budget_usd"`

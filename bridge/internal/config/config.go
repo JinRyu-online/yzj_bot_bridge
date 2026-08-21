@@ -22,7 +22,7 @@ type File struct {
 
 func defaultMap() map[string]any {
 	return map[string]any{
-		"cursor_api_key": "", "anthropic_api_key": "",
+		"cursor_api_key": "",
 		"cursor_bin": "agent", "cursor_model": "", "claude_model": "", "session_mode": "shared", "job_queue": "",
 		"allow_openids": []any{}, "allow_users": []any{},
 		"cursor_timeout": 600, "ack_pending": true, "mention_on_reply": true,
@@ -317,9 +317,8 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		CursorForce:   asBool(m["cursor_force"], true), CursorStream: asBool(m["cursor_stream"], true),
 		CursorStreamPart: asBool(m["cursor_stream_partial"], true),
 		CursorTimeout:    asInt(m["cursor_timeout"], 600),
-		ClaudeBin:        firstNonEmpty(asString(m["claude_bin"]), "claude"),
-		AnthropicAPIKey:  asString(m["anthropic_api_key"]),
-		PermissionMode:   firstNonEmpty(asString(m["permission_mode"]), "bypassPermissions"),
+		ClaudeBin:      firstNonEmpty(asString(m["claude_bin"]), "claude"),
+		PermissionMode: firstNonEmpty(asString(m["permission_mode"]), "bypassPermissions"),
 		AllowedTools:     asStringSlice(m["allowed_tools"]), MaxBudgetUSD: asFloat(m["max_budget_usd"], 0),
 		OpenCodeBin:   firstNonEmpty(asString(m["opencode_bin"]), "opencode"),
 		NodeBin:       firstNonEmpty(asString(m["node_bin"]), "node"),

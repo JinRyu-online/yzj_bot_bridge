@@ -289,7 +289,7 @@ func (s *Server) cursorModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "models": models})
 }
 
-// claudeModels 列出 Claude Code 可用模型（别名 + 可选 Anthropic API）。
+// claudeModels 列出 Claude Code 可用模型（本地 CLI 别名）。
 func (s *Server) claudeModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", 405)
@@ -300,8 +300,7 @@ func (s *Server) claudeModels(w http.ResponseWriter, r *http.Request) {
 		defs = map[string]any{}
 	}
 	bin, _ := defs["claude_bin"].(string)
-	key, _ := defs["anthropic_api_key"].(string)
-	models, warn := backends.ListClaudeModels(bin, key)
+	models, warn := backends.ListClaudeModels(bin)
 	out := map[string]any{"ok": true, "models": models}
 	if warn != "" {
 		out["warning"] = warn

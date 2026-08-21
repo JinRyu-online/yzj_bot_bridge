@@ -2,12 +2,8 @@ package backends
 
 import (
 	"bufio"
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,11 +139,8 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
 	processutil.HideWindow(cmd)
 	cmd.Dir = opts.Workspace
-	env := os.Environ()
-	if c.cfg.AnthropicAPIKey != "" {
-		env = append(env, "ANTHROPIC_API_KEY="+c.cfg.AnthropicAPIKey)
-	}
-	cmd.Env = env
+	// 不注入 ANTHROPIC_API_KEY：Claude Code 使用本机 ~/.claude 已登录凭据。
+	cmd.Env = os.Environ()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return bot.RunResult{Reply: err.Error(), Status: "start_error"}
@@ -273,7 +266,7 @@ func compactClaude(s string) string {
 	return strings.Join(out, " ")
 }
 
-// Claude Code 可用的 --model 别名（无 API Key 时也展示）。
+// Claude Code 可用的 --model 别名（不配 Anthropic API Key，仅展示 CLI 别名）。
 func claudeCodeAliases() []ModelInfo {
 	return []ModelInfo{
 		{ID: "sonnet", Label: "Sonnet (latest)"},
@@ -283,91 +276,9 @@ func claudeCodeAliases() []ModelInfo {
 	}
 }
 
-// mergeClaudeModels 合并别名与 API 列表，按 id 去重且别名优先。
-func mergeClaudeModels(aliases []ModelInfo, api []ModelInfo) []ModelInfo {
-	seen := map[string]struct{}{}
-	out := make([]ModelInfo, 0, len(aliases)+len(api))
-	appendUnique := func(list []ModelInfo) {
-		for _, m := range list {
-			id := strings.TrimSpace(m.ID)
-			if id == "" {
-				continue
-			}
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			label := strings.TrimSpace(m.Label)
-			if label == "" {
-				label = id
-			}
-			out = append(out, ModelInfo{ID: id, Label: label})
-		}
-	}
-	appendUnique(aliases)
-	appendUnique(api)
-	return out
-}
-
-// fetchAnthropicModels 调用 Anthropic Models API 拉取可用模型。
-func fetchAnthropicModels(apiKey string) ([]ModelInfo, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.anthropic.com/v1/models?limit=1000", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(string(body))
-		if len(msg) > 300 {
-			msg = msg[:300] + "…"
-		}
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)
-	}
-	var parsed struct {
-		Data []struct {
-			ID          string `json:"id"`
-			DisplayName string `json:"display_name"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("解析 models 响应失败: %w", err)
-	}
-	out := make([]ModelInfo, 0, len(parsed.Data))
-	for _, m := range parsed.Data {
-		id := strings.TrimSpace(m.ID)
-		if id == "" {
-			continue
-		}
-		label := strings.TrimSpace(m.DisplayName)
-		if label == "" {
-			label = id
-		}
-		out = append(out, ModelInfo{ID: id, Label: label})
-	}
-	return out, nil
-}
-
-// ListClaudeModels 返回 Claude Code 别名列表；若配置了 API Key 则合并 Anthropic /v1/models。
-// API 失败时仍返回别名，并通过 warning 带回错误信息（避免下拉被清空）。
-func ListClaudeModels(bin, apiKey string) (models []ModelInfo, warning string) {
-	_ = bin // GUI 用 claude_bin 决定是否请求；CLI 暂无独立 models 子命令。
-	aliases := claudeCodeAliases()
-	key := strings.TrimSpace(apiKey)
-	if key == "" {
-		return aliases, ""
-	}
-	apiModels, err := fetchAnthropicModels(key)
-	if err != nil {
-		return aliases, err.Error()
-	}
-	return mergeClaudeModels(aliases, apiModels), ""
+// ListClaudeModels 返回 Claude Code 别名列表。
+// GUI 用 claude_bin 决定是否请求；CLI 暂无独立 models 子命令，仅展示本地别名。
+func ListClaudeModels(bin string) (models []ModelInfo, warning string) {
+	_ = bin
+	return claudeCodeAliases(), ""
 }

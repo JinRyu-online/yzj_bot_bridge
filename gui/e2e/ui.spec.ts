@@ -26,7 +26,6 @@ async function installTauriMock(
           cursor_bin: "agent",
           claude_bin: "claude",
           cursor_api_key: "",
-          anthropic_api_key: "",
           openai_api_key: "",
           openai_base_url: "",
           projects_root: "~",
