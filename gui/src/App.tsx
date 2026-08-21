@@ -178,7 +178,24 @@ function FieldLabel({ children, tip }: { children: React.ReactNode; tip?: string
 }
 
 const BACKENDS = ["cursor_cli", "claude_code", "openai", "opencode", "dsh"];
+const BACKEND_LABELS: Record<string, string> = {
+  cursor_cli: "Cursor CLI",
+  claude_code: "Claude Code",
+  openai: "OpenAI 兼容",
+  dsh: "DSH（DeepSeek Harness）",
+  opencode: "OpenCode",
+};
 const MIN_LOADING_MS = 500;
+
+type CliEngine = "cursor" | "claude" | "dsh" | "node";
+
+interface CliDiscoverResult {
+  found: boolean;
+  path?: string;
+  version?: string;
+  message?: string;
+  install?: { shell: string; command: string; hint: string };
+}
 
 async function api(method: string, path: string, body?: unknown): Promise<string> {
   return invoke<string>("bridge_fetch", {
@@ -887,13 +904,7 @@ function App() {
     openai_model: "",
     node_bin: "node",
     dsh_entry: "",
-    dsh_profile: "jsonrpc",
-    dsh_provider: "kuaidi100",
     dsh_model: "",
-    dsh_timeout: 600,
-    dsh_ttl_seconds: 300,
-    dsh_max_warm: 3,
-    dsh_home: "",
     memory_enabled: false,
     memory_gui_bind_enabled: false,
   });
@@ -917,6 +928,18 @@ function App() {
   const [discoveringClaude, setDiscoveringClaude] = useState(false);
   const [installingCursor, setInstallingCursor] = useState(false);
   const [installingClaude, setInstallingClaude] = useState(false);
+  const [dshDiscover, setDshDiscover] = useState<CliDiscoverResult | null>(null);
+  const [nodeDiscover, setNodeDiscover] = useState<CliDiscoverResult | null>(null);
+  const [discoveringDsh, setDiscoveringDsh] = useState(false);
+  const [discoveringNode, setDiscoveringNode] = useState(false);
+  const [installingDsh, setInstallingDsh] = useState(false);
+  const [installingNode, setInstallingNode] = useState(false);
+  const [dshModels, setDshModels] = useState<{ id: string; label: string }[]>([]);
+  const [loadingDshModels, setLoadingDshModels] = useState(false);
+  const [dshModelsHint, setDshModelsHint] = useState("");
+  const [availableBackends, setAvailableBackends] = useState<
+    { id: string; label: string; available: boolean; reason?: string }[]
+  >([]);
   const cliDiscoverTried = useRef(false);
 
   useEffect(() => {
@@ -1123,14 +1146,97 @@ function App() {
     }
   }, [showToast]);
 
+  const refreshDSHModels = useCallback(async (opts?: { notify?: boolean }) => {
+    const notify = !!opts?.notify;
+    setLoadingDshModels(true);
+    setDshModelsHint("");
+    try {
+      const raw = await api("GET", "/v1/backends/dsh/models");
+      const data = JSON.parse(raw) as {
+        ok?: boolean;
+        models?: { id: string; label: string }[];
+        error?: string;
+      };
+      if (data.ok === false) {
+        const msg = data.error || "拉取 DSH 模型失败";
+        setDshModelsHint(msg);
+        if (notify) showToast(msg, "err");
+        return;
+      }
+      const list = (data.models || []).map((m) => ({ id: m.id, label: m.label || m.id }));
+      setDshModels(list);
+      if (!list.length) {
+        setDshModelsHint("未解析到模型列表");
+        if (notify) showToast("未解析到 DSH 模型列表", "neutral");
+      } else {
+        void guiLog(`拉取 DSH 模型 ${list.length} 个`);
+        if (notify) showToast(`已拉取 ${list.length} 个 DSH 模型`, "ok");
+      }
+    } catch (e) {
+      setDshModelsHint(String(e));
+      void guiLog(`拉取 DSH 模型失败: ${e}`, "ERROR");
+      if (notify) showToast(`拉取 DSH 模型失败：${e}`, "err");
+    } finally {
+      setLoadingDshModels(false);
+    }
+  }, [showToast]);
+
+  const refreshAvailableBackends = useCallback(async () => {
+    try {
+      const raw = await api("GET", "/v1/backends/available");
+      const data = JSON.parse(raw) as {
+        backends?: { id: string; label?: string; available?: boolean; reason?: string }[];
+      };
+      const list = (data.backends || []).map((b) => ({
+        id: b.id,
+        label: b.label || b.id,
+        available: !!b.available,
+        reason: b.reason,
+      }));
+      setAvailableBackends(list);
+    } catch (e) {
+      // 拉取失败时清空，backendOptions 兜底显示全部引擎，避免下拉空白。
+      setAvailableBackends([]);
+      void guiLog(`拉取可用后端失败: ${e}`, "WARN");
+    }
+  }, []);
+
   const discoverCli = useCallback(
-    async (engine: "cursor" | "claude", opts?: { autofill?: boolean; notify?: boolean }) => {
+    async (engine: CliEngine, opts?: { autofill?: boolean; notify?: boolean }) => {
       const autofill = opts?.autofill !== false;
       const notify = !!opts?.notify;
-      const setBusy = engine === "cursor" ? setDiscoveringCursor : setDiscoveringClaude;
-      const setResult = engine === "cursor" ? setCursorDiscover : setClaudeDiscover;
-      const currentBin = engine === "cursor" ? cliForm.cursor_bin : cliForm.claude_bin;
-      const label = engine === "cursor" ? "Cursor CLI" : "Claude Code";
+      const setBusy =
+        engine === "cursor"
+          ? setDiscoveringCursor
+          : engine === "claude"
+            ? setDiscoveringClaude
+            : engine === "dsh"
+              ? setDiscoveringDsh
+              : setDiscoveringNode;
+      const setResult =
+        engine === "cursor"
+          ? setCursorDiscover
+          : engine === "claude"
+            ? setClaudeDiscover
+            : engine === "dsh"
+              ? setDshDiscover
+              : setNodeDiscover;
+      const currentBin =
+        engine === "cursor"
+          ? cliForm.cursor_bin
+          : engine === "claude"
+            ? cliForm.claude_bin
+            : engine === "dsh"
+              ? cliForm.dsh_entry
+              : cliForm.node_bin;
+      const label =
+        engine === "cursor"
+          ? "Cursor CLI"
+          : engine === "claude"
+            ? "Claude Code"
+            : engine === "dsh"
+              ? "DSH CLI"
+              : "Node";
       setBusy(true);
       try {
         const raw = await api("POST", "/v1/backends/cli/discover", {
@@ -1153,17 +1259,24 @@ function App() {
         });
         if (autofill && data.found && data.path) {
           const cur = currentBin.trim();
-          const bare =
+          let bare =
             !cur ||
             cur === "agent" ||
             cur === "claude" ||
             cur === "cursor-agent" ||
             (!cur.includes("/") && !cur.includes("\\") && !cur.includes(":"));
+          // dsh/node 入口常见的纯名称默认值（如 "node"）也视为 bare，命中后自动填绝对路径。
+          if (engine === "dsh") bare = bare || cur === "node" || cur === "dsh";
+          if (engine === "node") bare = bare || cur === "node";
           if (bare && data.path !== cur) {
             if (engine === "cursor") {
               setCliForm((prev) => ({ ...prev, cursor_bin: data.path || prev.cursor_bin }));
-            } else {
+            } else if (engine === "claude") {
               setCliForm((prev) => ({ ...prev, claude_bin: data.path || prev.claude_bin }));
+            } else if (engine === "dsh") {
+              setCliForm((prev) => ({ ...prev, dsh_entry: data.path || prev.dsh_entry }));
+            } else {
+              setCliForm((prev) => ({ ...prev, node_bin: data.path || prev.node_bin }));
             }
             void guiLog(`自动填入 ${engine} 路径: ${data.path}`);
           }
@@ -1190,12 +1303,26 @@ function App() {
         setBusy(false);
       }
     },
-    [cliForm.cursor_bin, cliForm.claude_bin, showToast],
+    [cliForm.cursor_bin, cliForm.claude_bin, cliForm.dsh_entry, cliForm.node_bin, showToast],
   );
 
-  const openCliInstall = useCallback(async (engine: "cursor" | "claude") => {
-    const setBusy = engine === "cursor" ? setInstallingCursor : setInstallingClaude;
-    const label = engine === "cursor" ? "Cursor CLI" : "Claude Code";
+  const openCliInstall = useCallback(async (engine: CliEngine) => {
+    const setBusy =
+      engine === "cursor"
+        ? setInstallingCursor
+        : engine === "claude"
+          ? setInstallingClaude
+          : engine === "dsh"
+            ? setInstallingDsh
+            : setInstallingNode;
+    const label =
+      engine === "cursor"
+        ? "Cursor CLI"
+        : engine === "claude"
+          ? "Claude Code"
+          : engine === "dsh"
+            ? "DSH CLI"
+            : "Node";
     setBusy(true);
     try {
       await invoke("open_cli_install_terminal", { engine });
@@ -1301,13 +1428,7 @@ function App() {
       openai_model: String(defaults.openai_model || ""),
       node_bin: pick("node_bin", "node"),
       dsh_entry: String(defaults.dsh_entry || ""),
-      dsh_profile: pick("dsh_profile", "jsonrpc"),
-      dsh_provider: pick("dsh_provider", "kuaidi100"),
       dsh_model: String(defaults.dsh_model || ""),
-      dsh_timeout: Number(defaults.dsh_timeout ?? 600) || 600,
-      dsh_ttl_seconds: Number(defaults.dsh_ttl_seconds ?? 300) || 300,
-      dsh_max_warm: Number(defaults.dsh_max_warm ?? 3) || 3,
-      dsh_home: String(defaults.dsh_home || ""),
       memory_enabled: Boolean(
         ((defaults.memory as Record<string, unknown> | undefined)?.enabled ?? false) === true,
       ),
@@ -1427,7 +1548,12 @@ function App() {
       await boot();
       if (cancelled) return;
       try {
-        await Promise.all([refreshStatus(), refreshConfig(), refreshSkills()]);
+        await Promise.all([
+          refreshStatus(),
+          refreshConfig(),
+          refreshSkills(),
+          refreshAvailableBackends(),
+        ]);
       } catch {
         /* ignore until next poll */
       }
@@ -1685,7 +1811,7 @@ function App() {
     await withMinLoading(setLoadingReload, async () => {
       try {
         await api("POST", "/v1/reload?keep_wss_state=1");
-        await Promise.all([refreshStatus(), refreshConfig()]);
+        await Promise.all([refreshStatus(), refreshConfig(), refreshAvailableBackends()]);
         void guiLog("热重载配置完成");
         showToast("配置已重载", "ok");
       } catch (e) {
@@ -2047,13 +2173,9 @@ function App() {
         defaults.openai_model = cliForm.openai_model.trim();
         defaults.node_bin = cliForm.node_bin.trim() || "node";
         defaults.dsh_entry = cliForm.dsh_entry.trim();
-        defaults.dsh_profile = cliForm.dsh_profile.trim() || "jsonrpc";
-        defaults.dsh_provider = cliForm.dsh_provider.trim() || "kuaidi100";
+        // dsh_profile/dsh_provider/dsh_timeout/dsh_ttl_seconds/dsh_max_warm/dsh_home 不再由 GUI 编辑，
+        // 通过上面展开 defaults 自然保留 config.yaml 中的既有值（后端仍读取）。
         defaults.dsh_model = cliForm.dsh_model.trim();
-        defaults.dsh_timeout = cliForm.dsh_timeout || 600;
-        defaults.dsh_ttl_seconds = cliForm.dsh_ttl_seconds || 300;
-        defaults.dsh_max_warm = cliForm.dsh_max_warm || 3;
-        defaults.dsh_home = cliForm.dsh_home.trim();
         const prevMem = {
           ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
             string,
@@ -2083,7 +2205,20 @@ function App() {
     [status],
   );
 
-  const backendOptions = BACKENDS.map((b) => ({ id: b, label: b }));
+  const backendOptions = useMemo(() => {
+    const list = availableBackends
+      .filter((b) => b.available)
+      .map((b) => ({ id: b.id, label: b.label }));
+    // 编辑已有 bot 时，原后端可能已不可用，仍附加该项以便保存原配置。
+    if (botForm.backend && !list.some((o) => o.id === botForm.backend)) {
+      list.push({ id: botForm.backend, label: botForm.backend });
+    }
+    // 空兜底：全部不可用或列表为空时仍显示全部引擎，避免下拉空白。
+    if (!list.length) {
+      return BACKENDS.map((b) => ({ id: b, label: BACKEND_LABELS[b] || b }));
+    }
+    return list;
+  }, [availableBackends, botForm.backend]);
   const inboundOptions = [
     { id: "websocket", label: "websocket" },
     { id: "webhook", label: "webhook" },
@@ -2409,6 +2544,210 @@ function App() {
                 </div>
               </div>
 
+              <div className="card soft pad settings-group" data-testid="group-dsh">
+                <h3 className="section-inline">DSH（DeepSeek Harness）</h3>
+                <p className="group-desc">
+                  每模型一个共享进程池 + resume 插件；node 直调 bin.js，工作目录按会话隔离
+                </p>
+                <div className="form-grid">
+                  <label className="full">
+                    DSH CLI 入口（dsh_entry）
+                    <div className="inline-field cli-bin-row">
+                      <input
+                        data-testid="dsh-entry"
+                        value={cliForm.dsh_entry}
+                        onChange={(e) => setCliForm({ ...cliForm, dsh_entry: e.target.value })}
+                        placeholder="留空自动从 ~/.dsh 定位 dsh 包 bin.js"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${discoveringDsh ? " loading" : ""}`}
+                        data-testid="discover-dsh"
+                        disabled={discoveringDsh}
+                        onClick={() => void discoverCli("dsh", { autofill: true, notify: true })}
+                      >
+                        {discoveringDsh ? <span className="spinner dark" /> : null}
+                        <span>{discoveringDsh ? "扫描中" : "重新扫描"}</span>
+                      </button>
+                      {dshDiscover && !dshDiscover.found ? (
+                        <button
+                          type="button"
+                          className={`action-chip side${installingDsh ? " loading" : ""}`}
+                          data-testid="install-dsh"
+                          disabled={installingDsh}
+                          onClick={() => void openCliInstall("dsh")}
+                        >
+                          {installingDsh ? <span className="spinner dark" /> : null}
+                          <span>{installingDsh ? "打开中" : "一键安装"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {dshDiscover ? (
+                      <span
+                        className={`field-hint${dshDiscover.found ? " ok" : " error"}`}
+                        data-testid="dsh-discover-hint"
+                      >
+                        {dshDiscover.found
+                          ? `已找到${dshDiscover.version ? `（${dshDiscover.version}）` : ""}：${dshDiscover.path || ""}`
+                          : dshDiscover.message ||
+                            dshDiscover.install?.hint ||
+                            "未找到 DSH CLI，可一键打开终端安装"}
+                      </span>
+                    ) : (
+                      <span className="field-hint spacer" aria-hidden="true">
+                        &nbsp;
+                      </span>
+                    )}
+                  </label>
+                  <label className="full">
+                    Node 可执行（node_bin）
+                    <div className="inline-field cli-bin-row">
+                      <input
+                        data-testid="dsh-node-bin"
+                        value={cliForm.node_bin}
+                        onChange={(e) => setCliForm({ ...cliForm, node_bin: e.target.value })}
+                        placeholder="node 或绝对路径"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${discoveringNode ? " loading" : ""}`}
+                        data-testid="discover-node"
+                        disabled={discoveringNode}
+                        onClick={() => void discoverCli("node", { autofill: true, notify: true })}
+                      >
+                        {discoveringNode ? <span className="spinner dark" /> : null}
+                        <span>{discoveringNode ? "扫描中" : "重新扫描"}</span>
+                      </button>
+                      {nodeDiscover && !nodeDiscover.found ? (
+                        <button
+                          type="button"
+                          className={`action-chip side${installingNode ? " loading" : ""}`}
+                          data-testid="install-node"
+                          disabled={installingNode}
+                          onClick={() => void openCliInstall("node")}
+                        >
+                          {installingNode ? <span className="spinner dark" /> : null}
+                          <span>{installingNode ? "打开中" : "一键安装"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                    {nodeDiscover ? (
+                      <span
+                        className={`field-hint${nodeDiscover.found ? " ok" : " error"}`}
+                        data-testid="node-discover-hint"
+                      >
+                        {nodeDiscover.found
+                          ? `已找到${nodeDiscover.version ? `（${nodeDiscover.version}）` : ""}：${nodeDiscover.path || ""}`
+                          : nodeDiscover.message ||
+                            nodeDiscover.install?.hint ||
+                            "未找到 Node，可一键打开终端安装"}
+                      </span>
+                    ) : (
+                      <span className="field-hint spacer" aria-hidden="true">
+                        &nbsp;
+                      </span>
+                    )}
+                  </label>
+                  <div className="field">
+                    <span className="field-label">默认模型</span>
+                    <div className="inline-field">
+                      <FancySelect
+                        testId="dsh-model"
+                        className="form-select"
+                        value={cliForm.dsh_model}
+                        options={dshModels}
+                        disabled={loadingDshModels}
+                        placeholder={loadingDshModels ? "拉取中…" : "选择模型"}
+                        onChange={(v) => setCliForm({ ...cliForm, dsh_model: v })}
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${loadingDshModels ? " loading" : ""}`}
+                        data-testid="refresh-dsh-models"
+                        disabled={loadingDshModels}
+                        onClick={() => void refreshDSHModels({ notify: true })}
+                      >
+                        {loadingDshModels ? <span className="spinner dark" /> : null}
+                        <span>{loadingDshModels ? "拉取中" : "刷新模型"}</span>
+                      </button>
+                    </div>
+                    {dshModelsHint ? (
+                      <span className="field-hint error" data-testid="dsh-models-hint">
+                        {dshModelsHint}
+                      </span>
+                    ) : (
+                      <span className="field-hint spacer" aria-hidden="true">
+                        &nbsp;
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="card soft pad settings-group" data-testid="group-openai">
+                <h3 className="section-inline">OpenAI 兼容</h3>
+                <p className="group-desc">全局默认 Base URL、API Key 与模型（可被单个机器人/通道覆盖）</p>
+                <div className="form-grid">
+                  <label className="full">
+                    Base URL
+                    <input
+                      data-testid="openai-base-url-global"
+                      value={cliForm.openai_base_url}
+                      onChange={(e) => setCliForm({ ...cliForm, openai_base_url: e.target.value })}
+                      placeholder="https://api.openai.com/v1"
+                    />
+                  </label>
+                  <label className="full">
+                    API Key
+                    <SecretInput
+                      testId="openai-api-key-global"
+                      value={cliForm.openai_api_key}
+                      onChange={(v) => setCliForm({ ...cliForm, openai_api_key: v })}
+                    />
+                  </label>
+                  <div className="field full">
+                    <span className="field-label">模型名称（model）</span>
+                    <div className="inline-field">
+                      <FancySelect
+                        testId="openai-model-global"
+                        className="form-select"
+                        value={cliForm.openai_model}
+                        options={openaiModels}
+                        disabled={probingOpenai}
+                        placeholder={
+                          probingOpenai
+                            ? "测试中…"
+                            : openaiModels.length
+                              ? "选择模型"
+                              : "填写 Base URL / API Key 后自动拉取"
+                        }
+                        onChange={(v) => setCliForm({ ...cliForm, openai_model: v })}
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${probingOpenai ? " loading" : ""}`}
+                        data-testid="probe-openai"
+                        disabled={probingOpenai}
+                        onClick={() => void probeOpenai(undefined, undefined, { notify: true })}
+                      >
+                        {probingOpenai ? <span className="spinner dark" /> : null}
+                        <span>{probingOpenai ? "测试中" : "重新测试"}</span>
+                      </button>
+                    </div>
+                    {openaiProbeInfo ? (
+                      <span
+                        className={`field-hint${
+                          openaiProbeOk === false ? " error" : openaiProbeOk === true ? " ok" : ""
+                        }`}
+                        data-testid="openai-probe-info"
+                      >
+                        {openaiProbeInfo}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
               <div className="card soft pad settings-group" data-testid="group-claude">
                 <h3 className="section-inline">Claude Code</h3>
                 <p className="group-desc">claude 可执行文件、Anthropic Key 与默认模型</p>
@@ -2504,165 +2843,6 @@ function App() {
                       </span>
                     )}
                   </div>
-                </div>
-              </div>
-
-              <div className="card soft pad settings-group" data-testid="group-openai">
-                <h3 className="section-inline">OpenAI 兼容</h3>
-                <p className="group-desc">全局默认 Base URL、API Key 与模型（可被单个机器人/通道覆盖）</p>
-                <div className="form-grid">
-                  <label className="full">
-                    Base URL
-                    <input
-                      data-testid="openai-base-url-global"
-                      value={cliForm.openai_base_url}
-                      onChange={(e) => setCliForm({ ...cliForm, openai_base_url: e.target.value })}
-                      placeholder="https://api.openai.com/v1"
-                    />
-                  </label>
-                  <label className="full">
-                    API Key
-                    <SecretInput
-                      testId="openai-api-key-global"
-                      value={cliForm.openai_api_key}
-                      onChange={(v) => setCliForm({ ...cliForm, openai_api_key: v })}
-                    />
-                  </label>
-                  <div className="field full">
-                    <span className="field-label">模型名称（model）</span>
-                    <div className="inline-field">
-                      <FancySelect
-                        testId="openai-model-global"
-                        className="form-select"
-                        value={cliForm.openai_model}
-                        options={openaiModels}
-                        disabled={probingOpenai}
-                        placeholder={
-                          probingOpenai
-                            ? "测试中…"
-                            : openaiModels.length
-                              ? "选择模型"
-                              : "填写 Base URL / API Key 后自动拉取"
-                        }
-                        onChange={(v) => setCliForm({ ...cliForm, openai_model: v })}
-                      />
-                      <button
-                        type="button"
-                        className={`action-chip side${probingOpenai ? " loading" : ""}`}
-                        data-testid="probe-openai"
-                        disabled={probingOpenai}
-                        onClick={() => void probeOpenai(undefined, undefined, { notify: true })}
-                      >
-                        {probingOpenai ? <span className="spinner dark" /> : null}
-                        <span>{probingOpenai ? "测试中" : "重新测试"}</span>
-                      </button>
-                    </div>
-                    {openaiProbeInfo ? (
-                      <span
-                        className={`field-hint${
-                          openaiProbeOk === false ? " error" : openaiProbeOk === true ? " ok" : ""
-                        }`}
-                        data-testid="openai-probe-info"
-                      >
-                        {openaiProbeInfo}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-
-              <div className="card soft pad settings-group" data-testid="group-dsh">
-                <h3 className="section-inline">DSH（DeepSeek Harness）</h3>
-                <p className="group-desc">
-                  每模型一个共享进程池 + resume 插件；node 直调 bin.js，工作目录按会话隔离
-                </p>
-                <div className="form-grid">
-                  <label className="full">
-                    DSH CLI 入口（dsh_entry）
-                    <input
-                      data-testid="dsh-entry"
-                      value={cliForm.dsh_entry}
-                      onChange={(e) => setCliForm({ ...cliForm, dsh_entry: e.target.value })}
-                      placeholder="留空自动从 ~/.dsh 定位 dsh 包 bin.js"
-                    />
-                  </label>
-                  <label>
-                    Node 可执行（node_bin）
-                    <input
-                      data-testid="dsh-node-bin"
-                      value={cliForm.node_bin}
-                      onChange={(e) => setCliForm({ ...cliForm, node_bin: e.target.value })}
-                      placeholder="node 或绝对路径"
-                    />
-                  </label>
-                  <label>
-                    Profile（dsh_profile）
-                    <input
-                      data-testid="dsh-profile"
-                      value={cliForm.dsh_profile}
-                      onChange={(e) => setCliForm({ ...cliForm, dsh_profile: e.target.value })}
-                      placeholder="jsonrpc"
-                    />
-                  </label>
-                  <label>
-                    Provider（dsh_provider）
-                    <input
-                      data-testid="dsh-provider"
-                      value={cliForm.dsh_provider}
-                      onChange={(e) => setCliForm({ ...cliForm, dsh_provider: e.target.value })}
-                      placeholder="kuaidi100"
-                    />
-                  </label>
-                  <label>
-                    DSH 家目录（dsh_home）
-                    <input
-                      data-testid="dsh-home"
-                      value={cliForm.dsh_home}
-                      onChange={(e) => setCliForm({ ...cliForm, dsh_home: e.target.value })}
-                      placeholder="留空默认 ~/.dsh"
-                    />
-                  </label>
-                  <label>
-                    默认模型（dsh_model）
-                    <input
-                      data-testid="dsh-model"
-                      value={cliForm.dsh_model}
-                      onChange={(e) => setCliForm({ ...cliForm, dsh_model: e.target.value })}
-                      placeholder="deepseek-v4-flash"
-                    />
-                  </label>
-                  <label>
-                    单轮超时秒（dsh_timeout）
-                    <input
-                      type="number"
-                      data-testid="dsh-timeout"
-                      value={cliForm.dsh_timeout}
-                      onChange={(e) => setCliForm({ ...cliForm, dsh_timeout: Number(e.target.value) || 0 })}
-                      placeholder="600"
-                    />
-                  </label>
-                  <label>
-                    空闲回收秒（dsh_ttl_seconds）
-                    <input
-                      type="number"
-                      data-testid="dsh-ttl-seconds"
-                      value={cliForm.dsh_ttl_seconds}
-                      onChange={(e) =>
-                        setCliForm({ ...cliForm, dsh_ttl_seconds: Number(e.target.value) || 0 })
-                      }
-                      placeholder="300"
-                    />
-                  </label>
-                  <label>
-                    池进程上限（dsh_max_warm）
-                    <input
-                      type="number"
-                      data-testid="dsh-max-warm"
-                      value={cliForm.dsh_max_warm}
-                      onChange={(e) => setCliForm({ ...cliForm, dsh_max_warm: Number(e.target.value) || 0 })}
-                      placeholder="3"
-                    />
-                  </label>
                 </div>
               </div>
 

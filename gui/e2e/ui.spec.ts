@@ -340,6 +340,26 @@ async function installTauriMock(
                 ],
               });
             }
+            if (path.startsWith("/v1/backends/dsh/models")) {
+              return JSON.stringify({
+                ok: true,
+                models: [
+                  { id: "deepseek-v4-flash", label: "DeepSeek-V4-Flash" },
+                  { id: "deepseek-v4-pro", label: "DeepSeek-V4-Pro" },
+                ],
+              });
+            }
+            if (path.startsWith("/v1/backends/available")) {
+              return JSON.stringify({
+                backends: [
+                  { id: "cursor_cli", label: "Cursor CLI", available: true },
+                  { id: "claude_code", label: "Claude Code", available: false, reason: "未找到可执行文件" },
+                  { id: "openai", label: "OpenAI 兼容", available: true },
+                  { id: "dsh", label: "DSH（DeepSeek Harness）", available: true },
+                  { id: "opencode", label: "OpenCode", available: false, reason: "占位后端，尚未实现" },
+                ],
+              });
+            }
             if (path.startsWith("/v1/backends/openai/probe")) {
               return JSON.stringify({
                 ok: true,
@@ -363,6 +383,34 @@ async function installTauriMock(
                     shell: "powershell",
                     command: "irm https://claude.ai/install.ps1 | iex",
                     hint: "将打开 PowerShell，确认后执行 Claude Code 官方安装脚本",
+                  },
+                });
+              }
+              if (engine === "dsh") {
+                return JSON.stringify({
+                  engine: "dsh",
+                  found: true,
+                  path: "C:\\\\Users\\\\mock\\\\AppData\\\\Local\\\\dsh\\\\bin.js",
+                  version: "0.1.0",
+                  message: "已找到可执行文件",
+                  install: {
+                    shell: "powershell",
+                    command: "npm i -g @deepseek/dsh",
+                    hint: "将打开 PowerShell，确认后执行 DSH 安装命令",
+                  },
+                });
+              }
+              if (engine === "node") {
+                return JSON.stringify({
+                  engine: "node",
+                  found: true,
+                  path: "C:\\\\Program Files\\\\nodejs\\\\node.exe",
+                  version: "v24.14.0",
+                  message: "已找到可执行文件",
+                  install: {
+                    shell: "powershell",
+                    command: "winget install OpenJS.NodeJS.LTS",
+                    hint: "将打开 PowerShell，确认后执行 Node 安装命令",
                   },
                 });
               }
@@ -817,34 +865,73 @@ test("AI 设置：Cursor 模型下拉与 OpenAI 连通性", async ({ page }) => 
   ).toBeVisible();
 });
 
-test("AI 设置：DSH 配置区默认值与保存回读", async ({ page }) => {
+test("AI 设置：DSH 精简卡片（入口/Node/模型）与保存回读", async ({ page }) => {
   await page.getByTestId("nav-settings").click();
   await expect(page.getByTestId("group-dsh")).toBeVisible();
+  // 精简后仅保留 3 项配置：DSH CLI 入口 / Node 可执行 / 默认模型。
+  await expect(page.getByTestId("dsh-entry")).toBeVisible();
+  await expect(page.getByTestId("dsh-node-bin")).toBeVisible();
+  await expect(page.getByTestId("dsh-model")).toBeVisible();
+  // 其余 6 个字段的输入框不再渲染。
+  await expect(page.getByTestId("dsh-profile")).toHaveCount(0);
+  await expect(page.getByTestId("dsh-provider")).toHaveCount(0);
+  await expect(page.getByTestId("dsh-timeout")).toHaveCount(0);
+  await expect(page.getByTestId("dsh-ttl-seconds")).toHaveCount(0);
+  await expect(page.getByTestId("dsh-max-warm")).toHaveCount(0);
+  await expect(page.getByTestId("dsh-home")).toHaveCount(0);
   // 默认值来自 mock defaults（与 Go config.defaultMap 一致）。
   await expect(page.getByTestId("dsh-entry")).toHaveValue("");
   await expect(page.getByTestId("dsh-node-bin")).toHaveValue("node");
-  await expect(page.getByTestId("dsh-profile")).toHaveValue("jsonrpc");
-  await expect(page.getByTestId("dsh-provider")).toHaveValue("kuaidi100");
-  await expect(page.getByTestId("dsh-model")).toHaveValue("");
-  await expect(page.getByTestId("dsh-timeout")).toHaveValue("600");
-  await expect(page.getByTestId("dsh-ttl-seconds")).toHaveValue("300");
-  await expect(page.getByTestId("dsh-max-warm")).toHaveValue("3");
-  await expect(page.getByTestId("dsh-home")).toHaveValue("");
-  // 修改并保存 → 回读保持。
-  await page.getByTestId("dsh-entry").fill("C:\\dsh\\bin.js");
-  await page.getByTestId("dsh-model").fill("deepseek-v4-flash");
-  await page.getByTestId("dsh-timeout").fill("120");
-  await page.getByTestId("dsh-ttl-seconds").fill("60");
-  await page.getByTestId("dsh-max-warm").fill("2");
-  await page.getByTestId("dsh-home").fill("D:\\dsh-home");
+  // 扫描 DSH：mock 命中 → autofill 绝对路径 + 已找到 hint。
+  await page.getByTestId("discover-dsh").click();
+  await expect(page.getByTestId("dsh-discover-hint")).toContainText("已找到");
+  await expect(page.getByTestId("dsh-entry")).toHaveValue(/bin\.js/);
+  // 默认模型：刷新后从新端点拉取，可选 DeepSeek-V4-Flash。
+  await page.getByTestId("refresh-dsh-models").click();
+  await expect(page.getByTestId("save-toast")).toContainText("已拉取 2 个 DSH 模型");
+  await page.getByTestId("dsh-model").locator(".fancy-select-trigger").click();
+  const dshMenu = page.getByTestId("dsh-model-menu");
+  await expect(dshMenu.getByRole("option", { name: "DeepSeek-V4-Flash" })).toBeVisible();
+  await dshMenu.getByRole("option", { name: "DeepSeek-V4-Flash" }).click();
+  // 保存 → 回读保留 dsh_model。
   await page.getByTestId("save-settings").click();
   await expect(page.getByTestId("save-toast")).toBeVisible();
-  await expect(page.getByTestId("dsh-entry")).toHaveValue("C:\\dsh\\bin.js");
-  await expect(page.getByTestId("dsh-model")).toHaveValue("deepseek-v4-flash");
-  await expect(page.getByTestId("dsh-timeout")).toHaveValue("120");
-  await expect(page.getByTestId("dsh-ttl-seconds")).toHaveValue("60");
-  await expect(page.getByTestId("dsh-max-warm")).toHaveValue("2");
-  await expect(page.getByTestId("dsh-home")).toHaveValue("D:\\dsh-home");
+  await expect(page.getByTestId("dsh-model")).toContainText("DeepSeek-V4-Flash");
+});
+
+test("AI 设置：卡片顺序 cursor → dsh → openai → claude → memory → dirs", async ({ page }) => {
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("group-cursor")).toBeVisible();
+  const ids = await page
+    .locator(
+      '[data-testid="group-cursor"], [data-testid="group-dsh"], [data-testid="group-openai"], [data-testid="group-claude"], [data-testid="group-memory"], [data-testid="group-dirs"]',
+    )
+    .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
+  expect(ids).toEqual([
+    "group-cursor",
+    "group-dsh",
+    "group-openai",
+    "group-claude",
+    "group-memory",
+    "group-dirs",
+  ]);
+});
+
+test("新建机器人：后端下拉仅含可用引擎", async ({ page }) => {
+  await page.getByTestId("nav-bots").click();
+  await page.getByTestId("create-bot").click();
+  await expect(page.getByTestId("bot-modal")).toBeVisible();
+  await page.getByTestId("bot-backend").locator(".fancy-select-trigger").click();
+  const menu = page.getByTestId("bot-backend-menu");
+  await expect(menu).toBeVisible();
+  // 仅 available===true 的引擎（label 为服务端返回的人类名）。
+  await expect(menu.getByRole("option", { name: "Cursor CLI" })).toBeVisible();
+  await expect(menu.getByRole("option", { name: "OpenAI 兼容" })).toBeVisible();
+  await expect(menu.getByRole("option", { name: "DSH（DeepSeek Harness）" })).toBeVisible();
+  await expect(menu.getByRole("option", { name: "Claude Code" })).toHaveCount(0);
+  await expect(menu.getByRole("option", { name: "OpenCode" })).toHaveCount(0);
+  await page.getByTestId("bot-modal-close").click();
+  await expect(page.getByTestId("bot-modal")).toHaveCount(0);
 });
 
 test("帮助页含简介与 GitHub 入口", async ({ page }) => {
@@ -926,7 +1013,7 @@ test("弹窗 X 关闭 + OpenAI 字段", async ({ page }) => {
   await page.getByTestId("create-bot").click();
   await expect(page.getByTestId("bot-modal")).toBeVisible();
   await page.getByTestId("bot-backend").locator(".fancy-select-trigger").click();
-  await page.getByTestId("bot-backend-menu").getByRole("option", { name: "openai" }).click();
+  await page.getByTestId("bot-backend-menu").getByRole("option", { name: "OpenAI 兼容" }).click();
   await expect(page.getByTestId("openai-use-defaults")).toBeVisible();
   await expect(page.getByTestId("openai-use-defaults")).toHaveAttribute("aria-checked", "true");
   await page.getByTestId("openai-use-defaults").click();
