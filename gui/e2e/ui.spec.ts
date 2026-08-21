@@ -1078,7 +1078,9 @@ test("设置页分组、密钥小眼睛、OpenAI 模型", async ({ page }) => {
   await expect(page.getByTestId("group-claude")).toBeVisible();
   await expect(page.getByTestId("group-openai")).toBeVisible();
   await expect(page.getByTestId("group-dirs")).toBeVisible();
-  await expect(page.getByTestId("cursor-bin")).toHaveValue("agent");
+  // 进入设置页自动扫描：cursor 命中 mock 并 autofill 绝对路径（等扫描完成）；
+  // claude mock 未找到，不覆盖初始值 "claude"。
+  await expect(page.getByTestId("cursor-bin")).toHaveValue(/agent\.exe/);
   await expect(page.getByTestId("claude-bin")).toHaveValue("claude");
   await expect(page.getByTestId("openai-model-global")).toBeVisible();
   const key = page.getByTestId("cursor-api-key");
