@@ -455,19 +455,23 @@ function SecretInput({
 }
 
 /**
- * 设置页提示：ok（成功，如"已找到…"）显示 delayMs 毫秒后渐隐并释放占位空间；
- * error（失败）常驻，便于用户阅读错误原因。ok 从 false→true 时重新计时。
+ * 设置页提示：ok（成功，如"已找到…"/"连通成功"）显示 delayMs 毫秒后渐隐并释放
+ * 占位空间；error（失败）常驻，便于用户阅读错误原因。ok 从 false→true 时重新
+ * 计时；resetKey 变化（如重新扫描/重新测试产生新结果对象）时也重新计时，避免
+ * ok 持续为 true 时渐隐一次后不再重新显示。
  */
 function FadingHint({
   ok,
   testId,
   children,
   delayMs = 5000,
+  resetKey,
 }: {
   ok: boolean;
   testId?: string;
   children: React.ReactNode;
   delayMs?: number;
+  resetKey?: unknown;
 }) {
   const [fading, setFading] = useState(false);
   const [gone, setGone] = useState(false);
@@ -485,7 +489,7 @@ function FadingHint({
       window.clearTimeout(t1);
       window.clearTimeout(t2);
     };
-  }, [ok, delayMs]);
+  }, [ok, delayMs, resetKey]);
   if (gone) return null;
   return (
     <span
@@ -2538,7 +2542,11 @@ function App() {
                       ) : null}
                     </div>
                     {cursorDiscover ? (
-                      <FadingHint ok={cursorDiscover.found} testId="cursor-discover-hint">
+                      <FadingHint
+                        ok={cursorDiscover.found}
+                        testId="cursor-discover-hint"
+                        resetKey={cursorDiscover}
+                      >
                         {cursorDiscover.found
                           ? `已找到${cursorDiscover.version ? `（${cursorDiscover.version}）` : ""}：${cursorDiscover.path || ""}`
                           : cursorDiscover.message ||
@@ -2627,7 +2635,11 @@ function App() {
                       ) : null}
                     </div>
                     {dshDiscover ? (
-                      <FadingHint ok={dshDiscover.found} testId="dsh-discover-hint">
+                      <FadingHint
+                        ok={dshDiscover.found}
+                        testId="dsh-discover-hint"
+                        resetKey={dshDiscover}
+                      >
                         {dshDiscover.found
                           ? `已找到${dshDiscover.version ? `（${dshDiscover.version}）` : ""}：${dshDiscover.path || ""}`
                           : dshDiscover.message ||
@@ -2669,7 +2681,11 @@ function App() {
                       ) : null}
                     </div>
                     {nodeDiscover ? (
-                      <FadingHint ok={nodeDiscover.found} testId="node-discover-hint">
+                      <FadingHint
+                        ok={nodeDiscover.found}
+                        testId="node-discover-hint"
+                        resetKey={nodeDiscover}
+                      >
                         {nodeDiscover.found
                           ? `已找到${nodeDiscover.version ? `（${nodeDiscover.version}）` : ""}：${nodeDiscover.path || ""}`
                           : nodeDiscover.message ||
@@ -2761,14 +2777,13 @@ function App() {
                       </button>
                     </div>
                     {openaiProbeInfo ? (
-                      <span
-                        className={`field-hint${
-                          openaiProbeOk === false ? " error" : openaiProbeOk === true ? " ok" : ""
-                        }`}
-                        data-testid="openai-probe-info"
+                      <FadingHint
+                        ok={openaiProbeOk === true}
+                        testId="openai-probe-info"
+                        resetKey={openaiProbeInfo}
                       >
                         {openaiProbeInfo}
-                      </span>
+                      </FadingHint>
                     ) : null}
                   </div>
                 </div>
@@ -2811,7 +2826,11 @@ function App() {
                       ) : null}
                     </div>
                     {claudeDiscover ? (
-                      <FadingHint ok={claudeDiscover.found} testId="claude-discover-hint">
+                      <FadingHint
+                        ok={claudeDiscover.found}
+                        testId="claude-discover-hint"
+                        resetKey={claudeDiscover}
+                      >
                         {claudeDiscover.found
                           ? `已找到${claudeDiscover.version ? `（${claudeDiscover.version}）` : ""}：${claudeDiscover.path || ""}`
                           : claudeDiscover.message ||
