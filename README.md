@@ -1,6 +1,6 @@
 # YZJ Bridge（云之家多机器人桥接 · Go + Tauri）
 
-本地常驻 **Go** 服务：通过 WebSocket（可选 Webhook）接收云之家群组机器人消息 → 按 bot 路由到可插拔后端（Cursor CLI / Claude Code / OpenAI 兼容 `/v1` / Opencode 占位）→ 经各 bot 的 `sendMsgUrl` 回发。
+本地常驻 **Go** 服务：通过 WebSocket（可选 Webhook）接收云之家群组机器人消息 → 按 bot 路由到可插拔后端（Cursor CLI / Claude Code / OpenAI 兼容 `/v1` / DSH（DeepSeek Harness）JSON-RPC / Opencode 占位）→ 经各 bot 的 `sendMsgUrl` 回发。
 
 控制面板为 **Tauri 2 + React**：托盘常驻、AI 设置、通道启停、运行日志。
 
@@ -12,7 +12,7 @@
     ▼
 bridge/ (yzj-bridge)
   Registry → Orchestrator(route→execute→out)
-  Backends: cursor_cli | claude_code | openai | opencode
+  Backends: cursor_cli | claude_code | openai | dsh | opencode
   Control API 127.0.0.1:18765
     ▲
 gui/ (Tauri) 托盘 + 设置 UI
