@@ -177,7 +177,7 @@ function FieldLabel({ children, tip }: { children: React.ReactNode; tip?: string
   );
 }
 
-const BACKENDS = ["cursor_cli", "claude_code", "openai", "opencode"];
+const BACKENDS = ["cursor_cli", "claude_code", "openai", "opencode", "dsh"];
 const MIN_LOADING_MS = 500;
 
 async function api(method: string, path: string, body?: unknown): Promise<string> {
@@ -268,7 +268,12 @@ function formatLogLine(l: LogLine): { tag: string; message: string } {
 /** 按后端展示模型：机器人自身 model 优先，否则回退到 AI 设置里的引擎默认。 */
 function resolveDisplayedModel(
   cfg: Record<string, unknown> | null | undefined,
-  defaults?: { cursor_model?: string; claude_model?: string; openai_model?: string },
+  defaults?: {
+    cursor_model?: string;
+    claude_model?: string;
+    openai_model?: string;
+    dsh_model?: string;
+  },
 ): string {
   if (!cfg) return "默认";
   const be = String(cfg.backend || "");
@@ -279,6 +284,9 @@ function resolveDisplayedModel(
   }
   if (be === "claude_code" || be === "claude") {
     return String(cfg.claude_model || defaults?.claude_model || "").trim() || "默认";
+  }
+  if (be === "dsh" || be === "dsh_jsonrpc") {
+    return String(cfg.dsh_model || defaults?.dsh_model || "").trim() || "默认";
   }
   return String(cfg.cursor_model || defaults?.cursor_model || "").trim() || "默认";
 }
@@ -877,6 +885,15 @@ function App() {
     cursor_model: "",
     claude_model: "",
     openai_model: "",
+    node_bin: "node",
+    dsh_entry: "",
+    dsh_profile: "jsonrpc",
+    dsh_provider: "kuaidi100",
+    dsh_model: "",
+    dsh_timeout: 600,
+    dsh_ttl_seconds: 300,
+    dsh_max_warm: 3,
+    dsh_home: "",
     memory_enabled: false,
     memory_gui_bind_enabled: false,
   });
@@ -1282,6 +1299,15 @@ function App() {
       cursor_model: String(defaults.cursor_model || ""),
       claude_model: String(defaults.claude_model || ""),
       openai_model: String(defaults.openai_model || ""),
+      node_bin: pick("node_bin", "node"),
+      dsh_entry: String(defaults.dsh_entry || ""),
+      dsh_profile: pick("dsh_profile", "jsonrpc"),
+      dsh_provider: pick("dsh_provider", "kuaidi100"),
+      dsh_model: String(defaults.dsh_model || ""),
+      dsh_timeout: Number(defaults.dsh_timeout ?? 600) || 600,
+      dsh_ttl_seconds: Number(defaults.dsh_ttl_seconds ?? 300) || 300,
+      dsh_max_warm: Number(defaults.dsh_max_warm ?? 3) || 3,
+      dsh_home: String(defaults.dsh_home || ""),
       memory_enabled: Boolean(
         ((defaults.memory as Record<string, unknown> | undefined)?.enabled ?? false) === true,
       ),
@@ -2019,6 +2045,15 @@ function App() {
         defaults.cursor_model = cliForm.cursor_model.trim();
         defaults.claude_model = cliForm.claude_model.trim();
         defaults.openai_model = cliForm.openai_model.trim();
+        defaults.node_bin = cliForm.node_bin.trim() || "node";
+        defaults.dsh_entry = cliForm.dsh_entry.trim();
+        defaults.dsh_profile = cliForm.dsh_profile.trim() || "jsonrpc";
+        defaults.dsh_provider = cliForm.dsh_provider.trim() || "kuaidi100";
+        defaults.dsh_model = cliForm.dsh_model.trim();
+        defaults.dsh_timeout = cliForm.dsh_timeout || 600;
+        defaults.dsh_ttl_seconds = cliForm.dsh_ttl_seconds || 300;
+        defaults.dsh_max_warm = cliForm.dsh_max_warm || 3;
+        defaults.dsh_home = cliForm.dsh_home.trim();
         const prevMem = {
           ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
             string,
@@ -2533,6 +2568,101 @@ function App() {
                       </span>
                     ) : null}
                   </div>
+                </div>
+              </div>
+
+              <div className="card soft pad settings-group" data-testid="group-dsh">
+                <h3 className="section-inline">DSH（DeepSeek Harness）</h3>
+                <p className="group-desc">
+                  每模型一个共享进程池 + resume 插件；node 直调 bin.js，工作目录按会话隔离
+                </p>
+                <div className="form-grid">
+                  <label className="full">
+                    DSH CLI 入口（dsh_entry）
+                    <input
+                      data-testid="dsh-entry"
+                      value={cliForm.dsh_entry}
+                      onChange={(e) => setCliForm({ ...cliForm, dsh_entry: e.target.value })}
+                      placeholder="留空自动从 ~/.dsh 定位 dsh 包 bin.js"
+                    />
+                  </label>
+                  <label>
+                    Node 可执行（node_bin）
+                    <input
+                      data-testid="dsh-node-bin"
+                      value={cliForm.node_bin}
+                      onChange={(e) => setCliForm({ ...cliForm, node_bin: e.target.value })}
+                      placeholder="node 或绝对路径"
+                    />
+                  </label>
+                  <label>
+                    Profile（dsh_profile）
+                    <input
+                      data-testid="dsh-profile"
+                      value={cliForm.dsh_profile}
+                      onChange={(e) => setCliForm({ ...cliForm, dsh_profile: e.target.value })}
+                      placeholder="jsonrpc"
+                    />
+                  </label>
+                  <label>
+                    Provider（dsh_provider）
+                    <input
+                      data-testid="dsh-provider"
+                      value={cliForm.dsh_provider}
+                      onChange={(e) => setCliForm({ ...cliForm, dsh_provider: e.target.value })}
+                      placeholder="kuaidi100"
+                    />
+                  </label>
+                  <label>
+                    DSH 家目录（dsh_home）
+                    <input
+                      data-testid="dsh-home"
+                      value={cliForm.dsh_home}
+                      onChange={(e) => setCliForm({ ...cliForm, dsh_home: e.target.value })}
+                      placeholder="留空默认 ~/.dsh"
+                    />
+                  </label>
+                  <label>
+                    默认模型（dsh_model）
+                    <input
+                      data-testid="dsh-model"
+                      value={cliForm.dsh_model}
+                      onChange={(e) => setCliForm({ ...cliForm, dsh_model: e.target.value })}
+                      placeholder="deepseek-v4-flash"
+                    />
+                  </label>
+                  <label>
+                    单轮超时秒（dsh_timeout）
+                    <input
+                      type="number"
+                      data-testid="dsh-timeout"
+                      value={cliForm.dsh_timeout}
+                      onChange={(e) => setCliForm({ ...cliForm, dsh_timeout: Number(e.target.value) || 0 })}
+                      placeholder="600"
+                    />
+                  </label>
+                  <label>
+                    空闲回收秒（dsh_ttl_seconds）
+                    <input
+                      type="number"
+                      data-testid="dsh-ttl-seconds"
+                      value={cliForm.dsh_ttl_seconds}
+                      onChange={(e) =>
+                        setCliForm({ ...cliForm, dsh_ttl_seconds: Number(e.target.value) || 0 })
+                      }
+                      placeholder="300"
+                    />
+                  </label>
+                  <label>
+                    池进程上限（dsh_max_warm）
+                    <input
+                      type="number"
+                      data-testid="dsh-max-warm"
+                      value={cliForm.dsh_max_warm}
+                      onChange={(e) => setCliForm({ ...cliForm, dsh_max_warm: Number(e.target.value) || 0 })}
+                      placeholder="3"
+                    />
+                  </label>
                 </div>
               </div>
 

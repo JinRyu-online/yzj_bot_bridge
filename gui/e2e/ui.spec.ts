@@ -32,6 +32,15 @@ async function installTauriMock(
           projects_root: "~",
           session_mode: "shared",
           cursor_model: "",
+          node_bin: "node",
+          dsh_entry: "",
+          dsh_profile: "jsonrpc",
+          dsh_provider: "kuaidi100",
+          dsh_model: "",
+          dsh_timeout: 600,
+          dsh_ttl_seconds: 300,
+          dsh_max_warm: 3,
+          dsh_home: "",
           memory: { enabled: false, gui_bind_enabled: false },
         },
         bots: [
@@ -806,6 +815,36 @@ test("AI 设置：Cursor 模型下拉与 OpenAI 连通性", async ({ page }) => 
   await expect(
     page.getByTestId("openai-model-global-menu").getByRole("option", { name: "gpt-4o-mini" }),
   ).toBeVisible();
+});
+
+test("AI 设置：DSH 配置区默认值与保存回读", async ({ page }) => {
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("group-dsh")).toBeVisible();
+  // 默认值来自 mock defaults（与 Go config.defaultMap 一致）。
+  await expect(page.getByTestId("dsh-entry")).toHaveValue("");
+  await expect(page.getByTestId("dsh-node-bin")).toHaveValue("node");
+  await expect(page.getByTestId("dsh-profile")).toHaveValue("jsonrpc");
+  await expect(page.getByTestId("dsh-provider")).toHaveValue("kuaidi100");
+  await expect(page.getByTestId("dsh-model")).toHaveValue("");
+  await expect(page.getByTestId("dsh-timeout")).toHaveValue("600");
+  await expect(page.getByTestId("dsh-ttl-seconds")).toHaveValue("300");
+  await expect(page.getByTestId("dsh-max-warm")).toHaveValue("3");
+  await expect(page.getByTestId("dsh-home")).toHaveValue("");
+  // 修改并保存 → 回读保持。
+  await page.getByTestId("dsh-entry").fill("C:\\dsh\\bin.js");
+  await page.getByTestId("dsh-model").fill("deepseek-v4-flash");
+  await page.getByTestId("dsh-timeout").fill("120");
+  await page.getByTestId("dsh-ttl-seconds").fill("60");
+  await page.getByTestId("dsh-max-warm").fill("2");
+  await page.getByTestId("dsh-home").fill("D:\\dsh-home");
+  await page.getByTestId("save-settings").click();
+  await expect(page.getByTestId("save-toast")).toBeVisible();
+  await expect(page.getByTestId("dsh-entry")).toHaveValue("C:\\dsh\\bin.js");
+  await expect(page.getByTestId("dsh-model")).toHaveValue("deepseek-v4-flash");
+  await expect(page.getByTestId("dsh-timeout")).toHaveValue("120");
+  await expect(page.getByTestId("dsh-ttl-seconds")).toHaveValue("60");
+  await expect(page.getByTestId("dsh-max-warm")).toHaveValue("2");
+  await expect(page.getByTestId("dsh-home")).toHaveValue("D:\\dsh-home");
 });
 
 test("帮助页含简介与 GitHub 入口", async ({ page }) => {
