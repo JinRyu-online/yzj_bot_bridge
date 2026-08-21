@@ -943,7 +943,6 @@ function App() {
     cursor_bin: "agent",
     claude_bin: "claude",
     cursor_api_key: "",
-    anthropic_api_key: "",
     openai_api_key: "",
     openai_base_url: "",
     projects_root: "~",
@@ -1467,7 +1466,6 @@ function App() {
       cursor_bin: pick("cursor_bin", "agent"),
       claude_bin: pick("claude_bin", "claude"),
       cursor_api_key: String(defaults.cursor_api_key || ""),
-      anthropic_api_key: String(defaults.anthropic_api_key || ""),
       openai_api_key: String(defaults.openai_api_key || ""),
       openai_base_url: String(defaults.openai_base_url || ""),
       projects_root: pick("projects_root", "~"),
@@ -2219,7 +2217,6 @@ function App() {
         defaults.cursor_bin = cliForm.cursor_bin.trim() || "agent";
         defaults.claude_bin = cliForm.claude_bin.trim() || "claude";
         defaults.cursor_api_key = cliForm.cursor_api_key.trim();
-        defaults.anthropic_api_key = cliForm.anthropic_api_key.trim();
         defaults.openai_api_key = cliForm.openai_api_key.trim();
         defaults.openai_base_url = cliForm.openai_base_url.trim();
         delete defaults.workspace;
@@ -2838,15 +2835,6 @@ function App() {
                             "未找到 Claude Code，可一键打开终端安装"}
                       </FadingHint>
                     ) : null}
-                  </label>
-                  <label className="full">
-                    API Key（anthropic_api_key）
-                    <SecretInput
-                      testId="anthropic-api-key"
-                      value={cliForm.anthropic_api_key}
-                      onChange={(v) => setCliForm({ ...cliForm, anthropic_api_key: v })}
-                      placeholder="ANTHROPIC_API_KEY"
-                    />
                   </label>
                   <div className="field">
                     <span className="field-label">默认模型</span>
