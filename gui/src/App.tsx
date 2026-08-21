@@ -2509,11 +2509,7 @@ function App() {
                             cursorDiscover.install?.hint ||
                             "未找到 Cursor CLI，可一键打开终端安装"}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </label>
                   <label className="full">
                     API Key（cursor_api_key）
@@ -2551,11 +2547,7 @@ function App() {
                       <span className="field-hint error" data-testid="cursor-models-hint">
                         {cursorModelsHint}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -2609,11 +2601,7 @@ function App() {
                             dshDiscover.install?.hint ||
                             "未找到 DSH CLI，可一键打开终端安装"}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </label>
                   <label className="full">
                     Node 可执行（node_bin）
@@ -2658,11 +2646,7 @@ function App() {
                             nodeDiscover.install?.hint ||
                             "未找到 Node，可一键打开终端安装"}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </label>
                   <div className="field">
                     <span className="field-label">默认模型</span>
@@ -2691,11 +2675,7 @@ function App() {
                       <span className="field-hint error" data-testid="dsh-models-hint">
                         {dshModelsHint}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -2811,11 +2791,7 @@ function App() {
                             claudeDiscover.install?.hint ||
                             "未找到 Claude Code，可一键打开终端安装"}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </label>
                   <label className="full">
                     API Key（anthropic_api_key）
@@ -2853,11 +2829,7 @@ function App() {
                       <span className="field-hint error" data-testid="claude-models-hint">
                         {claudeModelsHint}
                       </span>
-                    ) : (
-                      <span className="field-hint spacer" aria-hidden="true">
-                        &nbsp;
-                      </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>

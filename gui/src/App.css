@@ -1260,11 +1260,6 @@ textarea {
   border-color: rgba(110, 150, 190, 0.32);
 }
 
-.field-hint.spacer {
-  visibility: hidden;
-  user-select: none;
-}
-
 .boot-overlay {
   position: fixed;
   inset: 0;
