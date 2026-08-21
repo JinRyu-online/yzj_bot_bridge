@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useToast } from "./toast";
 
 type Field = {
   manual?: string;
@@ -54,6 +55,7 @@ function formatSeen(iso?: string): string {
 }
 
 export function MemoryPage({ api, ready }: Props) {
+  const { showToast } = useToast();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selected, setSelected] = useState<Profile | null>(null);
   const [error, setError] = useState("");
@@ -69,26 +71,38 @@ export function MemoryPage({ api, ready }: Props) {
     notes: "",
   });
 
-  const refresh = useCallback(async () => {
-    if (!ready) return;
-    setError("");
-    setRefreshing(true);
-    try {
-      const raw = await api("GET", "/v1/memory/profiles");
-      const data = JSON.parse(raw) as { profiles?: Profile[] };
-      const list = data.profiles || [];
-      setProfiles(list);
-      setSelected((prev) => {
-        if (!prev) return null;
-        return list.find((p) => p.open_id === prev.open_id) || null;
-      });
-    } finally {
-      setRefreshing(false);
-    }
-  }, [api, ready]);
+  const refresh = useCallback(
+    async (opts?: { notify?: boolean }) => {
+      if (!ready) return;
+      const notify = !!opts?.notify;
+      setError("");
+      setRefreshing(true);
+      try {
+        const raw = await api("GET", "/v1/memory/profiles");
+        const data = JSON.parse(raw) as { profiles?: Profile[] };
+        const list = data.profiles || [];
+        setProfiles(list);
+        setSelected((prev) => {
+          if (!prev) return null;
+          return list.find((p) => p.open_id === prev.open_id) || null;
+        });
+        if (notify) showToast(`已刷新记忆（${list.length}）`, "ok");
+      } catch (e) {
+        const msg = String(e);
+        setError(msg);
+        if (notify) showToast(`刷新失败：${msg}`, "err");
+        throw e;
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [api, ready, showToast],
+  );
 
   useEffect(() => {
-    void refresh().catch((e) => setError(String(e)));
+    void refresh().catch(() => {
+      /* initial load errors stay in page error bar */
+    });
   }, [refresh]);
 
   useEffect(() => {
@@ -134,8 +148,11 @@ export function MemoryPage({ api, ready }: Props) {
       const p = JSON.parse(raw) as Profile;
       setSelected(p);
       await refresh();
+      showToast("手动字段已保存", "ok");
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      showToast(`保存失败：${msg}`, "err");
     } finally {
       setBusy(false);
     }
@@ -151,8 +168,11 @@ export function MemoryPage({ api, ready }: Props) {
       );
       setSelected(JSON.parse(raw) as Profile);
       await refresh();
+      showToast("已重置推断字段", "ok");
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      showToast(`重置失败：${msg}`, "err");
     } finally {
       setBusy(false);
     }
@@ -164,8 +184,11 @@ export function MemoryPage({ api, ready }: Props) {
     try {
       await api("POST", `/v1/memory/profiles/${encodeURIComponent(selected.open_id)}/run`);
       await refresh();
+      showToast("画像任务已触发", "ok");
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      showToast(`画像失败：${msg}`, "err");
     } finally {
       setBusy(false);
     }
@@ -182,8 +205,11 @@ export function MemoryPage({ api, ready }: Props) {
       );
       setSelected(null);
       await refresh();
+      showToast("档案已删除", "ok");
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      showToast(`删除失败：${msg}`, "err");
     } finally {
       setBusy(false);
     }
@@ -199,8 +225,11 @@ export function MemoryPage({ api, ready }: Props) {
         { fields: { [field]: locked } },
       );
       setSelected(JSON.parse(raw) as Profile);
+      showToast(locked ? "字段已锁定" : "字段已解锁", "ok");
     } catch (e) {
-      setError(String(e));
+      const msg = String(e);
+      setError(msg);
+      showToast(`锁定失败：${msg}`, "err");
     } finally {
       setBusy(false);
     }
@@ -219,7 +248,7 @@ export function MemoryPage({ api, ready }: Props) {
             className={`action-chip${refreshing ? " loading" : ""}`}
             disabled={refreshing || !ready}
             data-testid="memory-refresh"
-            onClick={() => void refresh().catch((e) => setError(String(e)))}
+            onClick={() => void refresh({ notify: true })}
           >
             {refreshing ? <span className="spinner dark" /> : null}
             <span>{refreshing ? "刷新中" : "刷新"}</span>
@@ -349,7 +378,7 @@ export function MemoryPage({ api, ready }: Props) {
                       <span>{label}</span>
                       <button
                         type="button"
-                        className={`btn ghost tiny${field?.locked ? " memory-lock-on" : ""}`}
+                        className={`btn ghost xs${field?.locked ? " memory-lock-on" : ""}`}
                         data-testid={`memory-lock-${key}`}
                         disabled={busy}
                         onClick={() => void toggleLock(key, !field?.locked)}
@@ -376,12 +405,13 @@ export function MemoryPage({ api, ready }: Props) {
               <div className="memory-actions">
                 <button
                   type="button"
-                  className="btn"
+                  className={`btn${busy ? " loading" : ""}`}
                   data-testid="memory-save"
                   disabled={busy}
                   onClick={() => void savePatch()}
                 >
-                  保存手动字段
+                  {busy ? <span className="spinner dark" /> : null}
+                  <span>保存手动字段</span>
                 </button>
                 <button
                   type="button"

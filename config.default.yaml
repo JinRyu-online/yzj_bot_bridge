@@ -59,7 +59,7 @@ defaults:
     openai_base_url: ""
     openai_api_key: ""
     timeout: 0                          # 空/0=复用 openai_timeout
-    gui_bind_enabled: false             # GUI 聊天绑定真人 openID 后才走记忆
+    gui_bind_enabled: false             # GUI 聊天可选记忆档案用户，绑定真人 openID 后才走记忆
 
 groups:
   - id: default

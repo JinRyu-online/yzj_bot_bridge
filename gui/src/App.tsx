@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { ChatPage } from "./ChatPage";
 import { FancySelect } from "./FancySelect";
 import { MemoryPage } from "./MemoryPage";
+import { useToast } from "./toast";
 import { findWebhookConflict } from "./webhookUnique";
 import "./App.css";
 
@@ -818,8 +819,7 @@ function App() {
   const [loadingAuto, setLoadingAuto] = useState(false);
   const [loadingReload, setLoadingReload] = useState(false);
   const [savingCli, setSavingCli] = useState(false);
-  const [saveToast, setSaveToast] = useState("");
-  const saveToastTimer = useRef<number | null>(null);
+  const { showToast } = useToast();
   const [closeToTray, setCloseToTray] = useState(true);
   const [loadingCloseTray, setLoadingCloseTray] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -921,15 +921,6 @@ function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, [botModal, channelModal, updateModal, updatingApp]);
 
-  const showToast = useCallback((msg: string) => {
-    if (saveToastTimer.current) window.clearTimeout(saveToastTimer.current);
-    setSaveToast(msg);
-    saveToastTimer.current = window.setTimeout(() => {
-      setSaveToast("");
-      saveToastTimer.current = null;
-    }, 2200);
-  }, []);
-
   const runCheckForUpdate = useCallback(async (force: boolean) => {
     const info = await invoke<UpdateCheckResult>("check_for_update", { force });
     if (info.available) {
@@ -947,12 +938,12 @@ function App() {
         return;
       }
       if (info.message?.trim()) {
-        showToast(info.message.trim());
+        showToast(info.message.trim(), "ok");
         return;
       }
-      showToast(`已是最新（v${info.currentVersion || appVersion || "?"}）`);
+      showToast(`已是最新（v${info.currentVersion || appVersion || "?"}）`, "ok");
     } catch (e) {
-      showToast(`检查更新失败：${e}`);
+      showToast(`检查更新失败：${e}`, "err");
     } finally {
       setCheckingUpdate(false);
     }
@@ -966,9 +957,9 @@ function App() {
     try {
       await invoke("set_skipped_update_version", { version: updateInfo.latestVersion });
       setUpdateModal(false);
-      showToast(`已跳过 v${updateInfo.latestVersion}`);
+      showToast(`已跳过 v${updateInfo.latestVersion}`, "ok");
     } catch (e) {
-      showToast(`跳过失败：${e}`);
+      showToast(`跳过失败：${e}`, "err");
     }
   }, [showToast, updateInfo]);
 
@@ -979,7 +970,7 @@ function App() {
       await invoke("download_and_launch_update", { downloadUrl: updateInfo.downloadUrl });
     } catch (e) {
       setUpdatingApp(false);
-      showToast(`更新失败：${e}`);
+      showToast(`更新失败：${e}`, "err");
     }
   }, [showToast, updateInfo]);
 
@@ -1041,7 +1032,8 @@ function App() {
     setError(lastErr || "桥启动超时，请检查 yzj-bridge.exe 与 ~/.yzj-bridge/config.yaml");
   }, []);
 
-  const refreshCursorModels = useCallback(async () => {
+  const refreshCursorModels = useCallback(async (opts?: { notify?: boolean }) => {
+    const notify = !!opts?.notify;
     setLoadingCursorModels(true);
     setCursorModelsHint("");
     try {
@@ -1052,22 +1044,31 @@ function App() {
         error?: string;
       };
       if (data.ok === false) {
-        setCursorModelsHint(data.error || "拉取 Cursor 模型失败");
+        const msg = data.error || "拉取 Cursor 模型失败";
+        setCursorModelsHint(msg);
+        if (notify) showToast(msg, "err");
         return;
       }
       const list = (data.models || []).map((m) => ({ id: m.id, label: m.label || m.id }));
       setCursorModels(list);
-      if (!list.length) setCursorModelsHint("未解析到模型列表");
-      else void guiLog(`拉取 Cursor 模型 ${list.length} 个`);
+      if (!list.length) {
+        setCursorModelsHint("未解析到模型列表");
+        if (notify) showToast("未解析到 Cursor 模型列表", "neutral");
+      } else {
+        void guiLog(`拉取 Cursor 模型 ${list.length} 个`);
+        if (notify) showToast(`已拉取 ${list.length} 个 Cursor 模型`, "ok");
+      }
     } catch (e) {
       setCursorModelsHint(String(e));
       void guiLog(`拉取 Cursor 模型失败: ${e}`, "ERROR");
+      if (notify) showToast(`拉取 Cursor 模型失败：${e}`, "err");
     } finally {
       setLoadingCursorModels(false);
     }
-  }, []);
+  }, [showToast]);
 
-  const refreshClaudeModels = useCallback(async () => {
+  const refreshClaudeModels = useCallback(async (opts?: { notify?: boolean }) => {
+    const notify = !!opts?.notify;
     setLoadingClaudeModels(true);
     setClaudeModelsHint("");
     try {
@@ -1079,28 +1080,40 @@ function App() {
         warning?: string;
       };
       if (data.ok === false) {
-        setClaudeModelsHint(data.error || "拉取 Claude 模型失败");
+        const msg = data.error || "拉取 Claude 模型失败";
+        setClaudeModelsHint(msg);
+        if (notify) showToast(msg, "err");
         return;
       }
       const list = (data.models || []).map((m) => ({ id: m.id, label: m.label || m.id }));
       setClaudeModels(list);
-      if (data.warning) setClaudeModelsHint(data.warning);
-      else if (!list.length) setClaudeModelsHint("未解析到模型列表");
-      else void guiLog(`拉取 Claude 模型 ${list.length} 个`);
+      if (data.warning) {
+        setClaudeModelsHint(data.warning);
+        if (notify) showToast(data.warning, "neutral");
+      } else if (!list.length) {
+        setClaudeModelsHint("未解析到模型列表");
+        if (notify) showToast("未解析到 Claude 模型列表", "neutral");
+      } else {
+        void guiLog(`拉取 Claude 模型 ${list.length} 个`);
+        if (notify) showToast(`已拉取 ${list.length} 个 Claude 模型`, "ok");
+      }
     } catch (e) {
       setClaudeModelsHint(String(e));
       void guiLog(`拉取 Claude 模型失败: ${e}`, "ERROR");
+      if (notify) showToast(`拉取 Claude 模型失败：${e}`, "err");
     } finally {
       setLoadingClaudeModels(false);
     }
-  }, []);
+  }, [showToast]);
 
   const discoverCli = useCallback(
-    async (engine: "cursor" | "claude", opts?: { autofill?: boolean }) => {
+    async (engine: "cursor" | "claude", opts?: { autofill?: boolean; notify?: boolean }) => {
       const autofill = opts?.autofill !== false;
+      const notify = !!opts?.notify;
       const setBusy = engine === "cursor" ? setDiscoveringCursor : setDiscoveringClaude;
       const setResult = engine === "cursor" ? setCursorDiscover : setClaudeDiscover;
       const currentBin = engine === "cursor" ? cliForm.cursor_bin : cliForm.claude_bin;
+      const label = engine === "cursor" ? "Cursor CLI" : "Claude Code";
       setBusy(true);
       try {
         const raw = await api("POST", "/v1/backends/cli/discover", {
@@ -1138,36 +1151,51 @@ function App() {
             void guiLog(`自动填入 ${engine} 路径: ${data.path}`);
           }
         }
+        if (notify) {
+          if (data.found) {
+            showToast(
+              data.version ? `已找到 ${label}（${data.version}）` : `已找到 ${label}`,
+              "ok",
+            );
+          } else {
+            showToast(data.message?.trim() || `未找到 ${label}`, "err");
+          }
+        }
         return data;
       } catch (e) {
         setResult({
           found: false,
           message: String(e),
         });
+        if (notify) showToast(`探测 ${label} 失败：${e}`, "err");
         return null;
       } finally {
         setBusy(false);
       }
     },
-    [cliForm.cursor_bin, cliForm.claude_bin],
+    [cliForm.cursor_bin, cliForm.claude_bin, showToast],
   );
 
   const openCliInstall = useCallback(async (engine: "cursor" | "claude") => {
     const setBusy = engine === "cursor" ? setInstallingCursor : setInstallingClaude;
+    const label = engine === "cursor" ? "Cursor CLI" : "Claude Code";
     setBusy(true);
     try {
       await invoke("open_cli_install_terminal", { engine });
-      void guiLog(`已打开 ${engine === "cursor" ? "Cursor CLI" : "Claude Code"} 安装终端`);
+      void guiLog(`已打开 ${label} 安装终端`);
+      showToast(`已打开 ${label} 安装终端`, "ok");
     } catch (e) {
       setError(String(e));
       void guiLog(`打开安装终端失败: ${e}`, "ERROR");
+      showToast(`打开安装终端失败：${e}`, "err");
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [showToast]);
 
   const probeOpenai = useCallback(
-    async (baseURL?: string, apiKey?: string) => {
+    async (baseURL?: string, apiKey?: string, opts?: { notify?: boolean }) => {
+      const notify = !!opts?.notify;
       setProbingOpenai(true);
       setOpenaiProbeInfo("");
       setOpenaiProbeOk(null);
@@ -1185,8 +1213,10 @@ function App() {
         };
         if (!data.ok) {
           setOpenaiProbeOk(false);
-          setOpenaiProbeInfo(data.error || "连通性测试失败");
-          void guiLog(`OpenAI 连通失败: ${data.error || "未知错误"}`, "ERROR");
+          const msg = data.error || "连通性测试失败";
+          setOpenaiProbeInfo(msg);
+          void guiLog(`OpenAI 连通失败: ${msg}`, "ERROR");
+          if (notify) showToast(msg, "err");
           return false;
         }
         const models = (data.models || []).map((m) => ({
@@ -1195,19 +1225,22 @@ function App() {
         }));
         setOpenaiModels(models);
         setOpenaiProbeOk(true);
-        setOpenaiProbeInfo(`连通成功 · ${data.latency_ms ?? 0}ms · ${models.length} 个模型`);
+        const okMsg = `连通成功 · ${data.latency_ms ?? 0}ms · ${models.length} 个模型`;
+        setOpenaiProbeInfo(okMsg);
         void guiLog(`OpenAI 连通成功 · ${models.length} 个模型 · ${data.latency_ms ?? 0}ms`);
+        if (notify) showToast(okMsg, "ok");
         return true;
       } catch (e) {
         setOpenaiProbeOk(false);
         setOpenaiProbeInfo(String(e));
         void guiLog(`OpenAI 连通失败: ${e}`, "ERROR");
+        if (notify) showToast(`OpenAI 连通失败：${e}`, "err");
         return false;
       } finally {
         setProbingOpenai(false);
       }
     },
-    [cliForm.openai_base_url, cliForm.openai_api_key],
+    [cliForm.openai_base_url, cliForm.openai_api_key, showToast],
   );
 
   const refreshStatus = useCallback(async () => {
@@ -1259,18 +1292,25 @@ function App() {
     });
   }, []);
 
-  const refreshSkills = useCallback(async () => {
+  const refreshSkills = useCallback(async (opts?: { notify?: boolean }) => {
+    const notify = !!opts?.notify;
+    setSkillsBusy(true);
     try {
       const installedRaw = await api("GET", "/v1/skills");
       const installed = JSON.parse(installedRaw) as { skills?: SkillInfo[] };
       setInstalledSkills(installed.skills || []);
+      if (notify) showToast(`已刷新 Skills（${(installed.skills || []).length}）`, "ok");
     } catch (e) {
+      const msg = String(e);
       setSkillsPageError((prev) => ({
-        text: String(e),
+        text: msg,
         seq: (prev?.seq ?? 0) + 1,
       }));
+      if (notify) showToast(`刷新 Skills 失败：${msg}`, "err");
+    } finally {
+      setSkillsBusy(false);
     }
-  }, []);
+  }, [showToast]);
 
   const openInstalledSkill = useCallback(async (sk: SkillInfo) => {
     try {
@@ -1285,12 +1325,14 @@ function App() {
       }
       await openLocalPath(dir);
     } catch (e) {
+      const msg = String(e);
       setSkillsPageError((prev) => ({
-        text: String(e),
+        text: msg,
         seq: (prev?.seq ?? 0) + 1,
       }));
+      showToast(msg, "err");
     }
-  }, []);
+  }, [showToast]);
 
   const installSkillFromPath = useCallback(
     async (rawPath: string) => {
@@ -1303,16 +1345,19 @@ function App() {
         setSkillInstallPath("");
         await refreshSkills();
         void guiLog(`导入 Skill（${source}） ${p}`);
+        showToast("Skill 导入成功", "ok");
       } catch (e) {
+        const msg = String(e);
         setSkillsPageError((prev) => ({
-          text: String(e),
+          text: msg,
           seq: (prev?.seq ?? 0) + 1,
         }));
+        showToast(`导入失败：${msg}`, "err");
       } finally {
         setSkillsBusy(false);
       }
     },
-    [refreshSkills],
+    [refreshSkills, showToast],
   );
 
   useEffect(() => {
@@ -1616,9 +1661,11 @@ function App() {
         await api("POST", "/v1/reload?keep_wss_state=1");
         await Promise.all([refreshStatus(), refreshConfig()]);
         void guiLog("热重载配置完成");
+        showToast("配置已重载", "ok");
       } catch (e) {
         setError(String(e));
         void guiLog(`热重载失败: ${e}`, "ERROR");
+        showToast(`热重载失败：${e}`, "err");
       }
     });
   }
@@ -1634,6 +1681,7 @@ function App() {
       await invoke("reveal_path", { path: paths.config });
     } catch (e) {
       setError(String(e));
+      showToast(`打开路径失败：${e}`, "err");
     }
   }
 
@@ -1802,10 +1850,12 @@ function App() {
       await saveConfig({ ...rawConfig, bots });
     } catch (e) {
       flashBotModalError(String(e));
+      showToast(`保存失败：${e}`, "err");
       return;
     }
     setBotModal(null);
     setSelected(String(payload.id));
+    showToast(botModal === "create" ? "机器人已创建" : "机器人已保存", "ok");
     void guiLog(
       botModal === "create"
         ? `新建机器人 ${payload.id}（backend=${payload.backend}）`
@@ -1816,12 +1866,17 @@ function App() {
   async function deleteBot() {
     if (!rawConfig || !selectedRoleId) return;
     if (!confirm(`确认删除机器人 ${selectedRoleId}？`)) return;
-    const bots = ((rawConfig.bots as Record<string, unknown>[]) || []).filter(
-      (b) => String(b.id) !== selectedRoleId,
-    );
-    await saveConfig({ ...rawConfig, bots });
-    setSelected("");
-    void guiLog(`删除机器人 ${selectedRoleId}`, "WARN");
+    try {
+      const bots = ((rawConfig.bots as Record<string, unknown>[]) || []).filter(
+        (b) => String(b.id) !== selectedRoleId,
+      );
+      await saveConfig({ ...rawConfig, bots });
+      setSelected("");
+      void guiLog(`删除机器人 ${selectedRoleId}`, "WARN");
+      showToast(`已删除机器人 ${selectedRoleId}`, "ok");
+    } catch (e) {
+      showToast(`删除失败：${e}`, "err");
+    }
   }
 
   function openAddChannel() {
@@ -1901,8 +1956,15 @@ function App() {
     delete bot.group;
     delete bot.send_msg_url;
     bots[idx] = bot;
-    await saveConfig({ ...rawConfig, bots });
+    try {
+      await saveConfig({ ...rawConfig, bots });
+    } catch (e) {
+      flashChannelModalError(String(e));
+      showToast(`保存失败：${e}`, "err");
+      return;
+    }
     setChannelModal(false);
+    showToast(editingChannelIdx === null ? "通道已添加" : "通道已保存", "ok");
     void guiLog(
       editingChannelIdx === null
         ? `机器人 ${selectedRoleId} 新增通道 ${entry.group}`
@@ -1914,6 +1976,7 @@ function App() {
     if (!rawConfig || !selectedRoleConfig) return;
     if (selectedChannels.length <= 1) {
       setError("至少保留一个通道");
+      showToast("至少保留一个通道", "err");
       return;
     }
     if (!confirm("确认删除该通道？")) return;
@@ -1928,41 +1991,51 @@ function App() {
     delete bot.group;
     delete bot.send_msg_url;
     bots[bidx] = bot;
-    await saveConfig({ ...rawConfig, bots });
-    void guiLog(`机器人 ${selectedRoleId} 删除通道 ${removed}`, "WARN");
+    try {
+      await saveConfig({ ...rawConfig, bots });
+      void guiLog(`机器人 ${selectedRoleId} 删除通道 ${removed}`, "WARN");
+      showToast(`已删除通道 ${removed}`, "ok");
+    } catch (e) {
+      showToast(`删除通道失败：${e}`, "err");
+    }
   }
 
   async function saveCliSettings() {
     if (!rawConfig) return;
     await withMinLoading(setSavingCli, async () => {
-      const defaults = { ...((rawConfig.defaults as Record<string, unknown>) || {}) };
-      defaults.cursor_bin = cliForm.cursor_bin.trim() || "agent";
-      defaults.claude_bin = cliForm.claude_bin.trim() || "claude";
-      defaults.cursor_api_key = cliForm.cursor_api_key.trim();
-      defaults.anthropic_api_key = cliForm.anthropic_api_key.trim();
-      defaults.openai_api_key = cliForm.openai_api_key.trim();
-      defaults.openai_base_url = cliForm.openai_base_url.trim();
-      delete defaults.workspace;
-      delete defaults.cursor_workspace;
-      delete defaults.claude_workspace;
-      defaults.projects_root = cliForm.projects_root.trim() || "~";
-      // 引擎模型分字段保存，不写共享 defaults.model，避免 Cursor/Claude/OpenAI 互相覆盖。
-      defaults.cursor_model = cliForm.cursor_model.trim();
-      defaults.claude_model = cliForm.claude_model.trim();
-      defaults.openai_model = cliForm.openai_model.trim();
-      const prevMem = {
-        ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
-          string,
-          unknown
-        >),
-      };
-      prevMem.enabled = cliForm.memory_enabled;
-      prevMem.gui_bind_enabled = cliForm.memory_gui_bind_enabled;
-      defaults.memory = prevMem;
-      await saveConfig({ ...rawConfig, defaults });
-      await refreshConfig();
-      showToast("设置已保存");
-      void guiLog("保存 AI 设置成功");
+      try {
+        const defaults = { ...((rawConfig.defaults as Record<string, unknown>) || {}) };
+        defaults.cursor_bin = cliForm.cursor_bin.trim() || "agent";
+        defaults.claude_bin = cliForm.claude_bin.trim() || "claude";
+        defaults.cursor_api_key = cliForm.cursor_api_key.trim();
+        defaults.anthropic_api_key = cliForm.anthropic_api_key.trim();
+        defaults.openai_api_key = cliForm.openai_api_key.trim();
+        defaults.openai_base_url = cliForm.openai_base_url.trim();
+        delete defaults.workspace;
+        delete defaults.cursor_workspace;
+        delete defaults.claude_workspace;
+        defaults.projects_root = cliForm.projects_root.trim() || "~";
+        // 引擎模型分字段保存，不写共享 defaults.model，避免 Cursor/Claude/OpenAI 互相覆盖。
+        defaults.cursor_model = cliForm.cursor_model.trim();
+        defaults.claude_model = cliForm.claude_model.trim();
+        defaults.openai_model = cliForm.openai_model.trim();
+        const prevMem = {
+          ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
+            string,
+            unknown
+          >),
+        };
+        prevMem.enabled = cliForm.memory_enabled;
+        prevMem.gui_bind_enabled = cliForm.memory_gui_bind_enabled;
+        defaults.memory = prevMem;
+        await saveConfig({ ...rawConfig, defaults });
+        await refreshConfig();
+        showToast("设置已保存", "ok");
+        void guiLog("保存 AI 设置成功");
+      } catch (e) {
+        showToast(`保存失败：${e}`, "err");
+        void guiLog(`保存 AI 设置失败: ${e}`, "ERROR");
+      }
     });
   }
 
@@ -1989,11 +2062,6 @@ function App() {
 
   return (
     <div className="app" data-testid="app-root">
-      {saveToast ? (
-        <div className="toast ok" data-testid="save-toast" role="status">
-          {saveToast}
-        </div>
-      ) : null}
       {(booting || !ready) && (
         <div className="boot-overlay" data-testid="boot-overlay">
           <div className="boot-card">
@@ -2195,14 +2263,15 @@ function App() {
               </div>
               <div className="head-actions">
                 <button
-                  className="btn"
+                  className={`btn${savingCli ? " loading" : ""}`}
                   data-testid="save-settings"
                   disabled={savingCli || !rawConfig}
                   onClick={async () => {
                     await saveCliSettings();
                   }}
                 >
-                  {savingCli ? "保存中…" : "保存设置"}
+                  {savingCli ? <span className="spinner dark" /> : null}
+                  <span>{savingCli ? "保存中" : "保存设置"}</span>
                 </button>
               </div>
             </header>
@@ -2225,7 +2294,7 @@ function App() {
                         className={`action-chip side${discoveringCursor ? " loading" : ""}`}
                         data-testid="discover-cursor"
                         disabled={discoveringCursor}
-                        onClick={() => void discoverCli("cursor", { autofill: true })}
+                        onClick={() => void discoverCli("cursor", { autofill: true, notify: true })}
                       >
                         {discoveringCursor ? <span className="spinner dark" /> : null}
                         <span>{discoveringCursor ? "扫描中" : "重新扫描"}</span>
@@ -2286,7 +2355,7 @@ function App() {
                         className={`action-chip side${loadingCursorModels ? " loading" : ""}`}
                         data-testid="refresh-cursor-models"
                         disabled={loadingCursorModels}
-                        onClick={() => void refreshCursorModels()}
+                        onClick={() => void refreshCursorModels({ notify: true })}
                       >
                         {loadingCursorModels ? <span className="spinner dark" /> : null}
                         <span>{loadingCursorModels ? "拉取中" : "刷新模型"}</span>
@@ -2323,7 +2392,7 @@ function App() {
                         className={`action-chip side${discoveringClaude ? " loading" : ""}`}
                         data-testid="discover-claude"
                         disabled={discoveringClaude}
-                        onClick={() => void discoverCli("claude", { autofill: true })}
+                        onClick={() => void discoverCli("claude", { autofill: true, notify: true })}
                       >
                         {discoveringClaude ? <span className="spinner dark" /> : null}
                         <span>{discoveringClaude ? "扫描中" : "重新扫描"}</span>
@@ -2384,7 +2453,7 @@ function App() {
                         className={`action-chip side${loadingClaudeModels ? " loading" : ""}`}
                         data-testid="refresh-claude-models"
                         disabled={loadingClaudeModels}
-                        onClick={() => void refreshClaudeModels()}
+                        onClick={() => void refreshClaudeModels({ notify: true })}
                       >
                         {loadingClaudeModels ? <span className="spinner dark" /> : null}
                         <span>{loadingClaudeModels ? "拉取中" : "刷新模型"}</span>
@@ -2447,7 +2516,7 @@ function App() {
                         className={`action-chip side${probingOpenai ? " loading" : ""}`}
                         data-testid="probe-openai"
                         disabled={probingOpenai}
-                        onClick={() => void probeOpenai()}
+                        onClick={() => void probeOpenai(undefined, undefined, { notify: true })}
                       >
                         {probingOpenai ? <span className="spinner dark" /> : null}
                         <span>{probingOpenai ? "测试中" : "重新测试"}</span>
@@ -2513,8 +2582,8 @@ function App() {
                 ) : null}
                 <div className="row">
                   <div className="row-text">
-                    <strong>GUI 聊天绑定 openID</strong>
-                    <span>仅调试；默认关。开启后聊天页可绑定真人 openID 走记忆</span>
+                    <strong>GUI 聊天绑定记忆用户</strong>
+                    <span>调试用，默认关。开启后聊天页可从记忆档案下拉选择用户，按真人 openID 读写记忆</span>
                   </div>
                   <Switch
                     testId="memory-gui-bind-switch"
@@ -2560,7 +2629,7 @@ function App() {
                   className={`action-chip${skillsBusy ? " loading" : ""}`}
                   disabled={skillsBusy}
                   data-testid="skills-refresh"
-                  onClick={() => void refreshSkills()}
+                  onClick={() => void refreshSkills({ notify: true })}
                 >
                   {skillsBusy ? <span className="spinner dark" /> : null}
                   <span>{skillsBusy ? "刷新中" : "刷新"}</span>
@@ -2610,7 +2679,7 @@ function App() {
                         </div>
                         <button
                           type="button"
-                          className="btn ghost tiny"
+                          className={`btn ghost xs${skillsBusy ? " loading" : ""}`}
                           disabled={skillsBusy}
                           onClick={() =>
                             void (async () => {
@@ -2619,18 +2688,22 @@ function App() {
                                 await api("DELETE", `/v1/skills/${encodeURIComponent(sk.id)}`);
                                 await refreshSkills();
                                 void guiLog(`卸载 Skill ${sk.id}`, "WARN");
+                                showToast(`已卸载 ${sk.id}`, "ok");
                               } catch (e) {
+                                const msg = String(e);
                                 setSkillsPageError((prev) => ({
-                                  text: String(e),
+                                  text: msg,
                                   seq: (prev?.seq ?? 0) + 1,
                                 }));
+                                showToast(`卸载失败：${msg}`, "err");
                               } finally {
                                 setSkillsBusy(false);
                               }
                             })()
                           }
                         >
-                          卸载
+                          {skillsBusy ? <span className="spinner dark" /> : null}
+                          <span>卸载</span>
                         </button>
                       </div>
                     ))}
@@ -2701,12 +2774,13 @@ function App() {
                   </div>
                   <button
                     type="button"
-                    className="btn"
+                    className={`btn${skillsBusy ? " loading" : ""}`}
                     data-testid="skill-import-btn"
                     disabled={skillsBusy || !skillInstallPath.trim()}
                     onClick={() => void installSkillFromPath(skillInstallPath)}
                   >
-                    导入
+                    {skillsBusy ? <span className="spinner dark" /> : null}
+                    <span>{skillsBusy ? "导入中" : "导入"}</span>
                   </button>
                 </div>
                 <span className="field-hint">
@@ -2888,6 +2962,7 @@ function App() {
                     logSeqRef.current = 0;
                     logNearBottomRef.current = true;
                     setShowLogScrollBottom(false);
+                    showToast("已清空日志视图", "ok");
                   }}
                 >
                   清空视图
@@ -3357,7 +3432,9 @@ function App() {
                             data-testid="probe-openai-bot"
                             disabled={probingOpenai}
                             onClick={() =>
-                              void probeOpenai(botForm.openai_base_url, botForm.openai_api_key)
+                              void probeOpenai(botForm.openai_base_url, botForm.openai_api_key, {
+                                notify: true,
+                              })
                             }
                           >
                             {probingOpenai ? <span className="spinner dark" /> : null}
@@ -3459,8 +3536,9 @@ function App() {
               <button className="btn ghost" onClick={() => setBotModal(null)}>
                 取消
               </button>
-              <button className="btn" data-testid="save-bot" disabled={saving} onClick={submitBot}>
-                {saving ? "保存中…" : "保存"}
+              <button className={`btn${saving ? " loading" : ""}`} data-testid="save-bot" disabled={saving} onClick={submitBot}>
+                {saving ? <span className="spinner dark" /> : null}
+                <span>{saving ? "保存中" : "保存"}</span>
               </button>
             </div>
             </div>
@@ -3566,6 +3644,7 @@ function App() {
                         void probeOpenai(
                           String(selectedRoleConfig?.openai_base_url || cliForm.openai_base_url || ""),
                           String(selectedRoleConfig?.openai_api_key || cliForm.openai_api_key || ""),
+                          { notify: true },
                         )
                       }
                     >
@@ -3580,8 +3659,9 @@ function App() {
               <button className="btn ghost" onClick={() => setChannelModal(false)}>
                 取消
               </button>
-              <button className="btn" disabled={saving} onClick={submitChannel}>
-                {saving ? "保存中…" : "保存"}
+              <button className={`btn${saving ? " loading" : ""}`} disabled={saving} onClick={submitChannel}>
+                {saving ? <span className="spinner dark" /> : null}
+                <span>{saving ? "保存中" : "保存"}</span>
               </button>
             </div>
             </div>
@@ -3635,7 +3715,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className="btn ghost"
+                className={`btn ghost${updatingApp ? " loading" : ""}`}
                 data-testid="update-skip"
                 disabled={updatingApp}
                 onClick={() => void skipUpdateVersion()}
@@ -3644,7 +3724,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className="btn"
+                className={`btn${updatingApp ? " loading" : ""}`}
                 data-testid="update-confirm"
                 disabled={updatingApp || !updateInfo.downloadUrl}
                 onClick={() => void confirmUpdate()}
@@ -3652,7 +3732,7 @@ function App() {
                 {updatingApp ? (
                   <>
                     <span className="spinner dark" />
-                    <span>下载中…</span>
+                    <span>下载中</span>
                   </>
                 ) : (
                   "立即更新"
