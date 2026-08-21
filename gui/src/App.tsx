@@ -855,6 +855,7 @@ function App() {
   const updateAutoChecked = useRef(false);
   const cursorModelsAutoTried = useRef(false);
   const claudeModelsAutoTried = useRef(false);
+  const dshModelsAutoTried = useRef(false);
   /** 已自动探测过的 OpenAI base\\nkey 指纹，变更凭据后可再次自动探测。 */
   const openaiAutoFingerprint = useRef("");
   const [cursorModels, setCursorModels] = useState<{ id: string; label: string }[]>([]);
@@ -1730,6 +1731,8 @@ function App() {
       cliDiscoverTried.current = true;
       void discoverCli("cursor");
       void discoverCli("claude");
+      void discoverCli("dsh");
+      void discoverCli("node");
     }
 
     if (!cursorModelsAutoTried.current && !loadingCursorModels) {
@@ -1745,6 +1748,16 @@ function App() {
       if (bin) {
         claudeModelsAutoTried.current = true;
         void refreshClaudeModels();
+      }
+    }
+
+    // DSH：入口与 Node 有值时自动拉一次模型（扫描结果可能异步填充 dsh_entry，
+    // 依赖数组含 dsh_entry，填充后此分支会在下一次 effect 运行中触发）。
+    if (!dshModelsAutoTried.current && !loadingDshModels) {
+      const entry = cliForm.dsh_entry.trim();
+      if (entry) {
+        dshModelsAutoTried.current = true;
+        void refreshDSHModels();
       }
     }
 
@@ -1764,13 +1777,16 @@ function App() {
     page,
     cliForm.cursor_bin,
     cliForm.claude_bin,
+    cliForm.dsh_entry,
     cliForm.openai_base_url,
     cliForm.openai_api_key,
     loadingCursorModels,
     loadingClaudeModels,
+    loadingDshModels,
     probingOpenai,
     refreshCursorModels,
     refreshClaudeModels,
+    refreshDSHModels,
     probeOpenai,
     discoverCli,
   ]);

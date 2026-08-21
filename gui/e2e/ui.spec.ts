@@ -879,14 +879,15 @@ test("AI 设置：DSH 精简卡片（入口/Node/模型）与保存回读", asyn
   await expect(page.getByTestId("dsh-ttl-seconds")).toHaveCount(0);
   await expect(page.getByTestId("dsh-max-warm")).toHaveCount(0);
   await expect(page.getByTestId("dsh-home")).toHaveCount(0);
-  // 默认值来自 mock defaults（与 Go config.defaultMap 一致）。
-  await expect(page.getByTestId("dsh-entry")).toHaveValue("");
-  await expect(page.getByTestId("dsh-node-bin")).toHaveValue("node");
-  // 扫描 DSH：mock 命中 → autofill 绝对路径 + 已找到 hint。
+  // 进入设置页自动扫描（与 Cursor CLI 一致）：DSH/Node 命中 mock 并 autofill。
+  await expect(page.getByTestId("dsh-discover-hint")).toContainText("已找到");
+  await expect(page.getByTestId("dsh-entry")).toHaveValue(/bin\.js/);
+  await expect(page.getByTestId("dsh-node-bin")).toHaveValue(/node\.exe/);
+  // 手动重新扫描仍可用。
   await page.getByTestId("discover-dsh").click();
   await expect(page.getByTestId("dsh-discover-hint")).toContainText("已找到");
   await expect(page.getByTestId("dsh-entry")).toHaveValue(/bin\.js/);
-  // 默认模型：刷新后从新端点拉取，可选 DeepSeek-V4-Flash。
+  // 默认模型：进入设置页已自动拉取一次；手动刷新仍可用。
   await page.getByTestId("refresh-dsh-models").click();
   await expect(page.getByTestId("save-toast")).toContainText("已拉取 2 个 DSH 模型");
   await page.getByTestId("dsh-model").locator(".fancy-select-trigger").click();
