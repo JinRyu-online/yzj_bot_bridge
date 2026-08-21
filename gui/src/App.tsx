@@ -2747,8 +2747,8 @@ function App() {
                       onChange={(v) => setCliForm({ ...cliForm, openai_api_key: v })}
                     />
                   </label>
-                  <div className="field full">
-                    <span className="field-label">模型名称（model）</span>
+                  <div className="field">
+                    <span className="field-label">默认模型</span>
                     <div className="inline-field">
                       <FancySelect
                         testId="openai-model-global"
