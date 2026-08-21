@@ -1370,7 +1370,7 @@ test("日志问答内容、无双时间戳、下拉不超宽", async ({ page }) 
   expect(width).toBeLessThanOrEqual(200);
 });
 
-test("记忆页：推断值只读展示不固化，手动编辑保存不覆盖推断", async ({ page }) => {
+test("记忆页：推断值直接显示可编辑，编辑后保存为手动值且不覆盖原推断", async ({ page }) => {
   await page.evaluate(() => {
     (window as any).__E2E_STATE__.memoryProfiles = [
       {
@@ -1392,22 +1392,20 @@ test("记忆页：推断值只读展示不固化，手动编辑保存不覆盖�
   await page.getByTestId("memory-user-mem-user-1").click();
   await expect(page.getByTestId("memory-detail")).toContainText("测试用户");
 
-  // 推断字段：输入框 placeholder 显示推断值，徽标带 tooltip（data-tip）而非另起一行
+  // 推断字段：推断值直接显示在输入框（可编辑），徽标为「推断」
   const field = page.getByTestId("memory-field-how_to_address");
-  await expect(field).toHaveAttribute("placeholder", "小王");
+  await expect(field).toHaveValue("小王");
   await expect(page.getByTestId("memory-src-how_to_address")).toHaveText("推断");
-  await expect(page.getByTestId("memory-src-how_to_address")).toHaveAttribute("data-tip", "小王");
-  await expect(page.getByTestId("memory-inferred-how_to_address")).toHaveCount(0);
   // 手动字段：输入框直接显示 manual，徽标为「手动」
   await expect(page.getByTestId("memory-field-role")).toHaveValue("运营");
   await expect(page.getByTestId("memory-src-role")).toHaveText("手动");
   // 空字段无徽标
   await expect(page.getByTestId("memory-src-reply_style")).toHaveCount(0);
-  // 忌口（donts）也有推断徽标，样式与其他字段一致
+  // 忌口（donts）推断值也直接显示在输入框
+  await expect(page.getByTestId("memory-field-donts")).toHaveValue("不刷屏");
   await expect(page.getByTestId("memory-src-donts")).toHaveText("推断");
-  await expect(page.getByTestId("memory-src-donts")).toHaveAttribute("data-tip", "不刷屏");
 
-  // 用户输入手动值保存：不应覆盖推断
+  // 用户直接编辑推断值并保存：写入手动值，原推断保留
   await field.fill("老李");
   await page.getByTestId("memory-save").click();
   await expect(page.getByTestId("save-toast").filter({ hasText: "手动字段已保存" })).toBeVisible();
@@ -1418,6 +1416,9 @@ test("记忆页：推断值只读展示不固化，手动编辑保存不覆盖�
   // 未编辑的推断字段不被发送、不被固化：manual 不存在
   expect(saved.ask_style.manual).toBeUndefined();
   expect(saved.ask_style.inferred).toBe("简洁");
+  // 未编辑的推断忌口不被固化
+  expect(saved.donts.manual).toBeUndefined();
+  expect(saved.donts.inferred).toEqual(["不刷屏"]);
 });
 
 test("记忆页：锁定按钮语义清晰，点击后锁定徽标出现且推断仍展示", async ({ page }) => {
@@ -1442,14 +1443,108 @@ test("记忆页：锁定按钮语义清晰，点击后锁定徽标出现且推�
 
   const lockBtn = page.getByTestId("memory-lock-how_to_address");
   await expect(lockBtn).toContainText("锁定");
-  await expect(lockBtn).toHaveAttribute("title", /锁定后画像器不会自动覆盖/);
+  await expect(lockBtn).toHaveAttribute("title", /锁定后该字段不可编辑/);
   await lockBtn.click();
   await expect(page.getByTestId("memory-locked-how_to_address")).toHaveText("已锁定");
   await expect(lockBtn).toContainText("已锁定");
-  // 推断值仍在 placeholder，未被破坏
-  await expect(page.getByTestId("memory-field-how_to_address")).toHaveAttribute("placeholder", "小李");
+  // 推断值仍在输入框，未被破坏
+  await expect(page.getByTestId("memory-field-how_to_address")).toHaveValue("小李");
+  // 锁定字段不可编辑
+  await expect(page.getByTestId("memory-field-how_to_address")).toBeDisabled();
   // donts 也有锁定按钮
   await expect(page.getByTestId("memory-lock-donts")).toBeVisible();
+});
+
+test("记忆页：全部输入框锁定后不可编辑、解锁后可编辑", async ({ page }) => {
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.memoryProfiles = [
+      {
+        open_id: "mem-user-5",
+        display_name: "全字段锁定测试",
+        how_to_address: { manual: "小王", locked: false },
+        role: { manual: "运营", locked: false },
+        ask_style: { manual: "简洁", locked: false },
+        reply_style: { manual: "结构化", locked: false },
+        notes: { manual: "细节", locked: false },
+        donts: { manual: ["不刷屏"], locked: false },
+        turn_count: 6,
+        profiled_count: 3,
+      },
+    ];
+  });
+  await page.getByTestId("nav-memory").click();
+  await page.getByTestId("memory-user-mem-user-5").click();
+
+  const fields: Array<[fieldId: string, lockId: string]> = [
+    ["memory-field-how_to_address", "memory-lock-how_to_address"],
+    ["memory-field-role", "memory-lock-role"],
+    ["memory-field-ask_style", "memory-lock-ask_style"],
+    ["memory-field-reply_style", "memory-lock-reply_style"],
+    ["memory-field-notes", "memory-lock-notes"],
+    ["memory-field-donts", "memory-lock-donts"],
+  ];
+
+  for (const [fieldId, lockId] of fields) {
+    const field = page.getByTestId(fieldId);
+    const lockBtn = page.getByTestId(lockId);
+    // 初始可编辑
+    await expect(field).toBeEnabled();
+    // 锁定
+    await lockBtn.click();
+    await expect(field).toBeDisabled();
+    // 锁定后值保持不变（disabled 输入框无法修改）
+    const lockedValue = await field.inputValue();
+    await field.evaluate((el, v) => {
+      (el as HTMLInputElement).value = "强改";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }, "强改");
+    await expect(field).toHaveValue(lockedValue);
+    // 解锁后可编辑
+    await lockBtn.click();
+    await expect(field).toBeEnabled();
+    // 解锁后可以正常输入
+    await field.fill("改好了");
+    await expect(field).toHaveValue("改好了");
+    // 复原，避免影响下一字段（同一行不同字段互不影响，但清空刚输入的测试值）
+    await field.fill("");
+  }
+});
+
+test("记忆页：点击标签文本不触发锁定按钮（按钮左侧点击范围）", async ({ page }) => {
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.memoryProfiles = [
+      {
+        open_id: "mem-user-6",
+        display_name: "点击范围测试",
+        how_to_address: { manual: "小王" },
+        role: {},
+        ask_style: {},
+        reply_style: {},
+        notes: {},
+        donts: {},
+        turn_count: 6,
+        profiled_count: 3,
+      },
+    ];
+  });
+  await page.getByTestId("nav-memory").click();
+  await page.getByTestId("memory-user-mem-user-6").click();
+
+  const lockBtn = page.getByTestId("memory-lock-how_to_address");
+  await expect(lockBtn).toContainText("锁定");
+  // 点击字段标签文本（按钮左侧），不应触发锁定
+  const fieldName = page.getByText("如何称呼", { exact: true });
+  await fieldName.click();
+  await expect(lockBtn).toContainText("锁定");
+  await expect(page.getByTestId("memory-locked-how_to_address")).toHaveCount(0);
+  // 点击「手动」徽标（按钮左侧的另一个元素），也不应触发锁定
+  await page.getByTestId("memory-src-how_to_address").click();
+  await expect(lockBtn).toContainText("锁定");
+  // 点击标签区域空白（label 文本行）也不触发
+  await page.locator(".memory-field-label").filter({ hasText: "如何称呼" }).click();
+  await expect(lockBtn).toContainText("锁定");
+  // 输入框仍可正常编辑（label 关联正确）
+  await expect(page.getByTestId("memory-field-how_to_address")).toBeEnabled();
 });
 
 test("记忆页：清空手动值后可保存删除 manual", async ({ page }) => {
@@ -1478,8 +1573,9 @@ test("记忆页：清空手动值后可保存删除 manual", async ({ page }) =>
   await expect(page.getByTestId("save-toast").filter({ hasText: "手动字段已保存" })).toBeVisible();
   const saved = await page.evaluate(() => (window as any).__E2E_STATE__.memoryProfiles[0]);
   expect(saved.how_to_address.manual).toBe("");
-  // 推断值仍在，placeholder 回退到推断值
-  await expect(field).toHaveAttribute("placeholder", "小张");
+  // 推断值仍在，删除手动值后回退显示推断值（输入框直接显示，仍可编辑）
+  await expect(field).toHaveValue("小张");
+  await expect(page.getByTestId("memory-src-how_to_address")).toHaveText("推断");
 });
 
 test("记忆页：详情操作按钮吸底，滚动字段后仍可见", async ({ page }) => {

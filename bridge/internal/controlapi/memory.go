@@ -128,6 +128,11 @@ func (s *Server) patchMemoryProfile(w http.ResponseWriter, r *http.Request, open
 		if src == nil {
 			return
 		}
+		// 锁定字段不可通过 PATCH 修改 manual（锁定语义：不可编辑 + 画像器不覆盖）。
+		// 仅允许本请求同时解锁时解除；显式解锁走 /lock 端点。
+		if dst.Locked && !src.Locked {
+			return
+		}
 		dst.Manual = memorySanitizeManual(src.Manual)
 		if src.Locked {
 			dst.Locked = true
@@ -139,9 +144,11 @@ func (s *Server) patchMemoryProfile(w http.ResponseWriter, r *http.Request, open
 	applyField(&p.ReplyStyle, body.ReplyStyle)
 	applyField(&p.Notes, body.Notes)
 	if body.Donts != nil {
-		p.Donts.Manual = memory.SanitizeDonts(body.Donts.Manual, s.RT.Memory.ConfigSnapshot().DontsMax)
-		if body.Donts.Locked {
-			p.Donts.Locked = true
+		if !p.Donts.Locked || body.Donts.Locked {
+			p.Donts.Manual = memory.SanitizeDonts(body.Donts.Manual, s.RT.Memory.ConfigSnapshot().DontsMax)
+			if body.Donts.Locked {
+				p.Donts.Locked = true
+			}
 		}
 	}
 	if err := s.RT.Memory.Store.Save(p); err != nil {

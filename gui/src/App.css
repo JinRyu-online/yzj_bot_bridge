@@ -3574,42 +3574,11 @@ textarea {
   background: color-mix(in srgb, #b45309 8%, transparent);
 }
 
-/* 推断值 tooltip：悬停「推断」徽标显示完整推断内容（不再另起一行） */
-.memory-src-tag.inferred[data-tip] {
-  position: relative;
-  cursor: help;
-}
-
-.memory-src-tag.inferred[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  transform: translateX(-50%);
-  z-index: 40;
-  width: max-content;
-  max-width: 300px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--panel-border);
-  background: var(--bg1);
-  box-shadow: var(--shadow);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.5;
-  text-align: left;
-  white-space: normal;
-  word-break: break-word;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.15s ease, visibility 0.15s ease;
-  pointer-events: none;
-}
-
-.memory-src-tag.inferred[data-tip]:hover::after {
-  opacity: 1;
-  visibility: visible;
+/* 锁定字段：输入框只读视觉 */
+.memory-fields input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
 .memory-field-hint {

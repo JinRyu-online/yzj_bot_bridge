@@ -38,16 +38,16 @@ type Props = {
 };
 
 function fieldText(f?: Field): string {
-  return (f?.manual || "").trim();
-}
-
-function inferredText(f?: Field): string {
+  // effective 值：手动优先，无手动则显示推断值（可直接编辑，保存时变成手动值）。
+  const m = (f?.manual || "").trim();
+  if (m) return m;
   return (f?.inferred || "").trim();
 }
 
 function fieldSource(f?: Field): "manual" | "inferred" | "empty" {
-  if (fieldText(f)) return "manual";
-  if (inferredText(f)) return "inferred";
+  // 徽标标识来源：手动优先；手动为空才看推断。
+  if ((f?.manual || "").trim()) return "manual";
+  if ((f?.inferred || "").trim()) return "inferred";
   return "empty";
 }
 
@@ -116,12 +116,16 @@ export function MemoryPage({ api, ready }: Props) {
     if (!selected) return;
     setDraft({
       display_name: selected.display_name || "",
-      // 输入框只编辑手动值；推断值单独展示为徽标/小字，避免误固化。
+      // 输入框显示 effective 值（手动优先，否则推断），可直接编辑；
+      // 未修改时不发送，不会把推断固化为手动。
       how_to_address: fieldText(selected.how_to_address),
       role: fieldText(selected.role),
       ask_style: fieldText(selected.ask_style),
       reply_style: fieldText(selected.reply_style),
-      donts: (selected.donts?.manual || []).join("；"),
+      donts: (selected.donts?.manual?.length
+        ? selected.donts.manual
+        : selected.donts?.inferred || []
+      ).join("；"),
       notes: fieldText(selected.notes),
     });
   }, [selected]);
@@ -137,6 +141,8 @@ export function MemoryPage({ api, ready }: Props) {
         body.display_name = draft.display_name;
       }
       const setIfChanged = (key: string, value: string, field?: Field) => {
+        // 锁定字段不可编辑：跳过，绝不把锁定字段写入 PATCH。
+        if (field?.locked) return;
         if (value === fieldText(field)) return;
         body[key] = { manual: value };
       };
@@ -149,8 +155,12 @@ export function MemoryPage({ api, ready }: Props) {
         .split(/[；;,\n]/)
         .map((s) => s.trim())
         .filter(Boolean);
-      const oldDonts = (selected.donts?.manual || []).join("；");
-      if (donts.join("；") !== oldDonts) {
+      // 与 effective 值（手动优先，否则推断）比较：未修改不发送，不固化推断。
+      const oldDonts = (selected.donts?.manual?.length
+        ? selected.donts.manual
+        : selected.donts?.inferred || []
+      ).join("；");
+      if (!selected.donts?.locked && donts.join("；") !== oldDonts) {
         body.donts = { manual: donts };
       }
       const raw = await api(
@@ -390,9 +400,11 @@ export function MemoryPage({ api, ready }: Props) {
                 ).map(([key, label, field]) => {
                   const src = fieldSource(field);
                   const locked = !!field?.locked;
-                  const inferred = inferredText(field);
+                  const inputId = `memory-input-${key}`;
                   return (
-                    <label key={key} className="full">
+                    // htmlFor 明确关联输入框：点击标签文本聚焦输入框，
+                    // 不会把点击转发给 label 内的第一个 labelable 元素（锁定按钮）。
+                    <label key={key} className="full" htmlFor={inputId}>
                       <span className="field-label memory-field-label">
                         <span className="memory-field-name">
                           <span>{label}</span>
@@ -400,11 +412,10 @@ export function MemoryPage({ api, ready }: Props) {
                             <span
                               className={`memory-src-tag ${src}`}
                               data-testid={`memory-src-${key}`}
-                              data-tip={src === "inferred" ? inferred : undefined}
                               title={
                                 src === "manual"
                                   ? "手动设置：人工填写的值，优先于推断"
-                                  : "推断值（画像器自动提取）：" + inferred
+                                  : "推断值（画像器自动提取），可直接编辑覆盖"
                               }
                             >
                               {src === "manual" ? "手动" : "推断"}
@@ -414,7 +425,7 @@ export function MemoryPage({ api, ready }: Props) {
                             <span
                               className="memory-src-tag locked"
                               data-testid={`memory-locked-${key}`}
-                              title="已锁定：画像器不再自动更新此字段"
+                              title="已锁定：不可编辑，画像器也不会自动更新此字段"
                             >
                               已锁定
                             </span>
@@ -426,15 +437,15 @@ export function MemoryPage({ api, ready }: Props) {
                           data-testid={`memory-lock-${key}`}
                           disabled={busy}
                           onClick={(e) => {
-                            // 按钮在 <label> 内：阻止 label 默认聚焦 input，避免点击范围误触。
+                            // 按钮在 <label> 内：阻止 label 默认行为，避免误触发/失焦。
                             e.preventDefault();
                             e.stopPropagation();
                             void toggleLock(key, !locked);
                           }}
                           title={
                             locked
-                              ? "已锁定：画像器不会自动覆盖此字段。点击解锁。"
-                              : "锁定后画像器不会自动覆盖此字段（手动编辑仍可保存）。"
+                              ? "已锁定：不可编辑，画像器也不更新。点击解锁。"
+                              : "锁定后该字段不可编辑，画像器也不会自动覆盖。"
                           }
                         >
                           <span aria-hidden="true">{locked ? "🔒" : "🔓"}</span>
@@ -442,17 +453,17 @@ export function MemoryPage({ api, ready }: Props) {
                         </button>
                       </span>
                       <input
+                        id={inputId}
                         data-testid={`memory-field-${key}`}
                         value={draft[key]}
+                        disabled={locked}
                         onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
-                        placeholder={
-                          src === "inferred" ? inferred : "（未设置）"
-                        }
+                        placeholder="（未设置）"
                       />
                     </label>
                   );
                 })}
-                <label className="full">
+                <label className="full" htmlFor="memory-input-donts">
                   <span className="field-label memory-field-label">
                     <span className="memory-field-name">
                       <span>忌口（；分隔）</span>
@@ -471,11 +482,10 @@ export function MemoryPage({ api, ready }: Props) {
                               <span
                                 className={`memory-src-tag ${dSrc}`}
                                 data-testid="memory-src-donts"
-                                data-tip={dSrc === "inferred" ? dInferred : undefined}
                                 title={
                                   dSrc === "manual"
                                     ? "手动设置：人工填写的值，优先于推断"
-                                    : "推断值（画像器自动提取）：" + dInferred
+                                    : "推断值（画像器自动提取），可直接编辑覆盖"
                                 }
                               >
                                 {dSrc === "manual" ? "手动" : "推断"}
@@ -485,7 +495,7 @@ export function MemoryPage({ api, ready }: Props) {
                               <span
                                 className="memory-src-tag locked"
                                 data-testid="memory-locked-donts"
-                                title="已锁定：画像器不再自动更新此字段"
+                                title="已锁定：不可编辑，画像器也不会自动更新此字段"
                               >
                                 已锁定
                               </span>
@@ -506,8 +516,8 @@ export function MemoryPage({ api, ready }: Props) {
                       }}
                       title={
                         selected.donts?.locked
-                          ? "已锁定：画像器不会自动覆盖此字段。点击解锁。"
-                          : "锁定后画像器不会自动覆盖此字段（手动编辑仍可保存）。"
+                          ? "已锁定：不可编辑，画像器也不更新。点击解锁。"
+                          : "锁定后该字段不可编辑，画像器也不会自动覆盖。"
                       }
                     >
                       <span aria-hidden="true">{selected.donts?.locked ? "🔒" : "🔓"}</span>
@@ -515,14 +525,12 @@ export function MemoryPage({ api, ready }: Props) {
                     </button>
                   </span>
                   <input
+                    id="memory-input-donts"
                     data-testid="memory-field-donts"
                     value={draft.donts}
+                    disabled={!!selected.donts?.locked}
                     onChange={(e) => setDraft({ ...draft, donts: e.target.value })}
-                    placeholder={
-                      selected.donts?.inferred?.length
-                        ? selected.donts.inferred.join("；")
-                        : "（未设置）"
-                    }
+                    placeholder="（未设置）"
                   />
                 </label>
               </div>

@@ -105,3 +105,65 @@ func TestMemoryLockEndpoint(t *testing.T) {
 		t.Fatal("not locked")
 	}
 }
+
+func TestMemoryPatchRejectsLockedFieldManual(t *testing.T) {
+	root := t.TempDir()
+	svc := memory.NewService(filepath.Join(root, "memory"), memory.DefaultConfig())
+	_ = svc.Store.Save(&memory.Profile{
+		OpenID: "u1",
+		Role:   memory.Field{Manual: "旧值", Locked: true},
+		Donts:  memory.StringListField{Manual: []string{"旧忌口"}, Locked: true},
+	})
+	rt := &runtime.Runtime{Memory: svc}
+	srv := &Server{RT: rt, Token: "tok"}
+
+	patch := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPatch, "/v1/memory/profiles/u1", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer tok")
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		srv.memoryProfilesPath(rr, req)
+		return rr
+	}
+
+	// 锁定字段：manual 修改被拒绝（保持旧值）
+	rr := patch(`{"role":{"manual":"新值"}}`)
+	if rr.Code != 200 {
+		t.Fatalf("%d %s", rr.Code, rr.Body.String())
+	}
+	p, _ := svc.Store.Get("u1")
+	if p.Role.Manual != "旧值" {
+		t.Fatalf("locked role manual changed to %q", p.Role.Manual)
+	}
+	if !p.Role.Locked {
+		t.Fatal("locked flag lost")
+	}
+
+	// 锁定 donts：manual 修改被拒绝
+	rr = patch(`{"donts":{"manual":["新忌口"]}}`)
+	if rr.Code != 200 {
+		t.Fatalf("%d %s", rr.Code, rr.Body.String())
+	}
+	p, _ = svc.Store.Get("u1")
+	if len(p.Donts.Manual) != 1 || p.Donts.Manual[0] != "旧忌口" {
+		t.Fatalf("locked donts changed to %v", p.Donts.Manual)
+	}
+
+	// 显式解锁后可以修改
+	req := httptest.NewRequest(http.MethodPost, "/v1/memory/profiles/u1/lock", strings.NewReader(`{"fields":{"role":false}}`))
+	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	srv.memoryProfilesPath(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("unlock %d", rr.Code)
+	}
+	rr = patch(`{"role":{"manual":"新值"}}`)
+	if rr.Code != 200 {
+		t.Fatalf("%d %s", rr.Code, rr.Body.String())
+	}
+	p, _ = svc.Store.Get("u1")
+	if p.Role.Manual != "新值" {
+		t.Fatalf("unlocked role manual not applied: %q", p.Role.Manual)
+	}
+}
