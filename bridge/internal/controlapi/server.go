@@ -73,6 +73,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/paths", s.auth(s.paths))
 	mux.HandleFunc("/v1/backends/cursor/models", s.auth(s.cursorModels))
 	mux.HandleFunc("/v1/backends/claude/models", s.auth(s.claudeModels))
+	mux.HandleFunc("/v1/backends/dsh/models", s.auth(s.dshModels))
+	mux.HandleFunc("/v1/backends/available", s.auth(s.available))
 	mux.HandleFunc("/v1/backends/openai/probe", s.auth(s.openaiProbe))
 	mux.HandleFunc("/v1/backends/cli/discover", s.auth(s.cliDiscover))
 	mux.HandleFunc("/v1/skills", s.auth(s.skillsRoot))
@@ -305,6 +307,43 @@ func (s *Server) claudeModels(w http.ResponseWriter, r *http.Request) {
 		out["warning"] = warn
 	}
 	writeJSON(w, out)
+}
+
+// dshModels 列出 DSH 配置文件（settings.yaml）中的可用模型，供 GUI 模型下拉。
+func (s *Server) dshModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	defs := s.RT.Defaults
+	if defs == nil {
+		defs = map[string]any{}
+	}
+	dshHome, _ := defs["dsh_home"].(string)
+	path := backends.ResolveDSHSettingsPath(dshHome)
+	models, err := backends.ListDSHModelsFile(path)
+	if err != nil {
+		writeJSON(w, map[string]any{
+			"ok":     false,
+			"error":  "未找到 DSH 配置文件 " + path + "（请先部署 dsh profile）",
+			"models": []any{},
+		})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "models": models})
+}
+
+// available 返回各后端引擎是否已配置可用，供 GUI 机器人表单过滤后端下拉。
+func (s *Server) available(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	defs := s.RT.Defaults
+	if defs == nil {
+		defs = map[string]any{}
+	}
+	writeJSON(w, map[string]any{"backends": backends.AvailableBackends(defs)})
 }
 
 // openaiProbe 用给定或 defaults 中的 Base URL / API Key 做连通性探测。
