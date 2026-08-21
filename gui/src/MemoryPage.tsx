@@ -390,6 +390,7 @@ export function MemoryPage({ api, ready }: Props) {
                 ).map(([key, label, field]) => {
                   const src = fieldSource(field);
                   const locked = !!field?.locked;
+                  const inferred = inferredText(field);
                   return (
                     <label key={key} className="full">
                       <span className="field-label memory-field-label">
@@ -399,10 +400,11 @@ export function MemoryPage({ api, ready }: Props) {
                             <span
                               className={`memory-src-tag ${src}`}
                               data-testid={`memory-src-${key}`}
+                              data-tip={src === "inferred" ? inferred : undefined}
                               title={
                                 src === "manual"
                                   ? "手动设置：人工填写的值，优先于推断"
-                                  : "自动推断：画像器从问答中提取，可手动覆盖"
+                                  : "推断值（画像器自动提取）：" + inferred
                               }
                             >
                               {src === "manual" ? "手动" : "推断"}
@@ -423,7 +425,12 @@ export function MemoryPage({ api, ready }: Props) {
                           className={`btn ghost xs${locked ? " memory-lock-on" : ""}`}
                           data-testid={`memory-lock-${key}`}
                           disabled={busy}
-                          onClick={() => void toggleLock(key, !locked)}
+                          onClick={(e) => {
+                            // 按钮在 <label> 内：阻止 label 默认聚焦 input，避免点击范围误触。
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void toggleLock(key, !locked);
+                          }}
                           title={
                             locked
                               ? "已锁定：画像器不会自动覆盖此字段。点击解锁。"
@@ -439,14 +446,9 @@ export function MemoryPage({ api, ready }: Props) {
                         value={draft[key]}
                         onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
                         placeholder={
-                          src === "inferred" ? inferredText(field) : "（未设置）"
+                          src === "inferred" ? inferred : "（未设置）"
                         }
                       />
-                      {src === "inferred" ? (
-                        <span className="memory-field-inferred" data-testid={`memory-inferred-${key}`}>
-                          推断值：{inferredText(field)}
-                        </span>
-                      ) : null}
                     </label>
                   );
                 })}
@@ -454,22 +456,54 @@ export function MemoryPage({ api, ready }: Props) {
                   <span className="field-label memory-field-label">
                     <span className="memory-field-name">
                       <span>忌口（；分隔）</span>
-                      {selected.donts?.locked ? (
-                        <span
-                          className="memory-src-tag locked"
-                          data-testid="memory-locked-donts"
-                          title="已锁定：画像器不再自动更新此字段"
-                        >
-                          已锁定
-                        </span>
-                      ) : null}
+                      {(() => {
+                        const d = selected.donts;
+                        const dManual = (d?.manual || []).join("；").trim();
+                        const dInferred = (d?.inferred || []).join("；").trim();
+                        const dSrc: "manual" | "inferred" | "empty" = dManual
+                          ? "manual"
+                          : dInferred
+                            ? "inferred"
+                            : "empty";
+                        return (
+                          <>
+                            {dSrc !== "empty" ? (
+                              <span
+                                className={`memory-src-tag ${dSrc}`}
+                                data-testid="memory-src-donts"
+                                data-tip={dSrc === "inferred" ? dInferred : undefined}
+                                title={
+                                  dSrc === "manual"
+                                    ? "手动设置：人工填写的值，优先于推断"
+                                    : "推断值（画像器自动提取）：" + dInferred
+                                }
+                              >
+                                {dSrc === "manual" ? "手动" : "推断"}
+                              </span>
+                            ) : null}
+                            {d?.locked ? (
+                              <span
+                                className="memory-src-tag locked"
+                                data-testid="memory-locked-donts"
+                                title="已锁定：画像器不再自动更新此字段"
+                              >
+                                已锁定
+                              </span>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                     </span>
                     <button
                       type="button"
                       className={`btn ghost xs${selected.donts?.locked ? " memory-lock-on" : ""}`}
                       data-testid="memory-lock-donts"
                       disabled={busy}
-                      onClick={() => void toggleLock("donts", !selected.donts?.locked)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        void toggleLock("donts", !selected.donts?.locked);
+                      }}
                       title={
                         selected.donts?.locked
                           ? "已锁定：画像器不会自动覆盖此字段。点击解锁。"
@@ -490,11 +524,6 @@ export function MemoryPage({ api, ready }: Props) {
                         : "（未设置）"
                     }
                   />
-                  {selected.donts?.inferred?.length ? (
-                    <span className="memory-field-inferred" data-testid="memory-inferred-donts">
-                      推断值：{selected.donts.inferred.join("；")}
-                    </span>
-                  ) : null}
                 </label>
               </div>
               <div className="memory-actions">

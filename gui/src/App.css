@@ -2660,6 +2660,9 @@ textarea {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 75%, transparent);
+  flex-shrink: 0;
 }
 
 .update-modal {
@@ -3571,6 +3574,44 @@ textarea {
   background: color-mix(in srgb, #b45309 8%, transparent);
 }
 
+/* 推断值 tooltip：悬停「推断」徽标显示完整推断内容（不再另起一行） */
+.memory-src-tag.inferred[data-tip] {
+  position: relative;
+  cursor: help;
+}
+
+.memory-src-tag.inferred[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 40;
+  width: max-content;
+  max-width: 300px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--bg1);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  pointer-events: none;
+}
+
+.memory-src-tag.inferred[data-tip]:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
 .memory-field-hint {
   display: block;
   margin-top: 4px;
@@ -3579,21 +3620,14 @@ textarea {
   opacity: 0.65;
 }
 
-.memory-field-inferred {
-  display: block;
-  margin-top: 5px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-dim, var(--text));
-  opacity: 0.8;
-  word-break: break-word;
-  padding-left: 2px;
-  border-left: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  padding-left: 8px;
-}
-
 .memory-field-label .btn.xs {
   flex-shrink: 0;
+  /* 扩大点击热区，避免 label 聚焦 input 导致误触 */
+  position: relative;
+  min-height: 26px;
+  padding: 4px 10px;
+  cursor: pointer;
+  user-select: none;
 }
 
 .memory-field-label .btn.xs span[aria-hidden="true"] {
@@ -3608,6 +3642,27 @@ textarea {
   margin-top: 16px;
   padding-top: 14px;
   border-top: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+  /* 吸底：不划到底部也能点保存；带背景避免内容透出 */
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin-bottom: -14px;
+  padding-bottom: 14px;
+  background: linear-gradient(
+    to top,
+    var(--bg2) 82%,
+    color-mix(in srgb, var(--bg2) 88%, transparent) 96%,
+    transparent
+  );
+}
+
+[data-theme="ice"] .memory-actions {
+  background: linear-gradient(
+    to top,
+    var(--bg2) 82%,
+    color-mix(in srgb, var(--bg2) 90%, transparent) 96%,
+    transparent
+  );
 }
 
 [data-theme="ice"] .memory-panel-head {

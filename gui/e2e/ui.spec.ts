@@ -1061,6 +1061,25 @@ test("新建机器人：后端下拉仅含可用引擎", async ({ page }) => {
   await expect(page.getByTestId("bot-modal")).toHaveCount(0);
 });
 
+test("新建机器人：底部保存按钮吸底，滚动表单后仍可见", async ({ page }) => {
+  await page.getByTestId("nav-bots").click();
+  await page.getByTestId("create-bot").click();
+  await expect(page.getByTestId("bot-modal")).toBeVisible();
+  // 压缩滚动区高度模拟长表单，验证 modal-actions 固定在 modal 底部（不随内容滚走）
+  await page.locator(".modal-scroll").evaluate((el) => {
+    el.style.maxHeight = "120px";
+  });
+  const btn = page.getByTestId("save-bot");
+  await expect(btn).toBeVisible();
+  // 保存按钮在 modal 内，且位于视口下部（modal 内吸底，而非滚出视口）
+  const box = await btn.boundingBox();
+  expect(box).toBeTruthy();
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(800);
+  await page.getByTestId("bot-modal-close").click();
+  await expect(page.getByTestId("bot-modal")).toHaveCount(0);
+});
+
 test("帮助页含简介与 GitHub 入口", async ({ page }) => {
   await page.getByTestId("nav-help").click();
   await expect(page.getByTestId("page-help")).toBeVisible();
@@ -1373,16 +1392,20 @@ test("记忆页：推断值只读展示不固化，手动编辑保存不覆盖�
   await page.getByTestId("memory-user-mem-user-1").click();
   await expect(page.getByTestId("memory-detail")).toContainText("测试用户");
 
-  // 推断字段：输入框 placeholder 显示推断值，正文有推断值小字 + 徽标
+  // 推断字段：输入框 placeholder 显示推断值，徽标带 tooltip（data-tip）而非另起一行
   const field = page.getByTestId("memory-field-how_to_address");
   await expect(field).toHaveAttribute("placeholder", "小王");
   await expect(page.getByTestId("memory-src-how_to_address")).toHaveText("推断");
-  await expect(page.getByTestId("memory-inferred-how_to_address")).toContainText("小王");
+  await expect(page.getByTestId("memory-src-how_to_address")).toHaveAttribute("data-tip", "小王");
+  await expect(page.getByTestId("memory-inferred-how_to_address")).toHaveCount(0);
   // 手动字段：输入框直接显示 manual，徽标为「手动」
   await expect(page.getByTestId("memory-field-role")).toHaveValue("运营");
   await expect(page.getByTestId("memory-src-role")).toHaveText("手动");
   // 空字段无徽标
   await expect(page.getByTestId("memory-src-reply_style")).toHaveCount(0);
+  // 忌口（donts）也有推断徽标，样式与其他字段一致
+  await expect(page.getByTestId("memory-src-donts")).toHaveText("推断");
+  await expect(page.getByTestId("memory-src-donts")).toHaveAttribute("data-tip", "不刷屏");
 
   // 用户输入手动值保存：不应覆盖推断
   await field.fill("老李");
@@ -1457,4 +1480,42 @@ test("记忆页：清空手动值后可保存删除 manual", async ({ page }) =>
   expect(saved.how_to_address.manual).toBe("");
   // 推断值仍在，placeholder 回退到推断值
   await expect(field).toHaveAttribute("placeholder", "小张");
+});
+
+test("记忆页：详情操作按钮吸底，滚动字段后仍可见", async ({ page }) => {
+  await page.evaluate(() => {
+    (window as any).__E2E_STATE__.memoryProfiles = [
+      {
+        open_id: "mem-user-4",
+        display_name: "吸底测试",
+        how_to_address: { inferred: "小王" },
+        role: { manual: "运营" },
+        ask_style: { inferred: "简洁" },
+        reply_style: {},
+        notes: {},
+        donts: { inferred: ["不刷屏"] },
+        turn_count: 12,
+        profiled_count: 5,
+      },
+    ];
+  });
+  await page.getByTestId("nav-memory").click();
+  await page.getByTestId("memory-user-mem-user-4").click();
+  await expect(page.getByTestId("memory-detail")).toContainText("吸底测试");
+  // 压缩滚动区高度模拟长表单，验证 memory-actions 吸底仍可见
+  await page.locator(".memory-detail").evaluate((el) => {
+    el.style.maxHeight = "180px";
+    el.style.overflow = "auto";
+  });
+  const save = page.getByTestId("memory-save");
+  await expect(save).toBeVisible();
+  const box = await save.boundingBox();
+  expect(box).toBeTruthy();
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(800);
+  // 滚动后仍可见（吸底）
+  await page.locator(".memory-detail").evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+  await expect(save).toBeVisible();
 });

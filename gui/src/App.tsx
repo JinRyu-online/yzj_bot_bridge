@@ -4042,6 +4042,7 @@ function App() {
                 />
               </div>
             </div>
+            </div>
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setBotModal(null)}>
                 取消
@@ -4050,7 +4051,6 @@ function App() {
                 {saving ? <span className="spinner dark" /> : null}
                 <span>{saving ? "保存中" : "保存"}</span>
               </button>
-            </div>
             </div>
           </div>
         </div>
@@ -4165,6 +4165,7 @@ function App() {
                 </div>
               ) : null}
             </div>
+            </div>
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setChannelModal(false)}>
                 取消
@@ -4173,7 +4174,6 @@ function App() {
                 {saving ? <span className="spinner dark" /> : null}
                 <span>{saving ? "保存中" : "保存"}</span>
               </button>
-            </div>
             </div>
           </div>
         </div>
