@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -237,6 +238,10 @@ func (d *DSH) collectReply(ctx context.Context, proc *dshProc, ch chan *dshFrame
 			case "assistant/message":
 				if sawStart {
 					text.WriteString(extractDSHAssistant(ev))
+					// 思考过程（reasoning 块）只进日志，不进回复正文（同 claude/cursor 后端约定）。
+					if t := strings.TrimSpace(extractDSHThinking(ev)); t != "" {
+						log.Printf("bot=%s dsh thinking: %s", d.cfg.ID, clipRunes(compactSpace(t), 400))
+					}
 				}
 			}
 		}
@@ -287,6 +292,38 @@ func extractDSHAssistant(ev map[string]any) string {
 		}
 		if fmt.Sprint(m["type"]) == "text" {
 			b.WriteString(fmt.Sprint(m["text"]))
+		}
+	}
+	return b.String()
+}
+
+// extractDSHThinking 提取 assistant/message 事件中的思考（reasoning）块文本
+// （event.data.message.content 中 type=reasoning 的块，与 text 块同层）。
+// 思考只用于日志输出，绝不混入回复正文；多个 reasoning 块按流序以换行拼接。
+func extractDSHThinking(ev map[string]any) string {
+	data, _ := ev["data"].(map[string]any)
+	if data == nil {
+		return ""
+	}
+	msg, _ := data["message"].(map[string]any)
+	if msg == nil {
+		return ""
+	}
+	content, _ := msg["content"].([]any)
+	var b strings.Builder
+	for _, c := range content {
+		m, _ := c.(map[string]any)
+		if m == nil {
+			continue
+		}
+		if fmt.Sprint(m["type"]) != "reasoning" {
+			continue
+		}
+		if t := fmt.Sprint(m["text"]); t != "" && t != "<nil>" {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(t)
 		}
 	}
 	return b.String()

@@ -1,10 +1,17 @@
 package backends
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"yzj-bridge/internal/bot"
 )
 
 // TestDSHPoolKey 验证 poolKey 构成与唯一性（provider|model|profile|nodeBin|dshEntry）。
@@ -84,6 +91,80 @@ func TestDSHTurnReason(t *testing.T) {
 	}
 	if got := dshTurnReason(map[string]any{}); got != "" {
 		t.Fatalf("空 reason = %q", got)
+	}
+}
+
+// TestExtractDSHThinking 验证 assistant/message 的 reasoning（思考）块提取：
+// 只取 reasoning 块文本（按序拼接），text/tool_use 等块忽略，且不混入正文提取。
+func TestExtractDSHThinking(t *testing.T) {
+	ev := map[string]any{
+		"data": map[string]any{
+			"message": map[string]any{
+				"content": []any{
+					map[string]any{"type": "reasoning", "text": "先分析"},
+					map[string]any{"type": "text", "text": "hello"},
+					map[string]any{"type": "reasoning", "text": "再动手"},
+					map[string]any{"type": "tool_use", "name": "bash"},
+					map[string]any{"type": "reasoning", "text": ""},
+				},
+			},
+		},
+	}
+	if got := extractDSHThinking(ev); got != "先分析\n再动手" {
+		t.Fatalf("提取思考 = %q, want %q", got, "先分析\n再动手")
+	}
+	if got := extractDSHAssistant(ev); got != "hello" {
+		t.Fatalf("正文不应混入思考: %q", got)
+	}
+	if extractDSHThinking(map[string]any{}) != "" {
+		t.Fatal("空事件应返回空串")
+	}
+}
+
+// TestDSHThinkingLogged 离线 stub 端到端验证：DSH 思考过程写入日志（log 输出含 dsh thinking 行），
+// 且思考不混入回复正文。
+func TestDSHThinkingLogged(t *testing.T) {
+	if _, err := exec.LookPath(resolveNodeBin("")); err != nil {
+		t.Skip("node 不可用，跳过 dsh 思考日志冒烟")
+	}
+	resetPoolForTest()
+	t.Setenv("DSH_STUB_STATE_FILE", filepath.Join(t.TempDir(), "stub-state.jsonl"))
+
+	cfg := bot.Config{
+		ID:            "thinking-dsh",
+		Backend:       "dsh",
+		NodeBin:       resolveNodeBin(""),
+		DSHEntry:      dshStubPath(t),
+		DSHProfile:    "jsonrpc",
+		DSHProvider:   "kuaidi100",
+		DSHModel:      "deepseek-v4-flash",
+		DSHTimeout:    30,
+		DSHTTLSeconds: 300,
+		DSHMaxWarm:    3,
+	}
+	be, err := Create(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	sid, err := be.CreateSession()
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	got := be.Run("ping", bot.RunOpts{Workspace: t.TempDir(), SessionID: sid, Mode: "ask"})
+	if got.Status != "ok" {
+		t.Fatalf("status=%s reply=%q", got.Status, got.Reply)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "thinking-dsh") || !strings.Contains(logged, "dsh thinking:") || !strings.Contains(logged, "let me think:") {
+		t.Fatalf("日志未输出 dsh 思考过程: %q", logged)
+	}
+	if strings.Contains(got.Reply, "let me think:") {
+		t.Fatalf("思考混入回复正文: %q", got.Reply)
 	}
 }
 

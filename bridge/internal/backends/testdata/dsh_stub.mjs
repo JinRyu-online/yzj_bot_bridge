@@ -8,7 +8,7 @@
  *                           回复 pong:<cwd>:<text>；未知 sessionId 惰性创建
  *   - session/resume      -> 已知 sid 恢复（回复 resumed:<cwd>:<text>），
  *                           未知 sid 回错误 `session "<id>" not found`
- *   - session.event       -> turn/start → assistant/message(text) → turn/end(completed)
+ *   - session.event       -> turn/start → assistant/message(reasoning + text) → turn/end(completed)
  *   - shutdown            -> 应答后 exit 0
  *
  * 会话注册表通过 DSH_STUB_STATE_FILE（JSONL，一行一个 {sessionId,cwd}）跨进程持久化，
@@ -60,7 +60,15 @@ function emitTurn(sid, text, reason) {
     sessionId: sid,
     event: {
       type: 'assistant/message',
-      data: { message: { content: [{ type: 'text', text }] } },
+      data: {
+        message: {
+          content: [
+            // reasoning 块模拟真实 DSH 的思考过程（仅供 bridge 日志，不应进回复正文）。
+            { type: 'reasoning', text: `let me think: ${text}` },
+            { type: 'text', text },
+          ],
+        },
+      },
     },
   })
   notify('session.event', {
