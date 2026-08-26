@@ -131,6 +131,7 @@ func (r *Runtime) Load(restoreWSS bool) error {
 	r.Clients = map[string]*ws.Client{}
 	stale := intFrom(r.Defaults["stale_ms"], 45000)
 	inv := intFrom(r.Defaults["ws_invalid_frame_limit"], 3)
+	authLim := intFrom(r.Defaults["ws_auth_fail_limit"], 3)
 	rec := time.Duration(intFrom(r.Defaults["reconnect_delay_sec"], 5)) * time.Second
 	maxd := time.Duration(intFrom(r.Defaults["reconnect_max_delay_sec"], 60)) * time.Second
 	hb := time.Duration(intFrom(r.Defaults["heartbeat_interval_sec"], 30)) * time.Second
@@ -142,6 +143,12 @@ func (r *Runtime) Load(restoreWSS bool) error {
 		c := &ws.Client{
 			Bot: b, Dispatcher: r.Disp, StaleMS: stale, InvalidLim: inv,
 			Reconnect: rec, MaxDelay: maxd, Heartbeat: hb,
+			AuthFailLimit: authLim,
+			OnAuthGiveUp: func(id string) {
+				// 连续鉴权失败自动停用：同步持久化状态，重启后不再自动重连。
+				log.Printf("ws auth bot=%s: channel disabled by auth failures, persisted", id)
+				r.SetChannelEnabled(id, false)
+			},
 		}
 		r.Clients[b.Config.ID] = c
 	}

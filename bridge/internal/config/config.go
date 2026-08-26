@@ -37,7 +37,7 @@ func defaultMap() map[string]any {
 		"allowed_tools": []any{}, "max_budget_usd": 0, "opencode_bin": "opencode",
 		"system_prompt": "", "skills": []any{}, "backend": "cursor_cli", "model": "",
 		"inbound_mode": "websocket", "webhook_host": "0.0.0.0", "webhook_port": 8765,
-		"stale_ms": 45000, "ws_invalid_frame_limit": 3,
+		"stale_ms": 45000, "ws_invalid_frame_limit": 3, "ws_auth_fail_limit": 3,
 		"openai_base_url": "", "openai_api_key": "", "openai_timeout": 120,
 		"openai_max_tool_rounds": 8, "openai_model": "",
 		"openai_compact": true, "openai_compact_keep": 6,

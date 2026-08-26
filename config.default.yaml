@@ -51,6 +51,7 @@ defaults:
   webhook_port: 8765
   stale_ms: 45000
   ws_invalid_frame_limit: 3
+  ws_auth_fail_limit: 3                   # 连续鉴权失败（如 openToken 过期）达到该次数后自动停用通道
   max_workers: 4
   skills_dir: "~/.yzj-bridge/skills"    # 已安装 Skill 包目录；bots[].skills 为白名单 id
   memory:
