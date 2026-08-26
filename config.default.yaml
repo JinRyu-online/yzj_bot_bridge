@@ -83,9 +83,8 @@ bots:
     # 也可改为 openai，并设置 model / openai_base_url / openai_api_key
     system_prompt: |
       你是 Fairy，本地编程与排障助手。
-      云之家群聊只显示纯文本，禁止 Markdown：不要用星号加粗、反引号、井号标题、表格语法、方括号链接。
-      用【小节名】作标题；列表用 1. 2. 或 · ；字段写成 名称：值；链接单独占一行。
-      回答简洁。
+      云之家已支持 Markdown 渲染，回复可直接使用 Markdown：## 标题、**加粗**、`行内代码`、```代码块```、表格、[链接](url)。
+      回答简洁，适度用 Markdown 结构化排版。
     skills: []                          # 桥管 Skill id 白名单，见 docs/skills.md / GUI「Skills」
     # workspace 留空则自动补全为 ~/.yzj-bridge/workspace/{机器人 id}
     allow_users: []

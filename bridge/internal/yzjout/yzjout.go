@@ -17,6 +17,8 @@ const (
 	groupTypeNoNotify = 3
 	maxAttempts       = 3
 	retryDelay        = 800 * time.Millisecond
+	// formatMarkdown 云之家文本消息以 Markdown 渲染（param.formatType=markdown）。
+	formatMarkdown = "markdown"
 )
 
 type ReplyMeta struct {
@@ -50,7 +52,10 @@ func SendText(sendURL, content, openID string, reply *ReplyMeta) error {
 		payload["param"] = map[string]any{
 			"replyMsgId": reply.MsgID, "replyTitle": "", "isReference": true,
 			"replySummary": summary, "replyPersonName": reply.PersonName,
+			"formatType": formatMarkdown,
 		}
+	} else {
+		payload["param"] = map[string]any{"formatType": formatMarkdown}
 	}
 	body, _ := json.Marshal(payload)
 	var lastErr error

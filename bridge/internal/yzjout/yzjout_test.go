@@ -1,11 +1,108 @@
 package yzjout
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"yzj-bridge/internal/jobs"
 )
+
+func TestSendTextPayloadMarkdown(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("bad json: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	content := "## 标题\n**粗体**"
+	if err := SendText(srv.URL, content, "oid-1", nil); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	if got["msgtype"] != float64(2) {
+		t.Fatalf("msgtype=%v want 2", got["msgtype"])
+	}
+	if got["content"] != content {
+		t.Fatalf("content=%q", got["content"])
+	}
+	param, ok := got["param"].(map[string]any)
+	if !ok {
+		t.Fatalf("param missing: %s", mustJSON(got))
+	}
+	if param["formatType"] != "markdown" {
+		t.Fatalf("param.formatType=%v want markdown", param["formatType"])
+	}
+	if _, dup := param["replyMsgId"]; dup {
+		t.Fatalf("plain send must not carry reply fields: %s", mustJSON(got))
+	}
+	if n, ok := got["notifyParams"]; !ok || n == nil {
+		t.Fatalf("notifyParams missing for openID: %s", mustJSON(got))
+	}
+	if _, dup := got["paramType"]; dup {
+		t.Fatalf("plain send must not set paramType: %s", mustJSON(got))
+	}
+}
+
+func TestSendTextPayloadReplyMergesMarkdown(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("bad json: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	reply := &ReplyMeta{MsgID: "m-42", Summary: "原消息", PersonName: "张三"}
+	if err := SendText(srv.URL, "**回复内容**", "", reply); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	if got["paramType"] != float64(3) {
+		t.Fatalf("paramType=%v want 3", got["paramType"])
+	}
+	param, ok := got["param"].(map[string]any)
+	if !ok {
+		t.Fatalf("param missing: %s", mustJSON(got))
+	}
+	if param["formatType"] != "markdown" {
+		t.Fatalf("param.formatType=%v want markdown (merged into reply param)", param["formatType"])
+	}
+	if param["replyMsgId"] != "m-42" {
+		t.Fatalf("replyMsgId=%v want m-42", param["replyMsgId"])
+	}
+	if param["replyPersonName"] != "张三" {
+		t.Fatalf("replyPersonName=%v", param["replyPersonName"])
+	}
+}
+
+func TestSendTextEmptyContentFallback(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &got)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	if err := SendText(srv.URL, "   ", "", nil); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	if got["content"] != "(空回复)" {
+		t.Fatalf("content=%q want (空回复)", got["content"])
+	}
+}
+
+func mustJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
 
 func TestFormatCompletionReply(t *testing.T) {
 	got := FormatCompletionReply("hello", "oid", "Bob", true)
