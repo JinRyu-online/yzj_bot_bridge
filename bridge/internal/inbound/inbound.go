@@ -150,6 +150,16 @@ func (d *Dispatcher) send(sendURL, content, openID string, reply *yzjout.ReplyMe
 	return yzjout.SendText(sendURL, content, openID, reply)
 }
 
+// sendTracked sends a message and logs the delivery result so outbound
+// success/failure is always visible in runtime logs.
+func (d *Dispatcher) sendTracked(botID, sendURL, content, openID string, reply *yzjout.ReplyMeta) {
+	if err := d.send(sendURL, content, openID, reply); err != nil {
+		log.Printf("bot=%s outbound FAIL to=%s len=%d: %v", botID, openID, len([]rune(content)), err)
+	} else {
+		log.Printf("bot=%s outbound OK to=%s len=%d", botID, openID, len([]rune(content)))
+	}
+}
+
 func (d *Dispatcher) queueScope(b *bot.Bot, openID string) string {
 	return jobs.Scope(b.Config.ID, openID, jobs.UseChannelQueue(b.Config.SessionMode, b.Config.JobQueue))
 }
@@ -167,7 +177,7 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 		return
 	}
 	if !commands.Allowed(b.Config, n.OpenID, n.Name) {
-		_ = d.send(b.Config.SendMsgURL, "你不在白名单中", n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, "你不在白名单中", n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
 	clean := commands.StripBotMention(n.Content, b, d.Reg.Names(), true)
@@ -175,31 +185,31 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 	if cmdRes.Overrides["stop"] == "1" {
 		scope := d.queueScope(b, n.OpenID)
 		ack := yzjout.FormatStopAck(d.Jobs.Cancel(scope))
-		_ = d.send(b.Config.SendMsgURL, ack, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, ack, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
 	if cmdRes.Overrides["jobs"] == "1" {
 		scope := d.queueScope(b, n.OpenID)
 		body := yzjout.FormatJobList(d.Jobs.Snapshot(scope))
-		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
 	if memSub := cmdRes.Overrides["memory"]; memSub != "" {
 		body := d.handleMemoryCmd(n.OpenID, memSub)
 		body = yzjout.FormatCompletionReply(body, n.OpenID, n.Name, b.Config.MentionOnReply)
-		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
 	if cmdRes.Overrides["forget"] == "1" {
 		body := d.handleForgetCmd(n.OpenID)
 		body = yzjout.FormatCompletionReply(body, n.OpenID, n.Name, b.Config.MentionOnReply)
-		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
 	if cmdRes.Handled && strings.TrimSpace(cmdRes.RestText) == "" {
 		body := strings.TrimSpace(cmdRes.Reply)
 		body = yzjout.FormatCompletionReply(body, n.OpenID, n.Name, b.Config.MentionOnReply)
-		_ = d.send(b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, body, n.OpenID, &yzjout.ReplyMeta{MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content})
 		return
 	}
 	scope := d.queueScope(b, n.OpenID)
@@ -207,11 +217,11 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 	switch res.Status {
 	case jobs.StatusMerged:
 		if b.Config.AckPending {
-			_ = d.send(b.Config.SendMsgURL, "已合并补充内容，稍后一并处理", n.OpenID, nil)
+			d.sendTracked(b.Config.ID, b.Config.SendMsgURL, "已合并补充内容，稍后一并处理", n.OpenID, nil)
 		}
 		return
 	case jobs.StatusQueued:
-		_ = d.send(b.Config.SendMsgURL, yzjout.FormatQueuePosition(res.Position), n.OpenID, nil)
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, yzjout.FormatQueuePosition(res.Position), n.OpenID, nil)
 		return
 	}
 	d.startJob(b, n, cmdRes, true)
@@ -219,14 +229,14 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 
 func (d *Dispatcher) startJob(b *bot.Bot, n Normalized, cmdRes commands.Result, ack bool) {
 	if ack && b.Config.AckPending {
-		_ = d.send(b.Config.SendMsgURL, yzjout.FormatPendingAck(), n.OpenID, nil)
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, yzjout.FormatPendingAck(), n.OpenID, nil)
 	}
 	go d.runJob(b, n, cmdRes)
 }
 
 func (d *Dispatcher) notifyQueue(b *bot.Bot, notices []jobs.Notice) {
 	for _, n := range notices {
-		_ = d.send(b.Config.SendMsgURL, yzjout.FormatQueuePosition(n.Position), n.OpenID, nil)
+		d.sendTracked(b.Config.ID, b.Config.SendMsgURL, yzjout.FormatQueuePosition(n.Position), n.OpenID, nil)
 	}
 }
 
@@ -270,11 +280,9 @@ func (d *Dispatcher) runJob(b *bot.Bot, n Normalized, cmdRes commands.Result) {
 		} else {
 			body = yzjout.FormatCompletionReply(dr.Reply, n.OpenID, n.Name, mention)
 		}
-		if err := d.send(sendURL, body, n.OpenID, &yzjout.ReplyMeta{
+		d.sendTracked(b.Config.ID, sendURL, body, n.OpenID, &yzjout.ReplyMeta{
 			MsgID: n.MsgID, PersonName: n.Name, GroupType: n.GroupType, Summary: n.Content,
-		}); err != nil {
-			log.Printf("outbound error bot=%s: %v", b.Config.ID, err)
-		}
+		})
 		if dr.Status == "interrupted" {
 			break
 		}

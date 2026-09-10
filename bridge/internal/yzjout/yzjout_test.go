@@ -2,11 +2,13 @@ package yzjout
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"yzj-bridge/internal/jobs"
 )
@@ -167,5 +169,127 @@ func TestFormatQueuePosition(t *testing.T) {
 	}
 	if FormatQueuePosition(0) != "正在处理之前的问题，你的问题排在第1位" {
 		t.Fatal("invalid position should clamp to 1")
+	}
+}
+
+func TestSplitMessageShortContentSingleChunk(t *testing.T) {
+	got := SplitMessage("短消息", chunkLimit)
+	if len(got) != 1 || got[0] != "短消息" {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestSplitMessageParagraphBoundaries(t *testing.T) {
+	para := strings.Repeat("段", 1450)
+	content := strings.Join([]string{para, para, para}, "\n\n") // 3 * 1450 + separators
+	got := SplitMessage(content, chunkLimit)
+	if len(got) != 3 {
+		t.Fatalf("want 3 chunks, got %d", len(got))
+	}
+	for i, c := range got {
+		if n := utf8.RuneCountInString(c); n > chunkLimit {
+			t.Fatalf("chunk %d len %d > %d", i, n, chunkLimit)
+		}
+	}
+	// Reassembly loses only the blank-line separators.
+	rejoined := strings.Join(got, "\n\n")
+	if utf8.RuneCountInString(rejoined) < utf8.RuneCountInString(content)-10 {
+		t.Fatalf("content lost across chunks: %d < %d", utf8.RuneCountInString(rejoined), utf8.RuneCountInString(content))
+	}
+}
+
+func TestSplitMessageHardCutNoBoundaries(t *testing.T) {
+	content := strings.Repeat("测", 7000) // no \n, no paragraphs
+	got := SplitMessage(content, chunkLimit)
+	if len(got) < 3 {
+		t.Fatalf("want >=3 chunks, got %d", len(got))
+	}
+	total := 0
+	for i, c := range got {
+		n := utf8.RuneCountInString(c)
+		if n > chunkLimit {
+			t.Fatalf("chunk %d len %d > %d", i, n, chunkLimit)
+		}
+		total += n
+	}
+	if total != 7000 {
+		t.Fatalf("total=%d want 7000", total)
+	}
+}
+
+func TestSplitMessageNeverExceedsMaxChunks(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 300; i++ { // 300 paragraphs -> naive split would be >9 chunks
+		b.WriteString(strings.Repeat("p", 100))
+		b.WriteString("\n\n")
+	}
+	got := SplitMessage(b.String(), chunkLimit)
+	if len(got) > maxChunks {
+		t.Fatalf("chunks=%d > max=%d", len(got), maxChunks)
+	}
+	for i, c := range got {
+		if n := utf8.RuneCountInString(c); n > chunkLimit {
+			t.Fatalf("chunk %d len %d > %d", i, n, chunkLimit)
+		}
+	}
+}
+
+func TestSendTextPaginatesLongContent(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		if c, ok := m["content"].(string); ok {
+			bodies = append(bodies, c)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	content := strings.Repeat("x", 5000)
+	if err := SendText(srv.URL, content, "", nil); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	if len(bodies) < 2 {
+		t.Fatalf("expected paged sends, got %d", len(bodies))
+	}
+	for i, b := range bodies {
+		if !strings.HasSuffix(b, fmt.Sprintf("(%d/%d)", i+1, len(bodies))) {
+			t.Fatalf("chunk %d missing page marker: %q", i, b[max(0, len(b)-40):])
+		}
+	}
+	// Reassembled content must cover the original (minus separators/markers).
+	joined := ""
+	for _, b := range bodies {
+		b = strings.TrimSpace(b)
+		b = b[:strings.LastIndex(b, "\n(")]
+		joined += b
+	}
+	if utf8.RuneCountInString(joined) < 4000 {
+		t.Fatalf("content lost: got %d runes", utf8.RuneCountInString(joined))
+	}
+}
+
+func TestSendTextBizErrorReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":null,"error":"消息内容太长","errorCode":1401002,"success":false}`))
+	}))
+	defer srv.Close()
+	err := SendText(srv.URL, "hello", "", nil)
+	if err == nil || !strings.Contains(err.Error(), "消息内容太长") || !strings.Contains(err.Error(), "1401002") {
+		t.Fatalf("want biz error, got %v", err)
+	}
+}
+
+func TestSendTextSuccessBodyNotBizError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"msgId":"m1"},"error":null,"errorCode":0,"success":true}`))
+	}))
+	defer srv.Close()
+	if err := SendText(srv.URL, "hello", "", nil); err != nil {
+		t.Fatalf("SendText: %v", err)
 	}
 }

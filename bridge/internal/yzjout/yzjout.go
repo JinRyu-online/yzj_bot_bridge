@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -19,6 +20,13 @@ const (
 	retryDelay        = 800 * time.Millisecond
 	// formatMarkdown 云之家文本消息以 Markdown 渲染（param.formatType=markdown）。
 	formatMarkdown = "markdown"
+	// yzjContentLimit 云之家机器人单条消息 content 的最大字符数：实测超过 3000 时
+	// 返回 HTTP 200 + {"success":false,"errorCode":1401002,"error":"消息内容太长"}。
+	yzjContentLimit = 3000
+	// chunkLimit 单条分片上限，低于服务端限制，给分页标注留余量。
+	chunkLimit = yzjContentLimit - 100
+	// maxChunks 一次回复最多分发的消息条数，防止异常超长回复刷屏。
+	maxChunks = 9
 )
 
 type ReplyMeta struct {
@@ -28,15 +36,37 @@ type ReplyMeta struct {
 	GroupType  int
 }
 
+// SendText sends content to the yunzhijia robot webhook. Overlong content is
+// split into chunks annotated with (1/3)-style page markers; each chunk is
+// retried and the send result is logged. Only the last-chunk error (or a
+// single-chunk send's error) is returned, but every failure is logged here.
 func SendText(sendURL, content, openID string, reply *ReplyMeta) error {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		content = "(空回复)"
 	}
-	if len([]rune(content)) > 8000 {
-		r := []rune(content)
-		content = string(r[:7900]) + "\n\n…(内容过长已截断)"
+	chunks := SplitMessage(content, chunkLimit)
+	for i, chunk := range chunks {
+		body := chunk
+		if len(chunks) > 1 {
+			body = fmt.Sprintf("%s\n\n(%d/%d)", chunk, i+1, len(chunks))
+		}
+		if err := sendOnce(sendURL, body, openID, reply); err != nil {
+			log.Printf("bot outbound send FAIL bot-part=%d/%d len=%d: %v", i+1, len(chunks), utf8.RuneCountInString(body), err)
+			if i == len(chunks)-1 {
+				return err
+			}
+		} else {
+			log.Printf("bot outbound send OK bot-part=%d/%d len=%d", i+1, len(chunks), utf8.RuneCountInString(body))
+		}
+		time.Sleep(200 * time.Millisecond) // avoid bursting multiple messages into one group
 	}
+	return nil
+}
+
+// sendOnce posts a single message and treats yunzhijia business failures
+// (HTTP 200 + success=false, e.g. errorCode 1401002 消息内容太长) as errors.
+func sendOnce(sendURL, content, openID string, reply *ReplyMeta) error {
 	payload := map[string]any{"msgtype": 2, "content": content}
 	if openID != "" && (reply == nil || reply.GroupType != groupTypeNoNotify) {
 		payload["notifyParams"] = []map[string]any{
@@ -72,7 +102,7 @@ func SendText(sendURL, content, openID string, reply *ReplyMeta) error {
 			time.Sleep(retryDelay)
 			continue
 		}
-		_, _ = io.Copy(io.Discard, resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
 		if resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("http %d", resp.StatusCode)
@@ -82,11 +112,121 @@ func SendText(sendURL, content, openID string, reply *ReplyMeta) error {
 		if resp.StatusCode >= 400 {
 			return fmt.Errorf("http %d", resp.StatusCode)
 		}
+		if bizErr := parseBizError(respBody); bizErr != "" {
+			// Business rejection is deterministic; retrying the same payload is pointless.
+			return fmt.Errorf("yzj biz error: %s", bizErr)
+		}
 		return nil
 	}
 	return lastErr
 }
 
+// parseBizError extracts a readable message from a yunzhijia 200-OK failure
+// body like {"success":false,"error":"消息内容太长","errorCode":1401002}.
+func parseBizError(body []byte) string {
+	var r struct {
+		Success   bool   `json:"success"`
+		Error     string `json:"error"`
+		ErrorCode int    `json:"errorCode"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil || r.Success {
+		return ""
+	}
+	if r.Error == "" {
+		r.Error = "unknown error"
+	}
+	return fmt.Sprintf("%s (errorCode=%d)", r.Error, r.ErrorCode)
+}
+
+// SplitMessage splits content into at most maxChunks pieces, each within
+// limit runes. It prefers splitting on paragraph boundaries (--- rules,
+// blank lines), then line boundaries, then hard rune cuts.
+func SplitMessage(content string, limit int) []string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return []string{"(空回复)"}
+	}
+	if limit <= 0 || utf8.RuneCountInString(content) <= limit {
+		return []string{content}
+	}
+	// Split into paragraphs, keeping blank-line separators.
+	paras := strings.Split(content, "\n\n")
+	var chunks []string
+	cur := ""
+	needs := func(a, b string) bool { return utf8.RuneCountInString(a) + 2 + utf8.RuneCountInString(b) > limit }
+	for _, p := range paras {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		for utf8.RuneCountInString(p) > limit {
+			// Paragraph alone exceeds a chunk: split by lines, then hard-cut.
+			hard, rest := splitHard(p, limit)
+			if cur != "" {
+				chunks = append(chunks, cur)
+				cur = ""
+			}
+			chunks = append(chunks, hard)
+			p = rest
+		}
+		if p == "" {
+			continue
+		}
+		if cur == "" {
+			cur = p
+		} else if needs(cur, p) {
+			chunks = append(chunks, cur)
+			cur = p
+		} else {
+			cur += "\n\n" + p
+		}
+	}
+	if cur != "" {
+		chunks = append(chunks, cur)
+	}
+	if len(chunks) <= maxChunks {
+		return chunks
+	}
+	// Too many chunks: merge tail chunks back with hard cuts.
+	return reflowToMax(chunks, limit, maxChunks)
+}
+
+// splitHard cuts s at the largest line-aligned point within limit; falls back
+// to a raw rune cut. Returns the head and the remainder.
+func splitHard(s string, limit int) (head, rest string) {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s, ""
+	}
+	cut := limit
+	if nl := strings.LastIndex(string(r[:limit]), "\n"); nl > 0 {
+		return strings.TrimSpace(string(r[:nl])), strings.TrimSpace(string(r[nl:]))
+	}
+	return strings.TrimSpace(string(r[:cut])), strings.TrimSpace(string(r[cut:]))
+}
+
+// reflowToMax hard-merges chunks beyond maxChunks into exactly maxChunks
+// pieces, each within limit.
+func reflowToMax(chunks []string, limit, max int) []string {
+	joined := strings.Join(chunks, "\n\n")
+	r := []rune(joined)
+	size := (len(r) + max - 1) / max
+	out := make([]string, 0, max)
+	for len(r) > 0 {
+		take := size
+		if take > len(r) {
+			take = len(r)
+		}
+		h, rest := splitHard(string(r[:take]), limit)
+		if h != "" {
+			out = append(out, h)
+		}
+		r = []rune(rest)
+	}
+	return out
+}
+
+// FormatCompletionReply is the IM completion body wrapper.
 func FormatCompletionReply(body, openID, name string, mention bool) string {
 	body = strings.TrimSpace(body)
 	body = strings.TrimPrefix(body, "@"+name)
