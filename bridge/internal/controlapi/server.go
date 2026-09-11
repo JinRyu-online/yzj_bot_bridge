@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -86,10 +87,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/memory/enable-check", s.auth(s.memoryEnableCheck))
 
 	s.srv = &http.Server{Addr: s.Addr, Handler: mux}
+	ln, err := net.Listen("tcp", s.Addr)
+	if err != nil {
+		return err
+	}
 	path, _ := s.WriteTokenFile()
 	log.Printf("control API on http://%s token file %s", s.Addr, path)
 	go func() {
-		if err := s.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("control api: %v", err)
 		}
 	}()

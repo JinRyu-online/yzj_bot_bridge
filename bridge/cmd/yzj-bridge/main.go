@@ -12,6 +12,7 @@ import (
 
 	"yzj-bridge/internal/config"
 	"yzj-bridge/internal/controlapi"
+	"yzj-bridge/internal/instancelock"
 	"yzj-bridge/internal/logbuf"
 	"yzj-bridge/internal/paths"
 	"yzj-bridge/internal/runtime"
@@ -35,6 +36,12 @@ func main() {
 	flag.Parse()
 
 	_ = paths.EnsureUserData()
+	instLock, err := instancelock.TryLock(paths.InstanceLockPath())
+	if err != nil {
+		log.Fatalf("已有 yzj-bridge 在运行，禁止启动第二个实例: %v", err)
+	}
+	defer instLock.Close()
+
 	defaultYAML := findDefaultYAML()
 	if len(defaultYAML) > 0 {
 		_ = config.BootstrapIfNeeded(defaultYAML)

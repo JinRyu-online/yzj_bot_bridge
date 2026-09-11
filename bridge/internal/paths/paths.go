@@ -47,6 +47,16 @@ func LogsDir() string {
 	return filepath.Join(UserDataDir(), "logs")
 }
 
+// RuntimeDir returns ~/.yzj-bridge/runtime (instance lock, launcher state).
+func RuntimeDir() string {
+	return filepath.Join(UserDataDir(), "runtime")
+}
+
+// InstanceLockPath returns ~/.yzj-bridge/runtime/instance.lock.
+func InstanceLockPath() string {
+	return filepath.Join(RuntimeDir(), "instance.lock")
+}
+
 func EnsureUserData() error {
 	if err := os.MkdirAll(UserDataDir(), 0o755); err != nil {
 		return err
@@ -57,5 +67,8 @@ func EnsureUserData() error {
 	if err := os.MkdirAll(LogsDir(), 0o755); err != nil {
 		return err
 	}
-	return os.MkdirAll(MemoryDir(), 0o755)
+	if err := os.MkdirAll(MemoryDir(), 0o755); err != nil {
+		return err
+	}
+	return os.MkdirAll(RuntimeDir(), 0o755)
 }
