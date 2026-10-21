@@ -123,3 +123,24 @@ func TestDiscoverCLIEngineInstallHints(t *testing.T) {
 		}
 	}
 }
+
+// TestDiscoverCLIDSHDESKTOP 验证 engine=dsh_desktop 能定位桌面客户端安装目录。
+func TestDiscoverCLIDSHDESKTOP(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "resources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "DeepSeek Harness.exe"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "resources", "app.asar"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := DiscoverCLI("dsh_desktop", dir)
+	if !r.Found || r.Path != dir {
+		t.Fatalf("result=%+v", r)
+	}
+	if r.Message == "" {
+		t.Fatal("missing success message")
+	}
+}

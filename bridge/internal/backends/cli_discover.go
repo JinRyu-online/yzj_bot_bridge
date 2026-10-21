@@ -12,13 +12,13 @@ import (
 
 // CLIDiscoverResult is the payload for GUI auto-scan of Cursor/Claude CLIs.
 type CLIDiscoverResult struct {
-	Engine     string   `json:"engine"` // cursor | claude
-	Found      bool     `json:"found"`
-	Path       string   `json:"path,omitempty"`
-	Version    string   `json:"version,omitempty"`
-	Candidates []string `json:"candidates,omitempty"`
+	Engine     string          `json:"engine"` // cursor | claude
+	Found      bool            `json:"found"`
+	Path       string          `json:"path,omitempty"`
+	Version    string          `json:"version,omitempty"`
+	Candidates []string        `json:"candidates,omitempty"`
 	Install    *CLIInstallHint `json:"install,omitempty"`
-	Message    string   `json:"message,omitempty"`
+	Message    string          `json:"message,omitempty"`
 }
 
 // CLIInstallHint tells the GUI how to help the user install a missing CLI.
@@ -54,6 +54,18 @@ func DiscoverCLI(engine, configured string) CLIDiscoverResult {
 		}
 		candidates = claudeInstallCandidates()
 		out.Install = claudeInstallHint()
+	case "dsh_desktop", "dsh-desktop", "desktop":
+		out.Engine = "dsh_desktop"
+		exe, dir, err := detectDSHDesktop(configured)
+		if err != nil {
+			out.Message = err.Error()
+			return out
+		}
+		out.Found = true
+		out.Path = dir
+		out.Candidates = []string{dir, exe}
+		out.Message = "已找到 DSH 桌面客户端"
+		return out
 	case "dsh", "dsh_jsonrpc":
 		out.Engine = "dsh"
 		if configured != "" {

@@ -395,6 +395,15 @@ async function installTauriMock(
                   },
                 });
               }
+              if (engine === "dsh_desktop") {
+                return JSON.stringify({
+                  engine: "dsh_desktop",
+                  found: true,
+                  path: "C:\\\\Program Files\\\\DeepSeek Harness",
+                  version: "0.2.1-rc.2",
+                  message: "已找到 DSH 桌面客户端",
+                });
+              }
               if (engine === "dsh") {
                 return JSON.stringify({
                   engine: "dsh",
@@ -997,6 +1006,12 @@ test("AI 设置：DSH 精简卡片（desktop/cli 切换、入口/Node/模型）�
   // 默认 desktop 模式：只渲染桌面客户端路径与模型，不渲染 CLI 入口/Node。
   await expect(page.getByTestId("dsh-mode")).toBeVisible();
   await expect(page.getByTestId("dsh-desktop-path")).toBeVisible();
+  // 进入设置页自动扫描桌面客户端：自动填入路径并写入配置 + 成功提示。
+  await expect(page.getByTestId("dsh-desktop-discover-hint")).toContainText("已找到");
+  await expect(page.getByTestId("dsh-desktop-path")).toHaveValue(/DeepSeek Harness/);
+  // 重新扫描按钮仍可用。
+  await page.getByTestId("discover-dsh-desktop").click();
+  await expect(page.getByTestId("dsh-desktop-discover-hint")).toContainText("已找到");
   await expect(page.getByTestId("dsh-entry")).toHaveCount(0);
   await expect(page.getByTestId("dsh-node-bin")).toHaveCount(0);
   await expect(page.getByTestId("dsh-model")).toBeVisible();

@@ -417,7 +417,7 @@ func (s *Server) cliDiscover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if engine == "" {
-		http.Error(w, "engine required (cursor|claude)", 400)
+		http.Error(w, "engine required (cursor|claude|dsh|dsh_desktop|node)", 400)
 		return
 	}
 	if configured == "" && s.RT != nil && s.RT.Defaults != nil {
@@ -426,6 +426,8 @@ func (s *Server) cliDiscover(w http.ResponseWriter, r *http.Request) {
 			configured, _ = s.RT.Defaults["cursor_bin"].(string)
 		case "claude", "claude_code":
 			configured, _ = s.RT.Defaults["claude_bin"].(string)
+		case "dsh_desktop", "dsh-desktop", "desktop":
+			configured, _ = s.RT.Defaults["dsh_desktop_path"].(string)
 		}
 	}
 	writeJSON(w, backends.DiscoverCLI(engine, configured))

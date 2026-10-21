@@ -1094,6 +1094,8 @@ function App() {
   const [installingCursor, setInstallingCursor] = useState(false);
   const [installingClaude, setInstallingClaude] = useState(false);
   const [dshDiscover, setDshDiscover] = useState<CliDiscoverResult | null>(null);
+  const [dshDesktopDiscover, setDshDesktopDiscover] = useState<CliDiscoverResult | null>(null);
+  const [discoveringDshDesktop, setDiscoveringDshDesktop] = useState(false);
   const [nodeDiscover, setNodeDiscover] = useState<CliDiscoverResult | null>(null);
   const [discoveringDsh, setDiscoveringDsh] = useState(false);
   const [discoveringNode, setDiscoveringNode] = useState(false);
@@ -1550,6 +1552,62 @@ function App() {
     [cliForm.cursor_bin, cliForm.claude_bin, cliForm.dsh_entry, cliForm.node_bin, showToast],
   );
 
+  // DSH 桌面客户端路径扫描：找到后自动填入并写入 config.yaml（只写 dsh_desktop_path，
+  // 不覆盖其它未保存的表单编辑）；提示与 Cursor/Claude 的扫描一致。
+  const discoverDshDesktop = useCallback(
+    async (opts?: { notify?: boolean }) => {
+      setDiscoveringDshDesktop(true);
+      try {
+        const raw = await api("POST", "/v1/backends/cli/discover", {
+          engine: "dsh_desktop",
+          bin: cliForm.dsh_desktop_path,
+        });
+        const data = JSON.parse(raw) as {
+          found?: boolean;
+          path?: string;
+          version?: string;
+          message?: string;
+        };
+        setDshDesktopDiscover({
+          found: !!data.found,
+          path: data.path,
+          version: data.version,
+          message: data.message,
+        });
+        if (data.found && data.path) {
+          setCliForm((prev) => ({ ...prev, dsh_desktop_path: data.path || prev.dsh_desktop_path }));
+          if (rawConfig) {
+            const defaults = {
+              ...(((rawConfig.defaults as Record<string, unknown> | undefined) || {}) as Record<
+                string,
+                unknown
+              >),
+            };
+            if (String(defaults.dsh_desktop_path || "") !== data.path) {
+              const next = { ...rawConfig, defaults: { ...defaults, dsh_desktop_path: data.path } };
+              await api("PUT", "/v1/config?keep_wss_state=1", next);
+              setRawConfig(next);
+            }
+          }
+          void guiLog(`已找到 DSH 桌面客户端并写入配置: ${data.path}`);
+          if (opts?.notify) {
+            showToast(`已找到 DSH 桌面客户端并写入配置：${data.path}`, "ok");
+          }
+        } else if (opts?.notify) {
+          showToast(data.message?.trim() || "未找到 DSH 桌面客户端", "err");
+        }
+        return data;
+      } catch (e) {
+        setDshDesktopDiscover({ found: false, message: String(e) });
+        if (opts?.notify) showToast(`探测 DSH 桌面客户端失败：${e}`, "err");
+        return null;
+      } finally {
+        setDiscoveringDshDesktop(false);
+      }
+    },
+    [cliForm.dsh_desktop_path, rawConfig, showToast],
+  );
+
   const openCliInstall = useCallback(async (engine: CliEngine) => {
     const setBusy =
       engine === "cursor"
@@ -1980,6 +2038,7 @@ function App() {
       void discoverCli("claude");
       void discoverCli("dsh");
       void discoverCli("node");
+      if (cliForm.dsh_mode !== "cli") void discoverDshDesktop();
     }
 
     if (!cursorModelsAutoTried.current && !loadingCursorModels) {
@@ -2926,14 +2985,41 @@ function App() {
                   {cliForm.dsh_mode !== "cli" ? (
                     <label className="full">
                       DSH 桌面客户端路径（dsh_desktop_path，可留空自动探测）
-                      <input
-                        data-testid="dsh-desktop-path"
-                        value={cliForm.dsh_desktop_path}
-                        onChange={(e) =>
-                          setCliForm({ ...cliForm, dsh_desktop_path: e.target.value })
-                        }
-                        placeholder="留空自动从注册表 / 常见安装目录查找 DeepSeek Harness"
-                      />
+                      <div className="inline-field cli-bin-row">
+                        <input
+                          data-testid="dsh-desktop-path"
+                          value={cliForm.dsh_desktop_path}
+                          onChange={(e) =>
+                            setCliForm({ ...cliForm, dsh_desktop_path: e.target.value })
+                          }
+                          placeholder="留空自动从注册表 / 常见安装目录查找 DeepSeek Harness"
+                        />
+                        <button
+                          type="button"
+                          className={`action-chip side${discoveringDshDesktop ? " loading" : ""}`}
+                          data-testid="discover-dsh-desktop"
+                          disabled={discoveringDshDesktop}
+                          onClick={() =>
+                            void discoverDshDesktop({
+                              notify: true,
+                            })
+                          }
+                        >
+                          {discoveringDshDesktop ? <span className="spinner dark" /> : null}
+                          <span>{discoveringDshDesktop ? "扫描中" : "重新扫描"}</span>
+                        </button>
+                      </div>
+                      {dshDesktopDiscover ? (
+                        <FadingHint
+                          ok={dshDesktopDiscover.found}
+                          testId="dsh-desktop-discover-hint"
+                          resetKey={dshDesktopDiscover}
+                        >
+                          {dshDesktopDiscover.found
+                            ? `已找到 DSH 桌面客户端${dshDesktopDiscover.version ? `（${dshDesktopDiscover.version}）` : ""}：${dshDesktopDiscover.path || ""}（已写入配置）`
+                            : dshDesktopDiscover.message || "未找到 DSH 桌面客户端，请确认已安装 DeepSeek Harness"}
+                        </FadingHint>
+                      ) : null}
                       <span className="field-hint">
                         {cliForm.dsh_mode === "headless"
                           ? "将用桌面客户端自带 headless CLI（--profile yzj-headless）逐条执行；自动生成 profile 并复制桌面里的模型 provider 配置"
