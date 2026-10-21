@@ -14,6 +14,7 @@ type fakeLister struct {
 	newest MessagePage
 	old    map[string]MessagePage
 	err    error
+	oldErr error
 	calls  []string
 }
 
@@ -21,6 +22,9 @@ func (f *fakeLister) MessageList(ctx context.Context, groupID, typ, anchorMsgID 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, typ+"|"+anchorMsgID)
+	if typ == "old" && f.oldErr != nil {
+		return MessagePage{}, f.oldErr
+	}
 	if f.err != nil {
 		return MessagePage{}, f.err
 	}
@@ -39,6 +43,7 @@ func testMsg(id, sendTime string) Message {
 
 func newTestWatcher(t *testing.T, lister MessageLister) (*Watcher, *StateStore, *[]Message) {
 	t.Helper()
+	resetSharedPollCooldown()
 	st, err := OpenState(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +201,7 @@ func TestWatcherRateLimitBacksOff(t *testing.T) {
 	if b := w.currentBackoff(); b < 5*time.Second {
 		t.Fatalf("backoff = %v", b)
 	}
+	resetSharedPollCooldown()
 	w.pollOnce(context.Background())
 	if b := w.currentBackoff(); b < 10*time.Second {
 		t.Fatalf("backoff not growing: %v", b)
@@ -211,5 +217,26 @@ func TestWatcherGenericErrorRetried(t *testing.T) {
 	w.pollOnce(context.Background())
 	if !w.Enabled() {
 		t.Fatal("generic error must not disable watcher")
+	}
+}
+func TestWatcherCatchUpErrorKeepsCursor(t *testing.T) {
+	lister := &fakeLister{
+		newest: MessagePage{List: []Message{
+			testMsg("m2", "2026-10-21 11:02:00.000"),
+			testMsg("m3", "2026-10-21 11:03:00.000"),
+		}},
+		oldErr: errors.New("transient page error"),
+	}
+	w, st, got := newTestWatcher(t, lister)
+	if err := st.Put("default|g1", GroupState{LastMsgID: "m0"}); err != nil {
+		t.Fatal(err)
+	}
+	w.pollOnce(context.Background())
+	if len(*got) != 0 {
+		t.Fatalf("must not dispatch partial catch-up: %+v", *got)
+	}
+	s, _ := st.Get("default|g1")
+	if s.LastMsgID != "m0" {
+		t.Fatalf("cursor advanced on catch-up error: %q", s.LastMsgID)
 	}
 }

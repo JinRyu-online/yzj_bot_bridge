@@ -32,10 +32,6 @@ type Normalized struct {
 	RobotID   string
 	RobotName string
 	GroupType int
-	// GroupID is the real Yunzhijia conversation id (yzj-cli poll source only).
-	GroupID string
-	// MsgType is the platform message type (text|richText|file|other).
-	MsgType string
 	// Source identifies the inbound channel: websocket|webhook|yzj_cli.
 	Source string
 	// Attachments are media items carried by the message (Phase 2 downloads
@@ -70,10 +66,9 @@ type Dispatcher struct {
 	// DownloadAttachment downloads one yzj-cli media item to outPath.
 	DownloadAttachment func(ctx context.Context, fileID, outPath string) error
 	// ImageEnabled turns attachment download/prompt injection on.
-	ImageEnabled  bool
-	ImageMaxMB    int
-	ImageTypes    []string
-	ImageKeepDays int
+	ImageEnabled bool
+	ImageMaxMB   int
+	ImageTypes   []string
 }
 
 type queuedJob struct {
@@ -211,11 +206,13 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 		log.Printf("bot=%s ws skip: target robot=%q (this bot=%q)", botID, n.RobotName, b.Config.Name)
 		return
 	}
-	key := n.Source + "|" + botID + ":" + n.MsgID
+	// 不把 Source 放进 key：同一平台消息可能同时走 webhook + WSS（both 模式），
+	// 需要按 bot+msgID 跨入口去重；yzj-cli 的 msgID 也来自同一平台。
+	key := botID + ":" + n.MsgID
 	if d.Dedupe.AlreadySeen(key) {
 		return
 	}
-	if !n.ForceTarget && !commands.MessageTargetsBot(n.Content, b, d.Reg) {
+	if !n.ForceTarget && !commands.MessageTargetsBot(n.Content, b, d.Reg, n.GroupType) {
 		return
 	}
 	if !commands.Allowed(b.Config, n.OpenID, n.Name) {
@@ -554,6 +551,10 @@ func (d *Dispatcher) handleForgetCmd(openID string) string {
 func websocketMessageForBot(b *bot.Bot, n Normalized) bool {
 	if b == nil {
 		return false
+	}
+	targetID := strings.TrimSpace(n.RobotID)
+	if targetID != "" && strings.TrimSpace(b.Config.YzjBotOpenID) != "" {
+		return strings.EqualFold(targetID, strings.TrimSpace(b.Config.YzjBotOpenID))
 	}
 	target := strings.TrimSpace(n.RobotName)
 	if target == "" {

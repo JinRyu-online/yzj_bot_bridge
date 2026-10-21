@@ -123,9 +123,6 @@ func EnsureBinary(ctx context.Context, cfg Config) (string, error) {
 		return p, nil
 	} else if !cfg.AutoInstall {
 		return "", err
-	} else if !strings.EqualFold(strings.TrimSpace(cfg.Version), "") {
-		// fall through to install
-		_ = err
 	}
 	return Install(ctx, cfg)
 }
@@ -198,8 +195,10 @@ func Install(ctx context.Context, cfg Config) (string, error) {
 			if meta.Version != "" && meta.Version != version {
 				return "", fmt.Errorf("yzj-cli package version %s != requested %s", meta.Version, version)
 			}
-			if expected == "" && meta.Checksum != "" {
-				expected = meta.Checksum
+			// update.json 与 exe 来自同一 CDN 包，不能拿它“自证”校验和；
+			// 只信任编译进 knownChecksums 的 digest。
+			if meta.Checksum != "" && expected != "" && !strings.EqualFold(meta.Checksum, expected) {
+				return "", fmt.Errorf("yzj-cli package checksum metadata does not match pinned digest")
 			}
 		}
 	}
@@ -257,7 +256,9 @@ type Status struct {
 // Detect resolves the binary and (optionally) verifies version and login.
 func Detect(ctx context.Context, cfg Config) Status {
 	st := Status{VersionWant: cfg.Version, Profile: cfg.Profile, ConfigDir: cfg.ConfigDir}
-	bin, err := EnsureBinary(ctx, cfg)
+	// 状态探测是只读操作：只解析本地已有 bin，不在这里触发自动下载。
+	// 真正启用轮询时由 runtime.setupPollers 调 EnsureBinary。
+	bin, err := ResolveBinary(cfg)
 	if err != nil {
 		st.Error = err.Error()
 		return st

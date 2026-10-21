@@ -225,6 +225,26 @@ const BACKEND_LABELS: Record<string, string> = {
 };
 const MIN_LOADING_MS = 500;
 
+function backendLabel(id: string): string {
+  return BACKEND_LABELS[id] || id || "未选择";
+}
+
+function inboundLabel(mode?: string): string {
+  switch (String(mode || "").toLowerCase()) {
+    case "yzj_cli":
+    case "poll":
+      return "yzj-cli 轮询";
+    case "websocket":
+      return "WebSocket";
+    case "webhook":
+      return "Webhook";
+    case "both":
+      return "WebSocket + Webhook";
+    default:
+      return mode || "未配置入站";
+  }
+}
+
 function isPollInbound(mode?: string): boolean {
   const m = String(mode || "").toLowerCase();
   return m === "yzj_cli" || m === "poll";
@@ -240,6 +260,35 @@ function isPollThrottledError(err?: string): boolean {
     s.includes("10000429") ||
     s.includes("429")
   );
+}
+
+function isYzjAuthError(err?: string): boolean {
+  const s = String(err || "").toLowerCase();
+  return (
+    s.includes("not logged") ||
+    s.includes("未登录") ||
+    s.includes("登录") ||
+    s.includes("auth") ||
+    s.includes("unauthorized") ||
+    s.includes("401") ||
+    s.includes("token expired") ||
+    s.includes("token 过期") ||
+    s.includes("expired")
+  );
+}
+
+/** 设置页 yzj-cli 状态：把原始 CLI 错误折叠成可执行的三种状态文案。 */
+function yzjStatusText(s?: YzjCliStatus | null, fallback = "检测中…"): string {
+  if (!s) return fallback;
+  if (!s.found) {
+    return "未安装：请安装 yzj-cli，或在配置里启用 auto_install 后启动轮询（打开设置页不会自动下载）";
+  }
+  if (!s.logged_in) {
+    return "已安装但未登录：终端执行 yzj-cli auth login 后点「刷新登录状态」";
+  }
+  const who = s.identity?.name || s.identity?.openId || "";
+  const exp = s.identity?.expiresAt || "?";
+  return `已登录：${who} · token 到期 ${exp}`;
 }
 
 function shortError(err: string, max = 56): string {
@@ -262,22 +311,23 @@ function channelLive(s?: StatusItem | null): boolean {
 function channelStatusLabel(s?: StatusItem | null, inboundMode?: string): string {
   const mode = inboundMode || s?.inbound_mode;
   if (isPollInbound(mode)) {
-    if (!s) return "yzj-cli · 已启用";
+    if (!s) return "yzj-cli · 未启动";
     const pollErr = String(s.last_poll_error || "").trim();
     if (pollErr) {
-      return isPollThrottledError(pollErr)
-        ? "yzj-cli · 限流重试中"
-        : `yzj-cli · 轮询异常：${shortError(pollErr)}`;
+      if (isPollThrottledError(pollErr)) return "yzj-cli · 限流重试中";
+      if (isYzjAuthError(pollErr)) return "yzj-cli · 需重新登录";
+      return `yzj-cli · 轮询异常：${shortError(pollErr)}`;
     }
     if (!String(s.yzj_group_id || "").trim()) return "yzj-cli · 未配置会话";
     if (s.poll_enabled) {
       return s.last_poll_at ? "yzj-cli · 轮询中" : "yzj-cli · 已启用";
     }
-    return "yzj-cli · 轮询已暂停";
+    return s.last_poll_at ? "yzj-cli · 轮询已暂停" : "yzj-cli · 未启动";
   }
   if (!s) return "无状态";
   if (s.connected) return "已连接";
-  return String(s.last_error || "").trim() || "未连接";
+  const wsErr = String(s.last_error || "").trim();
+  return wsErr ? `连接异常：${shortError(wsErr)}` : "未连接";
 }
 
 type CliEngine = "cursor" | "claude" | "dsh" | "node";
@@ -1118,8 +1168,10 @@ function App() {
   const [botWorkspaceTouched, setBotWorkspaceTouched] = useState(false);
   const [yzjStatus, setYzjStatus] = useState<YzjCliStatus | null>(null);
   const [yzjStatusErr, setYzjStatusErr] = useState("");
+  const [yzjStatusBusy, setYzjStatusBusy] = useState(false);
   const [yzjGroups, setYzjGroups] = useState<YzjGroup[]>([]);
   const [yzjGroupsBusy, setYzjGroupsBusy] = useState(false);
+  const [yzjGroupKeyword, setYzjGroupKeyword] = useState("");
   const [channelForm, setChannelForm] = useState<ChannelForm>(channelFormFrom({}, null));
   const [channelModalError, setChannelModalError] = useState<{ text: string; seq: number } | null>(
     null,
@@ -1653,6 +1705,7 @@ function App() {
         });
         if (data.found && data.path) {
           setCliForm((prev) => ({ ...prev, dsh_desktop_path: data.path || prev.dsh_desktop_path }));
+          let written = false;
           if (rawConfig) {
             const defaults = {
               ...(((rawConfig.defaults as Record<string, unknown> | undefined) || {}) as Record<
@@ -1664,11 +1717,21 @@ function App() {
               const next = { ...rawConfig, defaults: { ...defaults, dsh_desktop_path: data.path } };
               await api("PUT", "/v1/config?keep_wss_state=1", next);
               setRawConfig(next);
+              written = true;
             }
           }
-          void guiLog(`已找到 DSH 桌面客户端并写入配置: ${data.path}`);
+          void guiLog(
+            written
+              ? `已找到 DSH 桌面客户端并写入配置: ${data.path}`
+              : `已找到 DSH 桌面客户端（路径未变化）: ${data.path}`,
+          );
           if (opts?.notify) {
-            showToast(`已找到 DSH 桌面客户端并写入配置：${data.path}`, "ok");
+            showToast(
+              written
+                ? `已找到 DSH 桌面客户端并写入配置：${data.path}`
+                : `已找到 DSH 桌面客户端，路径未变化：${data.path}`,
+              "ok",
+            );
           }
         } else if (opts?.notify) {
           showToast(data.message?.trim() || "未找到 DSH 桌面客户端", "err");
@@ -2046,8 +2109,9 @@ function App() {
 
   const summary = useMemo(() => {
     const total = status.length;
+    // “启用”是配置态：轮询通道以是否配置了会话为准，避免认证失效时显示启用 0。
     const enabled = status.filter((s) =>
-      isPollInbound(s.inbound_mode) ? !!s.poll_enabled : !!s.ws_enabled,
+      isPollInbound(s.inbound_mode) ? !!String(s.yzj_group_id || "").trim() : !!s.ws_enabled,
     ).length;
     const connected = status.filter((s) => channelLive(s)).length;
     return { total, enabled, connected };
@@ -2117,7 +2181,6 @@ function App() {
       void discoverCli("claude");
       void discoverCli("dsh");
       void discoverCli("node");
-      if (cliForm.dsh_mode !== "cli") void discoverDshDesktop();
     }
 
     if (!cursorModelsAutoTried.current && !loadingCursorModels) {
@@ -2136,11 +2199,9 @@ function App() {
       }
     }
 
-    // DSH：入口与 Node 有值时自动拉一次模型（扫描结果可能异步填充 dsh_entry，
-    // 依赖数组含 dsh_entry，填充后此分支会在下一次 effect 运行中触发）。
+    // DSH 模型接口只依赖 dsh_home，与运行方式无关；headless/sdk 也要自动拉一次。
     if (!dshModelsAutoTried.current && !loadingDshModels) {
-      const entry = cliForm.dsh_entry.trim();
-      if (entry) {
+      if (cliForm.dsh_mode !== "cli" || cliForm.dsh_entry.trim()) {
         dshModelsAutoTried.current = true;
         void refreshDSHModels();
       }
@@ -2163,6 +2224,7 @@ function App() {
     cliForm.cursor_bin,
     cliForm.claude_bin,
     cliForm.dsh_entry,
+    cliForm.dsh_mode,
     cliForm.openai_base_url,
     cliForm.openai_api_key,
     loadingCursorModels,
@@ -2292,6 +2354,8 @@ function App() {
   }
 
   async function refreshYzjCli() {
+    if (yzjStatusBusy) return;
+    setYzjStatusBusy(true);
     try {
       const raw = await api("GET", "/v1/yzj/cli/status");
       setYzjStatus(JSON.parse(raw) as YzjCliStatus);
@@ -2299,6 +2363,8 @@ function App() {
     } catch (e) {
       setYzjStatus(null);
       setYzjStatusErr(String(e));
+    } finally {
+      setYzjStatusBusy(false);
     }
   }
 
@@ -2361,14 +2427,28 @@ function App() {
         if (!botForm.model.trim()) fieldErrs.model = "请选择或填写模型";
       }
     }
-    if (botForm.inbound_mode === "yzj_cli" && !botForm.yzj_group_id.trim()) {
-      fieldErrs.yzj_group_id = "请填写或从最近会话选择 yzj_group_id";
+    if (isPollInbound(botForm.inbound_mode)) {
+      const pollChannels = selectedChannels;
+      if (pollChannels.length > 1) {
+        const ids = pollChannels.map((ch) =>
+          String(ch.yzj_group_id || botForm.yzj_group_id || "").trim(),
+        );
+        if (ids.some((id) => !id)) {
+          fieldErrs.yzj_group_id =
+            "多通道 yzj-cli 机器人必须为每个通道配置 yzj_group_id（通道 → 编辑）";
+        } else if (new Set(ids).size !== ids.length) {
+          fieldErrs.yzj_group_id = "多个通道使用了同一个 yzj_group_id，请改成不同群/会话";
+        }
+      } else if (!botForm.yzj_group_id.trim()) {
+        fieldErrs.yzj_group_id = "请填写或从最近会话选择 yzj_group_id";
+      }
     }
     if (Object.keys(fieldErrs).length) {
       setBotFieldErrors(fieldErrs);
       flashBotModalError(
         fieldErrs.send_msg_url ||
           fieldErrs.openai ||
+          fieldErrs.yzj_group_id ||
           fieldErrs.id ||
           fieldErrs.name ||
           "请完善表单后再保存",
@@ -2485,7 +2565,9 @@ function App() {
 
   function openAddChannel() {
     setEditingChannelIdx(null);
-    setChannelForm(channelFormFrom({}, selectedRoleConfig));
+    const base = channelFormFrom({}, selectedRoleConfig);
+    // 新增通道不预填角色级 group id：多通道最容易在这里继承出重复的轮询群。
+    setChannelForm({ ...base, yzj_group_id: "", yzj_group_name: "" });
     setChannelModalError(null);
     setChannelModal(true);
     if (String(selectedRoleConfig?.backend || "") === "openai" && !openaiModels.length) {
@@ -2516,10 +2598,22 @@ function App() {
       flashChannelModalError("通道 group / send_msg_url 不能为空");
       return;
     }
-    const pollChannel = String(selectedRoleConfig.inbound_mode || "") === "yzj_cli";
-    if (pollChannel && !channelForm.yzj_group_id.trim()) {
+    const pollChannel = isPollInbound(String(selectedRoleConfig.inbound_mode || ""));
+    const nextGroupID = channelForm.yzj_group_id.trim();
+    if (pollChannel && !nextGroupID) {
       flashChannelModalError("yzj-cli 通道必须配置自己的会话 ID（多通道不能共用同一个 yzj_group_id）");
       return;
+    }
+    if (pollChannel) {
+      const duplicated = selectedChannels.some((ch, i) => {
+        if (i === editingChannelIdx) return false;
+        const gid = String(ch.yzj_group_id || selectedRoleConfig.yzj_group_id || "").trim();
+        return gid !== "" && gid === nextGroupID;
+      });
+      if (duplicated) {
+        flashChannelModalError("该会话 ID 已被本机器人的其他通道使用，请为每个通道选择不同的群/会话");
+        return;
+      }
     }
     const conflict = findWebhookConflict(
       (rawConfig.bots as Record<string, unknown>[]) || [],
@@ -2654,7 +2748,7 @@ function App() {
         prevMem.gui_bind_enabled = cliForm.memory_gui_bind_enabled;
         defaults.memory = prevMem;
         await saveConfig({ ...rawConfig, defaults });
-        await refreshConfig();
+        await Promise.all([refreshConfig(), refreshAvailableBackends()]);
         showToast("设置已保存", "ok");
         void guiLog("保存 AI 设置成功");
       } catch (e) {
@@ -2674,10 +2768,11 @@ function App() {
   );
 
   const backendOptions = useMemo(() => {
-    const withIcon = (id: string, label: string) => ({
+    const withIcon = (id: string, label: string, disabled = false) => ({
       id,
       label,
       icon: <EngineIcon id={id} size={14} />,
+      disabled,
     });
     const byId = new Map(availableBackends.map((b) => [b.id, b]));
     // 始终列出全部已知引擎；不可用时附带原因，避免 DSH 等因探测失败从下拉消失。
@@ -2685,7 +2780,8 @@ function App() {
       const info = byId.get(id);
       const base = info?.label || BACKEND_LABELS[id] || id;
       if (info && !info.available && info.reason) {
-        return withIcon(id, `${base}（${info.reason}）`);
+        // 保留引擎可见（方便用户知道缺少什么），但不允许从可用引擎切到不可用占位后端。
+        return withIcon(id, `${base}（${info.reason}）`, id !== botForm.backend);
       }
       return withIcon(id, base);
     });
@@ -2695,10 +2791,10 @@ function App() {
     return list;
   }, [availableBackends, botForm.backend]);
   const inboundOptions = [
-    { id: "websocket", label: "websocket" },
-    { id: "webhook", label: "webhook" },
-    { id: "both", label: "both" },
-    { id: "yzj_cli", label: "yzj_cli（轮询，仅配置会话）" },
+    { id: "websocket", label: "WebSocket" },
+    { id: "webhook", label: "Webhook" },
+    { id: "both", label: "WebSocket + Webhook" },
+    { id: "yzj_cli", label: "yzj-cli 轮询（仅配置会话）" },
   ];
   const yzjTriggerOptions = [
     { id: "mention", label: "mention（群聊：需 @机器人）" },
@@ -2938,11 +3034,7 @@ function App() {
                 <div className="form-grid">
                   <div className="field full">
                     <span className={`field-hint ${yzjStatus?.logged_in ? "ok" : "error"}`}>
-                      {yzjStatus
-                        ? yzjStatus.logged_in
-                          ? `已登录：${yzjStatus.identity?.name || ""}（${yzjStatus.identity?.openId || ""}）· token 到期 ${yzjStatus.identity?.expiresAt || "?"}`
-                          : yzjStatus.error || "未登录（终端执行 yzj-cli auth login）"
-                        : yzjStatusErr || "检测中…"}
+                      {yzjStatusText(yzjStatus, yzjStatusErr || "检测中…")}
                     </span>
                   </div>
                   <div className="field full">
@@ -2952,8 +3044,13 @@ function App() {
                     </span>
                   </div>
                   <div className="field full">
-                    <button type="button" className="action-chip side" onClick={() => void refreshYzjCli()}>
-                      刷新登录状态
+                    <button
+                      type="button"
+                      className="action-chip side"
+                      disabled={yzjStatusBusy}
+                      onClick={() => void refreshYzjCli()}
+                    >
+                      {yzjStatusBusy ? "检测中…" : "刷新登录状态"}
                     </button>
                   </div>
                 </div>
@@ -3685,18 +3782,35 @@ function App() {
                     >
                       <div className="role-card-top">
                         <strong>{primary.name || roleId}</strong>
-                        <span className={`pill${channels.some((c) => channelLive(c)) ? " live" : ""}`}>
+                        <span
+                          className={`pill${channels.some((c) => channelLive(c)) ? " live" : ""}${
+                            channels.some(
+                              (c) =>
+                                isPollInbound(c.inbound_mode) &&
+                                !channelLive(c) &&
+                                String(c.last_poll_error || "").trim() !== "",
+                            )
+                              ? " warn"
+                              : ""
+                          }`}
+                        >
                           {channels.some((c) => channelLive(c))
                             ? isPollInbound(primary.inbound_mode)
                               ? "轮询中"
                               : "在线"
-                            : isPollInbound(primary.inbound_mode)
-                              ? "未轮询"
-                              : "离线"}
+                            : channels.some(
+                                  (c) =>
+                                    isPollInbound(c.inbound_mode) &&
+                                    String(c.last_poll_error || "").trim() !== "",
+                                )
+                              ? "需处理"
+                              : isPollInbound(primary.inbound_mode)
+                                ? "未轮询"
+                                : "离线"}
                         </span>
                       </div>
                       <div className="role-meta">
-                        <span>{primary.backend}</span>
+                        <span>{backendLabel(primary.backend)}</span>
                         <span>{channels.length} 通道</span>
                       </div>
                     </button>
@@ -3712,7 +3826,7 @@ function App() {
                       <div>
                         <h2>{selectedItem.name}</h2>
                         <p>
-                          {selectedRoleId} · {selectedItem.backend} · {selectedItem.inbound_mode}
+                          {selectedRoleId} · {backendLabel(selectedItem.backend)} · {inboundLabel(selectedItem.inbound_mode)}
                         </p>
                       </div>
                       <button className="btn danger ghost" disabled={saving} onClick={deleteBot}>
@@ -3757,7 +3871,9 @@ function App() {
                                     onChange={(v) => setChannelEnabled(runtime.id, v)}
                                   />
                                 ) : (
-                                  <span className="pill">{pollMode ? "yzj-cli" : "无 WSS"}</span>
+                                  <span className="pill">
+                                    {pollMode ? "yzj-cli 轮询" : inboundLabel(selectedItem.inbound_mode)}
+                                  </span>
                                 )}
                               </div>
                               <code className="url-line">
@@ -4129,6 +4245,7 @@ function App() {
               <div className="field">
                 <FieldLabel tip="消息如何进入桥接：WebSocket、Webhook 或两者">入站模式</FieldLabel>
                 <FancySelect
+                  testId="bot-inbound"
                   value={botForm.inbound_mode}
                   options={inboundOptions}
                   onChange={(v) => setBotForm({ ...botForm, inbound_mode: v })}
@@ -4136,6 +4253,14 @@ function App() {
               </div>
               {botForm.inbound_mode === "yzj_cli" ? (
                 <>
+                  {selectedChannels.length > 1 ? (
+                    <div className="field full">
+                      <span className="field-hint">
+                        多通道机器人：请到「通道 → 编辑」为每个通道分别配置 yzj_group_id；
+                        这里留空即可。新增通道不会自动继承这个值，避免多个群共用一个轮询。
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="field full">
                     <FieldLabel tip="只轮询这个会话；个人机器人会话也会出现在「最近会话」中">
                       会话 ID yzj_group_id
@@ -4157,12 +4282,23 @@ function App() {
                         type="button"
                         className={`action-chip side${yzjGroupsBusy ? " loading" : ""}`}
                         disabled={yzjGroupsBusy}
-                        onClick={() => void loadYzjGroups("")}
+                        onClick={() => void loadYzjGroups(yzjGroupKeyword)}
                       >
                         {yzjGroupsBusy ? <span className="spinner dark" /> : null}
-                        <span>{yzjGroupsBusy ? "拉取中" : "拉取最近会话"}</span>
+                        <span>{yzjGroupsBusy ? "拉取中" : "搜索 / 拉取会话"}</span>
                       </button>
                     </div>
+                    <div className="inline-field" style={{ marginTop: 8 }}>
+                      <input
+                        data-testid="yzj-group-search"
+                        value={yzjGroupKeyword}
+                        onChange={(e) => setYzjGroupKeyword(e.target.value)}
+                        placeholder="按群名搜索（留空拉取最近 20 个）"
+                      />
+                    </div>
+                    {!yzjGroupsBusy && !yzjGroups.length ? (
+                      <span className="field-hint">未拉取到会话，可直接填写会话 ID；也可先点「搜索 / 拉取会话」</span>
+                    ) : null}
                     {botFieldErrors.yzj_group_id ? (
                       <span className="field-hint error">{botFieldErrors.yzj_group_id}</span>
                     ) : null}
@@ -4598,7 +4734,7 @@ function App() {
                   }}
                 />
               </div>
-              {String(selectedRoleConfig?.inbound_mode || "") === "yzj_cli" ? (
+              {isPollInbound(String(selectedRoleConfig?.inbound_mode || "")) ? (
                 <>
                   <div className="field full">
                     <FieldLabel tip="每个通道对应一个真实群/会话；多通道角色必须分别配置，不能共用同一个 ID">
@@ -4619,12 +4755,23 @@ function App() {
                         className={`action-chip side${yzjGroupsBusy ? " loading" : ""}`}
                         data-testid="channel-load-yzj-groups"
                         disabled={yzjGroupsBusy}
-                        onClick={() => void loadYzjGroups("")}
+                        onClick={() => void loadYzjGroups(yzjGroupKeyword)}
                       >
                         {yzjGroupsBusy ? <span className="spinner dark" /> : null}
-                        <span>{yzjGroupsBusy ? "拉取中" : "拉取最近会话"}</span>
+                        <span>{yzjGroupsBusy ? "拉取中" : "搜索 / 拉取会话"}</span>
                       </button>
                     </div>
+                    <div className="inline-field" style={{ marginTop: 8 }}>
+                      <input
+                        data-testid="channel-yzj-group-search"
+                        value={yzjGroupKeyword}
+                        onChange={(e) => setYzjGroupKeyword(e.target.value)}
+                        placeholder="按群名搜索（留空拉取最近 20 个）"
+                      />
+                    </div>
+                    {!yzjGroupsBusy && !yzjGroups.length ? (
+                      <span className="field-hint">未拉取到会话，可直接填写会话 ID</span>
+                    ) : null}
                   </div>
                   {yzjGroups.length ? (
                     <div className="field full">

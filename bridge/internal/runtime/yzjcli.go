@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -66,6 +67,9 @@ func (r *Runtime) setupPollers(bots []*bot.Bot) {
 		if !bot.ModeUsesPoll(c.InboundMode) {
 			continue
 		}
+		if len(c.AllowUsers) > 0 {
+			log.Printf("yzjcli: bot=%s poll 模式无法按姓名匹配 allow_users（消息只有 openID），白名单可能拒绝所有人；请改用 allow_openids", c.ID)
+		}
 		gid := strings.TrimSpace(c.YzjGroupID)
 		if gid == "" {
 			log.Printf("yzjcli: bot %s uses inbound_mode=%s but yzj_group_id is empty; skipped", c.ID, c.InboundMode)
@@ -106,18 +110,15 @@ func (r *Runtime) setupPollers(bots []*bot.Bot) {
 		return
 	}
 	var downloadClient *yzjcli.Client
-	for key, tg := range targets {
+	for key := range targets {
 		m := meta[key]
 		profileCfg := cfg
 		profileCfg.Profile = m.Profile
+		// Load 持锁执行，绝不能在锁内下载安装（最坏会卡住 GUI 数分钟）。
+		// 未安装时只标记该群不可用；安装由用户显式完成或轮询启动前另行处理。
 		bin, err := yzjcli.ResolveBinary(profileCfg)
-		if err != nil && profileCfg.AutoInstall {
-			installCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			bin, err = yzjcli.EnsureBinary(installCtx, profileCfg)
-			cancel()
-		}
 		if err != nil {
-			log.Printf("yzjcli: group %s (%s) disabled: %v", m.GroupName, m.GroupID, err)
+			log.Printf("yzjcli: group %s (%s) disabled: %v（请先安装 yzj-cli 再重启桥）", m.GroupName, m.GroupID, err)
 			continue
 		}
 		client := yzjcli.NewClient(bin, m.Profile, profileCfg.ConfigDir, profileCfg.Timeout)
@@ -137,7 +138,6 @@ func (r *Runtime) setupPollers(bots []*bot.Bot) {
 			},
 		}
 		r.PollWatchers[key] = watcher
-		_ = tg
 	}
 	if r.Disp != nil {
 		enabled, maxMB, types, _ := r.yzjImageSettingsLocked()
@@ -180,7 +180,7 @@ func (r *Runtime) onPollMessage(key string, msg yzjcli.Message) {
 		// 多通道角色如果都继承了同一个 yzj_group_id，会共用同一 watcher：
 		// 只允许通道 group 标签与本 watcher 群名一致的 bot 响应，避免跨群抢答。
 		if len(targets) > 1 && meta.GroupName != "" && !samePollGroupLabel(t.ChannelGroup, meta.GroupName) {
-			log.Printf("yzjcli: bot=%s ws/poll skip: channel group=%q does not match group=%q (check per-channel yzj_group_id)",
+			log.Printf("yzjcli: bot=%s poll skip: channel group=%q does not match group=%q (check per-channel yzj_group_id)",
 				t.BotID, t.ChannelGroup, meta.GroupName)
 			continue
 		}
@@ -191,8 +191,6 @@ func (r *Runtime) onPollMessage(key string, msg yzjcli.Message) {
 			OpenID:      msg.FromOpenID,
 			MsgID:       msg.MsgID,
 			Content:     msg.DisplayText(),
-			GroupID:     meta.GroupID,
-			MsgType:     msg.MsgType,
 			Source:      "yzj_cli",
 			ForceTarget: true,
 			Attachments: convertAttachments(msg.Attachments()),
@@ -395,9 +393,10 @@ func (r *Runtime) YzjCLIGroups(ctx context.Context, keyword string, limit int) (
 	if limit <= 0 || limit > 20 {
 		limit = 20
 	}
-	bin, err := yzjcli.EnsureBinary(ctx, cfg)
+	// 群列表是只读操作：只解析本地已安装的 bin，不在用户点“搜索/拉取”时静默下载安装。
+	bin, err := yzjcli.ResolveBinary(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("yzj-cli 未安装：%w；请先安装 yzj-cli，或启用 auto_install 后再启动轮询", err)
 	}
 	client := yzjcli.NewClient(bin, cfg.Profile, cfg.ConfigDir, cfg.Timeout)
 	if strings.TrimSpace(keyword) != "" {
@@ -415,5 +414,5 @@ func samePollGroupLabel(a, b string) bool {
 		return s
 	}
 	a, b = norm(a), norm(b)
-	return a != "" && b != "" && (a == b || strings.Contains(a, b) || strings.Contains(b, a))
+	return a != "" && b != "" && a == b
 }

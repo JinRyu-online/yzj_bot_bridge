@@ -2,6 +2,7 @@ package yzjcli
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"strings"
@@ -18,6 +19,44 @@ type MessageLister interface {
 //
 // It never polls groups that are not in the bridge config: the runtime creates
 // one Watcher per (profile, groupID) referenced by bots/channels.
+// sharedPollCooldown 是进程内所有 watcher 共享的限流冷却：某个群触发
+// 10000429 后，其它群不要在冷却期内继续撞接口。
+var sharedPollCooldown struct {
+	mu    sync.Mutex
+	until time.Time
+}
+
+func waitSharedPoll(ctx context.Context) bool {
+	for {
+		sharedPollCooldown.mu.Lock()
+		d := time.Until(sharedPollCooldown.until)
+		sharedPollCooldown.mu.Unlock()
+		if d <= 0 {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(d):
+		}
+	}
+}
+
+func resetSharedPollCooldown() {
+	sharedPollCooldown.mu.Lock()
+	sharedPollCooldown.until = time.Time{}
+	sharedPollCooldown.mu.Unlock()
+}
+
+func noteSharedThrottle() {
+	sharedPollCooldown.mu.Lock()
+	next := time.Now().Add(30 * time.Second)
+	if next.After(sharedPollCooldown.until) {
+		sharedPollCooldown.until = next
+	}
+	sharedPollCooldown.mu.Unlock()
+}
+
 type Watcher struct {
 	Client       MessageLister
 	Store        *StateStore
@@ -30,11 +69,11 @@ type Watcher struct {
 	OnMessage    func(ctx context.Context, msg Message)
 	OnAuthGiveUp func(key, reason string)
 
-	mu        sync.Mutex
-	enabled   bool
-	cancel    context.CancelFunc
-	lastPoll  time.Time
-	lastMsgAt time.Time
+	mu           sync.Mutex
+	enabled      bool
+	cancel       context.CancelFunc
+	lastPoll     time.Time
+	lastMsgAt    time.Time
 	lastErr      string
 	authFails    int
 	backoff      time.Duration
@@ -123,6 +162,9 @@ func (w *Watcher) currentBackoff() time.Duration {
 }
 
 func (w *Watcher) pollOnce(ctx context.Context) {
+	if !waitSharedPoll(ctx) {
+		return
+	}
 	page, err := w.Client.MessageList(ctx, w.GroupID, "newest", "", 20)
 	if err != nil {
 		w.noteError(err)
@@ -158,7 +200,12 @@ func (w *Watcher) pollOnce(ctx context.Context) {
 	if st.LastMsgID == newest.MsgID {
 		return
 	}
-	msgs, found := w.gather(ctx, page, st.LastMsgID)
+	msgs, found, gerr := w.gather(ctx, page, st.LastMsgID)
+	if gerr != nil {
+		// 补拉历史失败：不要推进游标，下一轮重试，避免把出错窗口内的消息永久跳过。
+		w.noteError(gerr)
+		return
+	}
 	if !found {
 		w.noteErrorf("cursor %s not found within catch-up window; skipping %d message(s) to avoid replay", st.LastMsgID, len(msgs))
 	}
@@ -179,10 +226,10 @@ func (w *Watcher) pollOnce(ctx context.Context) {
 // gather collects new messages in ascending time order. page.List is ascending
 // (platform order). When cursor is not in the newest page, older pages are
 // pulled until it is found or the catch-up budget is exhausted.
-func (w *Watcher) gather(ctx context.Context, page MessagePage, cursor string) ([]Message, bool) {
+func (w *Watcher) gather(ctx context.Context, page MessagePage, cursor string) ([]Message, bool, error) {
 	list := page.List
 	if idx := indexOfMsg(list, cursor); idx >= 0 {
-		return dedupeMsgs(list[idx+1:]), true
+		return dedupeMsgs(list[idx+1:]), true, nil
 	}
 	catchup := w.CatchupPages
 	if catchup <= 0 {
@@ -193,15 +240,14 @@ func (w *Watcher) gather(ctx context.Context, page MessagePage, cursor string) (
 	for i := 0; i < catchup; i++ {
 		prev, err := w.Client.MessageList(ctx, w.GroupID, "old", anchor, 20)
 		if err != nil {
-			w.noteError(err)
-			break
+			return nil, false, err
 		}
 		if len(prev.List) == 0 {
 			break
 		}
 		if idx := indexOfMsg(prev.List, cursor); idx >= 0 {
 			older = append(append([]Message{}, prev.List[idx+1:]...), older...)
-			return dedupeMsgs(append(older, list...)), true
+			return dedupeMsgs(append(older, list...)), true, nil
 		}
 		older = append(append([]Message{}, prev.List...), older...)
 		anchor = prev.List[0].MsgID
@@ -209,7 +255,7 @@ func (w *Watcher) gather(ctx context.Context, page MessagePage, cursor string) (
 			break
 		}
 	}
-	return dedupeMsgs(append(older, list...)), false
+	return dedupeMsgs(append(older, list...)), false, nil
 }
 
 func (w *Watcher) dispatch(ctx context.Context, msgs []Message) {
@@ -241,6 +287,7 @@ func (w *Watcher) noteError(err error) {
 	w.mu.Lock()
 	w.lastErr = err.Error()
 	if IsRateLimited(err) {
+		noteSharedThrottle()
 		next := 30 * time.Second
 		if w.backoff > 0 {
 			next = w.backoff * 2
@@ -271,7 +318,7 @@ func (w *Watcher) noteError(err error) {
 
 func (w *Watcher) noteErrorf(format string, args ...any) {
 	w.mu.Lock()
-	w.lastErr = format
+	w.lastErr = fmt.Sprintf(format, args...)
 	w.mu.Unlock()
 	log.Printf("yzjcli watcher=%s "+format, append([]any{w.Key}, args...)...)
 }

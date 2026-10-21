@@ -27,7 +27,7 @@ export function FancySelect<T extends string>({
   onOpen,
 }: {
   value: T;
-  options: { id: T; label: string; icon?: ReactNode }[];
+  options: { id: T; label: string; icon?: ReactNode; disabled?: boolean }[];
   onChange: (v: T) => void;
   testId?: string;
   className?: string;
@@ -139,6 +139,7 @@ export function FancySelect<T extends string>({
   }, [query]);
 
   const pick = (id: T) => {
+    if (merged.find((o) => o.id === id)?.disabled) return;
     onChange(id);
     setOpen(false);
     setQuery("");
@@ -198,9 +199,13 @@ export function FancySelect<T extends string>({
                     type="button"
                     role="option"
                     aria-selected={o.id === value}
-                    className={`fancy-option${o.id === value ? " active" : ""}${idx === activeIdx ? " focus" : ""}`}
+                    aria-disabled={o.disabled ? true : undefined}
+                    disabled={o.disabled}
+                    className={`fancy-option${o.id === value ? " active" : ""}${idx === activeIdx ? " focus" : ""}${o.disabled ? " disabled" : ""}`}
                     title={o.label}
-                    onMouseEnter={() => setActiveIdx(idx)}
+                    onMouseEnter={() => {
+                      if (!o.disabled) setActiveIdx(idx);
+                    }}
                     onClick={() => pick(o.id)}
                   >
                     {o.icon ? <span className="fancy-option-icon">{o.icon}</span> : null}

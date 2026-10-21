@@ -199,8 +199,8 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		if hasKey && c.store != nil {
 			c.store.SetChatID(c.cfg.ID, entryKey, sessionID, opts.OperatorName)
 			e := c.store.GetEntry(c.cfg.ID, entryKey)
-			e.AgentCWD = opts.Workspace
 			c.store.SetProject(c.cfg.ID, entryKey, e.ProjectName, e.ProjectPath)
+			c.store.SetAgentCWD(c.cfg.ID, entryKey, opts.Workspace)
 			_ = c.store.Save()
 		}
 		return res
@@ -209,8 +209,8 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	if hasKey && c.store != nil {
 		c.store.SetChatID(c.cfg.ID, entryKey, sessionID, opts.OperatorName)
 		e := c.store.GetEntry(c.cfg.ID, entryKey)
-		e.AgentCWD = opts.Workspace
 		c.store.SetProject(c.cfg.ID, entryKey, e.ProjectName, e.ProjectPath)
+		c.store.SetAgentCWD(c.cfg.ID, entryKey, opts.Workspace)
 		// preserve agent cwd via SetProject only sets project; update via SetChatID path + direct
 		_ = c.store.Save()
 	}

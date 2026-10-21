@@ -11,7 +11,8 @@ func TestAuthFailMessage(t *testing.T) {
 	}{
 		{"auth failure with error", map[string]any{"cmd": "auth", "success": false, "error": "error.user.openToken.expire"}, "error.user.openToken.expire", true},
 		{"auth failure no error field", map[string]any{"cmd": "auth", "success": false}, "", true},
-		{"auth failure missing success", map[string]any{"cmd": "auth"}, "", true},
+		{"auth failure missing success", map[string]any{"cmd": "auth"}, "", false},
+		{"auth failure no success but error", map[string]any{"cmd": "auth", "error": "expired"}, "expired", true},
 		{"auth success", map[string]any{"cmd": "auth", "success": true}, "", false},
 		{"uppercase cmd", map[string]any{"cmd": "AUTH", "success": false, "error": "bad"}, "bad", true},
 		{"non-auth control", map[string]any{"cmd": "ping"}, "", false},

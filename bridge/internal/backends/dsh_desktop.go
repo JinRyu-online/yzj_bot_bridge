@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
@@ -255,7 +256,12 @@ func desktopBaseEntries(cfg bot.Config) ([]map[string]any, error) {
 	return kept, nil
 }
 
+var dshProfileWriteMu sync.Mutex
+
 func writeManagedProfile(cfg bot.Config, profile string, bundles []string, entries []map[string]any, header string) error {
+	// 多个 bot/GUI 轮次可能同时生成 profile；共享 tmp + Windows Rename 必须串行。
+	dshProfileWriteMu.Lock()
+	defer dshProfileWriteMu.Unlock()
 	patch, err := yaml.Marshal(entries)
 	if err != nil {
 		return err

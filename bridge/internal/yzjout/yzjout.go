@@ -153,7 +153,7 @@ func SplitMessage(content string, limit int) []string {
 	paras := strings.Split(content, "\n\n")
 	var chunks []string
 	cur := ""
-	needs := func(a, b string) bool { return utf8.RuneCountInString(a) + 2 + utf8.RuneCountInString(b) > limit }
+	needs := func(a, b string) bool { return utf8.RuneCountInString(a)+2+utf8.RuneCountInString(b) > limit }
 	for _, p := range paras {
 		p = strings.TrimSpace(p)
 		if p == "" {
@@ -210,18 +210,43 @@ func splitHard(s string, limit int) (head, rest string) {
 func reflowToMax(chunks []string, limit, max int) []string {
 	joined := strings.Join(chunks, "\n\n")
 	r := []rune(joined)
+	if max < 1 {
+		max = 1
+	}
+	truncated := false
+	const suffix = "\n\n…（内容过长，已截断）"
+	// 最多 max*limit 个 rune；超出部分明确标记截断，不能静默丢内容。
+	if len(r) > limit*max {
+		keep := limit*max - utf8.RuneCountInString(suffix)
+		if keep < 1 {
+			keep = 1
+		}
+		r = r[:keep]
+		truncated = true
+	}
 	size := (len(r) + max - 1) / max
 	out := make([]string, 0, max)
-	for len(r) > 0 {
+	for len(r) > 0 && len(out) < max {
 		take := size
+		if take > limit {
+			take = limit
+		}
 		if take > len(r) {
 			take = len(r)
 		}
-		h, rest := splitHard(string(r[:take]), limit)
-		if h != "" {
-			out = append(out, h)
+		out = append(out, string(r[:take]))
+		r = r[take:]
+	}
+	if truncated && len(out) > 0 {
+		last := []rune(out[len(out)-1])
+		room := limit - utf8.RuneCountInString(suffix)
+		if room < 0 {
+			room = 0
 		}
-		r = []rune(rest)
+		if len(last) > room {
+			last = last[:room]
+		}
+		out[len(out)-1] = string(last) + suffix
 	}
 	return out
 }

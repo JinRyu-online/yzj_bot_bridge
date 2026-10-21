@@ -126,10 +126,14 @@ func (d *DSH) runHeadless(prompt string, opts bot.RunOpts, rt dshRuntime, persis
 		}
 		status := "ok"
 		errText := strings.TrimSpace(out.Err)
-		if ctx.Err() == context.DeadlineExceeded {
+		switch {
+		case ctx.Err() == context.DeadlineExceeded:
 			status = "error"
 			errText = fmt.Sprintf("dsh headless 超时（>%ds）", timeout)
-		} else if runErr != nil {
+		case ctx.Err() == context.Canceled:
+			status = "interrupted"
+			errText = "任务已中断"
+		case runErr != nil:
 			status = "error"
 			if errText == "" {
 				errText = compactSpace(stderr)
@@ -140,6 +144,8 @@ func (d *DSH) runHeadless(prompt string, opts bot.RunOpts, rt dshRuntime, persis
 			if errText == "" {
 				errText = runErr.Error()
 			}
+		case errText != "":
+			status = "error"
 		}
 		if errText != "" && reply == "" {
 			reply = "dsh headless 失败: " + errText

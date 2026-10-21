@@ -27,7 +27,7 @@ defaults:
   dsh_desktop_path: ""                # 桌面客户端目录或 exe；留空自动探测
   node_bin: "node"                    # 仅 cli 模式：node 可执行文件（或绝对路径）
   dsh_entry: ""                       # 仅 cli 模式：DSH bin.js 入口
-  dsh_profile: "jsonrpc"              # desktop 模式自动映射为 yzj-sdk；cli 模式默认 jsonrpc
+  dsh_profile: "jsonrpc"              # headless 自动映射 yzj-headless，sdk 自动映射 yzj-sdk；cli 模式默认 jsonrpc
   dsh_provider: "kuaidi100"           # LLM provider（桌面客户端 profile 中配置）
   dsh_model: ""                       # 空=复用机器人 model，再空=deepseek-v4-flash
   dsh_timeout: 600                    # 单轮超时秒
@@ -44,6 +44,7 @@ defaults:
   cursor_force: true
   cursor_stream: true
   cursor_stream_partial: true
+  cursor_daily_reset: true               # cursor_cli：按本机自然日懒重置 --resume 会话；关掉写 false
   log_level: "info"
   commands_enabled: true
   reconnect_delay_sec: 5
@@ -74,7 +75,6 @@ defaults:
       enabled: true
       max_mb: 20
       keep_days: 7
-      total_mb: 500
   max_workers: 4
   skills_dir: "~/.yzj-bridge/skills"    # 已安装 Skill 包目录；bots[].skills 为白名单 id
   memory:
@@ -114,8 +114,14 @@ bots:
     group: default
     send_msg_url: "https://www.yunzhijia.com/gateway/robot/webhook/send?yzjtype=0&yzjtoken=REPLACE_ME"
     # 多通道写法：用 channels 数组代替 group/send_msg_url
+    # inbound_mode=yzj_cli 时，每个通道必须写自己的 yzj_group_id；
+    # 同群多机器人时再写 yzj_bot_open_id（BOT-...），用于精确识别 @ 目标。
     # channels:
     #   - group: workAssistant
     #     send_msg_url: "https://...yzjtoken=REPLACE_A"
+    #     yzj_group_id: "6a2b..."
+    #     yzj_group_name: "示例群"
+    #     yzj_bot_open_id: "BOT-..."
     #   - group: development
     #     send_msg_url: "https://...yzjtoken=REPLACE_B"
+    #     yzj_group_id: "6a95..."

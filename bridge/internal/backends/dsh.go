@@ -393,8 +393,8 @@ func (d *DSH) persist(sessionID string, opts bot.RunOpts, hasKey bool, entryKey 
 	}
 	d.store.SetChatID(d.cfg.ID, entryKey, sessionID, opts.OperatorName)
 	e := d.store.GetEntry(d.cfg.ID, entryKey)
-	e.AgentCWD = opts.Workspace
 	d.store.SetProject(d.cfg.ID, entryKey, e.ProjectName, e.ProjectPath)
+	d.store.SetAgentCWD(d.cfg.ID, entryKey, opts.Workspace)
 	_ = d.store.Save()
 }
 

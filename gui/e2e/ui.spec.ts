@@ -369,6 +369,21 @@ async function installTauriMock(
                 ],
               });
             }
+            if (path.startsWith("/v1/yzj/cli/status")) {
+              return JSON.stringify({
+                found: true,
+                bin: "C:\\Users\\test\\AppData\\Roaming\\npm\\yzj-cli.cmd",
+                version: "0.1.8",
+                version_want: "0.1.8",
+                logged_in: false,
+                error: "not logged in",
+              });
+            }
+            if (path.startsWith("/v1/yzj/cli/groups")) {
+              return JSON.stringify({
+                list: [{ groupId: "6a-test-group", groupName: "测试群", groupType: 1 }],
+              });
+            }
             if (path.startsWith("/v1/backends/openai/probe")) {
               return JSON.stringify({
                 ok: true,
@@ -1006,10 +1021,11 @@ test("AI 设置：DSH 精简卡片（desktop/cli 切换、入口/Node/模型）�
   // 默认 desktop 模式：只渲染桌面客户端路径与模型，不渲染 CLI 入口/Node。
   await expect(page.getByTestId("dsh-mode")).toBeVisible();
   await expect(page.getByTestId("dsh-desktop-path")).toBeVisible();
-  // 进入设置页自动扫描桌面客户端：自动填入路径并写入配置 + 成功提示。
+  // 进入设置页不再隐式扫描/写配置；必须由用户点“重新扫描”。
+  await page.getByTestId("discover-dsh-desktop").click();
   await expect(page.getByTestId("dsh-desktop-discover-hint")).toContainText("已找到");
   await expect(page.getByTestId("dsh-desktop-path")).toHaveValue(/DeepSeek Harness/);
-  // 重新扫描按钮仍可用。
+  // 再次扫描仍可用。
   await page.getByTestId("discover-dsh-desktop").click();
   await expect(page.getByTestId("dsh-desktop-discover-hint")).toContainText("已找到");
   await expect(page.getByTestId("dsh-entry")).toHaveCount(0);
@@ -1051,15 +1067,35 @@ test("AI 设置：DSH 精简卡片（desktop/cli 切换、入口/Node/模型）�
   await expect(page.getByTestId("dsh-entry")).toBeVisible();
 });
 
-test("AI 设置：卡片顺序 cursor → dsh → openai → claude → memory → dirs", async ({ page }) => {
+test("机器人：yzj-cli 轮询字段与未登录提示", async ({ page }) => {
   await page.getByTestId("nav-settings").click();
-  await expect(page.getByTestId("group-cursor")).toBeVisible();
+  await expect(page.getByTestId("group-yzj-cli")).toBeVisible();
+  await expect(page.getByTestId("group-yzj-cli")).toContainText("已安装但未登录");
+
+  await page.getByTestId("nav-bots").click();
+  await page.getByTestId("create-bot").click();
+  await page.getByTestId("bot-inbound").locator(".fancy-select-trigger").click();
+  await page
+    .getByTestId("bot-inbound-menu")
+    .getByRole("option", { name: "yzj-cli 轮询（仅配置会话）" })
+    .click();
+  await expect(page.getByTestId("yzj-group-id")).toBeVisible();
+  await page.getByTestId("yzj-group-id").fill("6a-test-group");
+
+  await page.getByRole("button", { name: "搜索 / 拉取会话" }).click();
+  await expect(page.getByText("测试群", { exact: true })).toBeVisible();
+});
+
+test("AI 设置：卡片顺序 yzj-cli → cursor → dsh → openai → claude → memory → dirs", async ({ page }) => {
+  await page.getByTestId("nav-settings").click();
+  await expect(page.getByTestId("group-yzj-cli")).toBeVisible();
   const ids = await page
     .locator(
-      '[data-testid="group-cursor"], [data-testid="group-dsh"], [data-testid="group-openai"], [data-testid="group-claude"], [data-testid="group-memory"], [data-testid="group-dirs"]',
+      '[data-testid="group-yzj-cli"], [data-testid="group-cursor"], [data-testid="group-dsh"], [data-testid="group-openai"], [data-testid="group-claude"], [data-testid="group-memory"], [data-testid="group-dirs"]',
     )
     .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid")));
   expect(ids).toEqual([
+    "group-yzj-cli",
     "group-cursor",
     "group-dsh",
     "group-openai",
@@ -1069,19 +1105,19 @@ test("AI 设置：卡片顺序 cursor → dsh → openai → claude → memory �
   ]);
 });
 
-test("新建机器人：后端下拉仅含可用引擎", async ({ page }) => {
+test("新建机器人：后端下拉列出全部引擎（不可用带原因）", async ({ page }) => {
   await page.getByTestId("nav-bots").click();
   await page.getByTestId("create-bot").click();
   await expect(page.getByTestId("bot-modal")).toBeVisible();
   await page.getByTestId("bot-backend").locator(".fancy-select-trigger").click();
   const menu = page.getByTestId("bot-backend-menu");
   await expect(menu).toBeVisible();
-  // 仅 available===true 的引擎（label 为服务端返回的人类名）。
+  // 不再因为探测失败把引擎从下拉移除，而是保留并附带原因。
   await expect(menu.getByRole("option", { name: "Cursor CLI" })).toBeVisible();
   await expect(menu.getByRole("option", { name: "OpenAI 兼容" })).toBeVisible();
   await expect(menu.getByRole("option", { name: "DSH（DeepSeek Harness）" })).toBeVisible();
-  await expect(menu.getByRole("option", { name: "Claude Code" })).toHaveCount(0);
-  await expect(menu.getByRole("option", { name: "OpenCode" })).toHaveCount(0);
+  await expect(menu.getByRole("option", { name: "Claude Code（未找到可执行文件）" })).toBeVisible();
+  await expect(menu.getByRole("option", { name: "OpenCode（占位后端，尚未实现）" })).toBeVisible();
   await page.getByTestId("bot-modal-close").click();
   await expect(page.getByTestId("bot-modal")).toHaveCount(0);
 });

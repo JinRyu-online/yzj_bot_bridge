@@ -229,11 +229,18 @@ func authFailMessage(raw map[string]any) (string, bool) {
 	if !strings.EqualFold(cmd, "auth") {
 		return "", false
 	}
-	if ok, _ := raw["success"].(bool); ok {
-		return "", false
+	if ok, present := raw["success"].(bool); present {
+		if ok {
+			return "", false
+		}
+		msg, _ := raw["error"].(string)
+		return msg, true
 	}
-	msg, _ := raw["error"].(string)
-	return msg, true
+	// 服务端帧形状不固定：没有 success 字段时，只有明确带 error 才计失败。
+	if msg, _ := raw["error"].(string); strings.TrimSpace(msg) != "" {
+		return msg, true
+	}
+	return "", false
 }
 
 // authOK 判断是否收到明确的鉴权成功帧；用于重置失败计数。

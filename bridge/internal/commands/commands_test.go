@@ -84,3 +84,14 @@ func TestMessageTargetsBotOtherGroupMention(t *testing.T) {
 		t.Fatal("无 @ 消息不应被过滤")
 	}
 }
+func TestMessageTargetsBotPrivateKeepsEmail(t *testing.T) {
+	reg := registry.New()
+	reg.Replace([]*bot.Bot{{Config: bot.Config{ID: "fairy", RoleID: "fairy", Name: "Fairy", Group: "g"}}})
+	b := reg.Get("fairy")
+	if !MessageTargetsBot("我的邮箱 test@example.com", b, reg, 3) {
+		t.Fatal("私聊里的邮箱不能被当成 @ 别人")
+	}
+	if MessageTargetsBot("我的邮箱 test@example.com", b, reg) {
+		t.Fatal("群聊里未解析到机器人时仍应拦截")
+	}
+}

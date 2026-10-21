@@ -144,15 +144,17 @@ func Parse(text string, b *bot.Bot, reg *registry.Registry) Result {
 	return res
 }
 
-func MessageTargetsBot(content string, receive *bot.Bot, reg *registry.Registry) bool {
+func MessageTargetsBot(content string, receive *bot.Bot, reg *registry.Registry, groupTypes ...int) bool {
 	if receive == nil || reg == nil {
 		return true
 	}
+	// groupType=3 是个人机器人/私聊；私聊里的邮箱、@scope/pkg 不应被当成“@了别人”。
+	isPrivate := len(groupTypes) > 0 && groupTypes[0] == 3
 	mentioned := reg.ResolveMention(content, receive.Config.Group)
 	if len(mentioned) == 0 {
 		// 群里 @ 的是别的机器人/人：本 bot 不在目标范围内，不能当成私聊兜底。
 		// 旧逻辑这里直接 return true，导致 A 群 @botA 时其它群的 bot 也抢答。
-		if reg.HasMention(content) {
+		if !isPrivate && reg.HasMention(content) {
 			return false
 		}
 		return true

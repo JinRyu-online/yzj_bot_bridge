@@ -126,9 +126,9 @@ bots:
 
 - `defaults` + `bots` + 可选 `channels` 多群展开（runtime id：`{role}__{group}`）
 - **yzj-cli 轮询入站**（`inbound_mode: yzj_cli`）：只轮询 `yzj_group_id` 显式配置的群（不会扫全部会话）；`yzj_group_name` 仅用于展示/选择群；默认 5s ±20% 抖动；遇平台限流 10000429 自动指数退避（30s→5min，5 分钟无再限流恢复）；首次启动只建游标不回放（`startup_mode: baseline`）。文本需 @机器人 触发；纯图片默认仅「引用机器人消息」触发（`yzj_cli.image_trigger: quote_bot|any|off`）
-- **图片**（Phase 2 已接入路径注入）：轮询到图片后用 `yzj-cli file download` 下载到 bot workspace 的 `incoming_media/YYYYMMDD/<msgId>-<n>.<ext>`，再把本地路径写入 prompt（模型用读图/读文件能力打开并回答）；默认单图 ≤20MB、保留 7 天、总量 500MB，下载失败会在 prompt 中注明原因
+- **图片**（Phase 2 已接入路径注入）：轮询到图片后用 `yzj-cli file download` 下载到 bot workspace 的 `incoming_media/YYYYMMDD/<msgId>-<n>.<ext>`，再把本地路径写入 prompt（模型用读图/读文件能力打开并回答）；默认单图 ≤20MB、保留 7 天，下载失败会在 prompt 中注明原因
 - yzj-cli 配置在 `defaults.yzj_cli`：`bin/version/profile/config_dir/auto_install/timeout_sec/poll_interval_sec/catchup_pages/startup_mode/image_trigger/image.*`；桥不保存凭据，登录态由 `yzj-cli auth login` 管理
-- 机器人相关字段：`bots[].yzj_group_id`、`yzj_group_name`、`yzj_profile`、`yzj_trigger`（`mention` 群聊默认 | `direct` 个人机器人/私聊 | `any`）、`yzj_bot_names`（@/引用识别别名）、`yzj_bot_open_id`（可选，精确识别机器人）。机器人自己发的消息（`fromOpenId` 以 `BOT-` 开头）不会触发，避免自问自答循环
+- 机器人相关字段：`yzj_group_id`、`yzj_group_name`、`yzj_profile`、`yzj_trigger`（`mention` 群聊默认 | `direct` 个人机器人/私聊 | `any`）、`yzj_bot_names`（@/引用识别别名）、`yzj_bot_open_id`（可选，精确识别机器人）。**多通道机器人必须把 `yzj_group_id` / `yzj_bot_open_id` 写在各自的 `channels[]` 里**；同一群有多个机器人时强烈建议配置 `yzj_bot_open_id`，否则平台 @ 段只有 BOT openId，无法区分同群同名机器人。机器人自己发的消息（`fromOpenId` 以 `BOT-` 开头）不会触发，避免自问自答循环
 - `bots[].skills`：已安装 Skill 的 id 白名单（跨 OpenAI / Cursor / Claude）
 - `inbound_mode`: `websocket` | `webhook` | `both` | `yzj_cli`（轮询，仅配置群）
 - 会话：`session_mode` 为 `shared`（默认，同通道共享上下文且通道内排队）| `per_user`（按人隔离）| `oneshot`

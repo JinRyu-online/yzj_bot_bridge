@@ -309,3 +309,31 @@ func TestCollapseRepeatedReply(t *testing.T) {
 		t.Fatalf("FormatCompletionReply did not dedupe: %q", got)
 	}
 }
+func TestSplitMessageReflowPreservesContent(t *testing.T) {
+	// 超过 maxChunks 会走 reflow；内容在 max*limit 内必须完整保留。
+	content := strings.Repeat("段", chunkLimit*maxChunks-200)
+	got := SplitMessage(content, chunkLimit)
+	if len(got) > maxChunks {
+		t.Fatalf("chunks=%d > %d", len(got), maxChunks)
+	}
+	joined := strings.Join(got, "\n\n")
+	// 分块之间会补回 \n\n 分隔符，只允许变多，不允许丢原文。
+	if utf8.RuneCountInString(joined) < utf8.RuneCountInString(content) {
+		t.Fatalf("content lost: got %d want at least %d", utf8.RuneCountInString(joined), utf8.RuneCountInString(content))
+	}
+	for i, c := range got {
+		if utf8.RuneCountInString(c) > chunkLimit {
+			t.Fatalf("chunk %d too long: %d", i, utf8.RuneCountInString(c))
+		}
+	}
+}
+func TestSplitMessageOverLimitMarksTruncated(t *testing.T) {
+	content := strings.Repeat("段", chunkLimit*maxChunks+100)
+	got := SplitMessage(content, chunkLimit)
+	if len(got) != maxChunks {
+		t.Fatalf("chunks=%d want %d", len(got), maxChunks)
+	}
+	if !strings.Contains(got[len(got)-1], "已截断") {
+		t.Fatalf("missing truncation marker: %q", got[len(got)-1])
+	}
+}

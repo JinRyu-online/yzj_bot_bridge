@@ -397,3 +397,23 @@ func TestWebsocketMessageForBot(t *testing.T) {
 		t.Fatal("缺少 robotName 时应放行")
 	}
 }
+func TestHandleDedupesSameMessageAcrossSources(t *testing.T) {
+	g := &gateBackend{enter: make(chan string, 4), release: make(chan struct{})}
+	d, _, _ := newSharedDispatcher(t, g)
+	norm := Normalized{OpenID: "a", MsgID: "same-msg", Content: "hi", ForceTarget: true}
+	d.Handle("logbot", norm)
+	waitUntil(t, func() bool {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return len(g.started) == 1
+	})
+	norm.Source = "webhook"
+	d.Handle("logbot", norm)
+	close(g.release)
+	time.Sleep(50 * time.Millisecond)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.started) != 1 {
+		t.Fatalf("same platform message must dedupe across sources, started=%v", g.started)
+	}
+}
