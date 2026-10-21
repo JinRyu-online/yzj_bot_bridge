@@ -36,10 +36,10 @@ func TestPollTriggerMatrix(t *testing.T) {
 	target := pollTarget{BotID: "fairy", Aliases: []string{"Fairy"}, ImageTrigger: "quote_bot"}
 
 	cases := []struct {
-		name  string
-		t     pollTarget
-		msg   yzjcli.Message
-		want  bool
+		name string
+		t    pollTarget
+		msg  yzjcli.Message
+		want bool
 	}{
 		{"text mention", target, textMention, true},
 		{"image quotes bot", target, imageQuote, true},
@@ -96,5 +96,19 @@ func TestCleanupIncomingMedia(t *testing.T) {
 	}
 	if _, err := os.Stat(newFile); err != nil {
 		t.Fatalf("new file should stay: %v", err)
+	}
+}
+func TestSamePollGroupLabel(t *testing.T) {
+	if !samePollGroupLabel("寄件助手群", "寄件助手") {
+		t.Fatal("群后缀应视为同一群")
+	}
+	if !samePollGroupLabel("同城告警群", "同城告警") {
+		t.Fatal("群后缀应视为同一群")
+	}
+	if samePollGroupLabel("同城告警群", "寄件助手") {
+		t.Fatal("不同群不应匹配")
+	}
+	if samePollGroupLabel("", "寄件助手") {
+		t.Fatal("空标签不应匹配")
 	}
 }

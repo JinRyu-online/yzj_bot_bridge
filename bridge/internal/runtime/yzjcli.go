@@ -20,6 +20,7 @@ type pollTarget struct {
 	BotOpenIDs   []string
 	ImageTrigger string // quote_bot | any | off
 	Trigger      string // mention | direct | any
+	ChannelGroup string // bot 通道的 group 标签，用于识别继承了错误 yzj_group_id 的通道
 }
 
 // pollGroup identifies the group behind a watcher key.
@@ -90,7 +91,7 @@ func (r *Runtime) setupPollers(bots []*bot.Bot) {
 		}
 		targets[key] = append(targets[key], pollTarget{
 			BotID: c.ID, Aliases: aliases, BotOpenIDs: ids,
-			ImageTrigger: trigger, Trigger: msgTrigger,
+			ImageTrigger: trigger, Trigger: msgTrigger, ChannelGroup: c.Group,
 		})
 		if _, ok := meta[key]; !ok {
 			meta[key] = pollGroup{GroupID: gid, GroupName: c.YzjGroupName, Profile: profile}
@@ -174,6 +175,13 @@ func (r *Runtime) onPollMessage(key string, msg yzjcli.Message) {
 	}
 	for _, t := range targets {
 		if !enabled[t.BotID] {
+			continue
+		}
+		// 多通道角色如果都继承了同一个 yzj_group_id，会共用同一 watcher：
+		// 只允许通道 group 标签与本 watcher 群名一致的 bot 响应，避免跨群抢答。
+		if len(targets) > 1 && meta.GroupName != "" && !samePollGroupLabel(t.ChannelGroup, meta.GroupName) {
+			log.Printf("yzjcli: bot=%s ws/poll skip: channel group=%q does not match group=%q (check per-channel yzj_group_id)",
+				t.BotID, t.ChannelGroup, meta.GroupName)
 			continue
 		}
 		if !pollTrigger(t, msg) {
@@ -396,4 +404,16 @@ func (r *Runtime) YzjCLIGroups(ctx context.Context, keyword string, limit int) (
 		return client.GroupSearch(ctx, keyword, limit, 1)
 	}
 	return client.GroupRecent(ctx, limit, 1)
+}
+
+// samePollGroupLabel 比较通道 group 标签与 watcher 群名，忽略“群”后缀和空白。
+func samePollGroupLabel(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.ToLower(strings.TrimSpace(s))
+		s = strings.TrimSuffix(s, "群")
+		s = strings.ReplaceAll(s, " ", "")
+		return s
+	}
+	a, b = norm(a), norm(b)
+	return a != "" && b != "" && (a == b || strings.Contains(a, b) || strings.Contains(b, a))
 }

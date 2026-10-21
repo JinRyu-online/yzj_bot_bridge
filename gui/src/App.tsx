@@ -103,6 +103,12 @@ type ChannelForm = {
   group: string;
   send_msg_url: string;
   model: string;
+  yzj_group_id: string;
+  yzj_group_name: string;
+  yzj_trigger: string;
+  yzj_image_trigger: string;
+  yzj_bot_names: string;
+  yzj_bot_open_id: string;
 };
 
 const THEMES: { id: ThemeId; label: string }[] = [
@@ -645,6 +651,27 @@ function emptyBotForm(): BotForm {
   };
 }
 
+/** 通道表单的 yzj-cli 字段：优先通道自身配置，未配置时回退到机器人级默认。 */
+function channelFormFrom(
+  channel: Record<string, unknown>,
+  role: Record<string, unknown> | null,
+): ChannelForm {
+  const pick = (key: string) => String(channel[key] ?? role?.[key] ?? "");
+  const names = channel.yzj_bot_names ?? role?.yzj_bot_names;
+  return {
+    id: String(channel.id || ""),
+    group: String(channel.group || ""),
+    send_msg_url: String(channel.send_msg_url || ""),
+    model: String(channel.model || ""),
+    yzj_group_id: pick("yzj_group_id"),
+    yzj_group_name: pick("yzj_group_name"),
+    yzj_trigger: pick("yzj_trigger") || "mention",
+    yzj_image_trigger: pick("yzj_image_trigger") || "quote_bot",
+    yzj_bot_names: Array.isArray(names) ? (names as unknown[]).map((x) => String(x)).join(", ") : "",
+    yzj_bot_open_id: pick("yzj_bot_open_id"),
+  };
+}
+
 /** 机器人未写 OpenAI 三项覆盖时，视为使用 AI 设置默认。 */
 function botUsesOpenaiDefaults(cfg: Record<string, unknown>): boolean {
   return (
@@ -1093,12 +1120,7 @@ function App() {
   const [yzjStatusErr, setYzjStatusErr] = useState("");
   const [yzjGroups, setYzjGroups] = useState<YzjGroup[]>([]);
   const [yzjGroupsBusy, setYzjGroupsBusy] = useState(false);
-  const [channelForm, setChannelForm] = useState<ChannelForm>({
-    id: "",
-    group: "",
-    send_msg_url: "",
-    model: "",
-  });
+  const [channelForm, setChannelForm] = useState<ChannelForm>(channelFormFrom({}, null));
   const [channelModalError, setChannelModalError] = useState<{ text: string; seq: number } | null>(
     null,
   );
@@ -2463,7 +2485,7 @@ function App() {
 
   function openAddChannel() {
     setEditingChannelIdx(null);
-    setChannelForm({ id: "", group: "", send_msg_url: "", model: "" });
+    setChannelForm(channelFormFrom({}, selectedRoleConfig));
     setChannelModalError(null);
     setChannelModal(true);
     if (String(selectedRoleConfig?.backend || "") === "openai" && !openaiModels.length) {
@@ -2477,12 +2499,7 @@ function App() {
   function openEditChannel(idx: number) {
     const ch = selectedChannels[idx] || {};
     setEditingChannelIdx(idx);
-    setChannelForm({
-      id: String(ch.id || ""),
-      group: String(ch.group || ""),
-      send_msg_url: String(ch.send_msg_url || ""),
-      model: String(ch.model || ""),
-    });
+    setChannelForm(channelFormFrom(ch, selectedRoleConfig));
     setChannelModalError(null);
     setChannelModal(true);
     if (String(selectedRoleConfig?.backend || "") === "openai" && !openaiModels.length) {
@@ -2497,6 +2514,11 @@ function App() {
     if (!rawConfig || !selectedRoleConfig) return;
     if (!channelForm.group.trim() || !channelForm.send_msg_url.trim()) {
       flashChannelModalError("通道 group / send_msg_url 不能为空");
+      return;
+    }
+    const pollChannel = String(selectedRoleConfig.inbound_mode || "") === "yzj_cli";
+    if (pollChannel && !channelForm.yzj_group_id.trim()) {
+      flashChannelModalError("yzj-cli 通道必须配置自己的会话 ID（多通道不能共用同一个 yzj_group_id）");
       return;
     }
     const conflict = findWebhookConflict(
@@ -2528,6 +2550,19 @@ function App() {
       send_msg_url: channelForm.send_msg_url.trim(),
     };
     if (channelForm.id.trim()) entry.id = channelForm.id.trim();
+    if (pollChannel) {
+      entry.yzj_group_id = channelForm.yzj_group_id.trim();
+      entry.yzj_group_name = channelForm.yzj_group_name.trim();
+      entry.yzj_trigger = channelForm.yzj_trigger || "mention";
+      entry.yzj_image_trigger = channelForm.yzj_image_trigger || "quote_bot";
+      entry.yzj_bot_names = channelForm.yzj_bot_names
+        .split(/[,，\s]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (channelForm.yzj_bot_open_id.trim()) {
+        entry.yzj_bot_open_id = channelForm.yzj_bot_open_id.trim();
+      }
+    }
     // 通道模型覆盖仅对 OpenAI 有意义；非 OpenAI 保存时显式丢掉，避免残留网关模型名。
     if (String(bot.backend || "") === "openai" && channelForm.model.trim()) {
       entry.model = channelForm.model.trim();
@@ -4563,6 +4598,114 @@ function App() {
                   }}
                 />
               </div>
+              {String(selectedRoleConfig?.inbound_mode || "") === "yzj_cli" ? (
+                <>
+                  <div className="field full">
+                    <FieldLabel tip="每个通道对应一个真实群/会话；多通道角色必须分别配置，不能共用同一个 ID">
+                      会话 ID yzj_group_id
+                    </FieldLabel>
+                    <div className="inline-field">
+                      <input
+                        data-testid="channel-yzj-group-id"
+                        value={channelForm.yzj_group_id}
+                        onChange={(e) => {
+                          setChannelForm({ ...channelForm, yzj_group_id: e.target.value });
+                          if (channelModalError) setChannelModalError(null);
+                        }}
+                        placeholder="6a2b... 或 BOT-... 开头的会话 ID"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${yzjGroupsBusy ? " loading" : ""}`}
+                        data-testid="channel-load-yzj-groups"
+                        disabled={yzjGroupsBusy}
+                        onClick={() => void loadYzjGroups("")}
+                      >
+                        {yzjGroupsBusy ? <span className="spinner dark" /> : null}
+                        <span>{yzjGroupsBusy ? "拉取中" : "拉取最近会话"}</span>
+                      </button>
+                    </div>
+                  </div>
+                  {yzjGroups.length ? (
+                    <div className="field full">
+                      <FieldLabel tip="选择后自动填充群 ID 与群名">最近会话</FieldLabel>
+                      <FancySelect
+                        testId="channel-yzj-group-pick"
+                        value={channelForm.yzj_group_id}
+                        options={[
+                          { id: "", label: "（保留手动填写）" },
+                          ...yzjGroups.map((g) => ({
+                            id: g.groupId,
+                            label: `${g.groupName || g.groupId}${g.groupType === 3 ? " · 个人机器人" : ""}`,
+                          })),
+                        ]}
+                        onChange={(v) => {
+                          const g = yzjGroups.find((x) => x.groupId === v);
+                          setChannelForm({
+                            ...channelForm,
+                            yzj_group_id: v,
+                            yzj_group_name: g?.groupName || channelForm.yzj_group_name,
+                          });
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="field">
+                    <FieldLabel tip="仅用于状态与日志展示">群名 yzj_group_name</FieldLabel>
+                    <input
+                      value={channelForm.yzj_group_name}
+                      onChange={(e) =>
+                        setChannelForm({ ...channelForm, yzj_group_name: e.target.value })
+                      }
+                      placeholder="如 寄件助手群"
+                    />
+                  </div>
+                  <div className="field">
+                    <FieldLabel tip="群聊需要 @机器人；个人机器人/私聊建议 direct">
+                      触发方式 yzj_trigger
+                    </FieldLabel>
+                    <FancySelect
+                      value={channelForm.yzj_trigger}
+                      options={yzjTriggerOptions}
+                      onChange={(v) => setChannelForm({ ...channelForm, yzj_trigger: v })}
+                    />
+                  </div>
+                  <div className="field">
+                    <FieldLabel tip="图片消息如何触发机器人">
+                      图片触发 yzj_image_trigger
+                    </FieldLabel>
+                    <FancySelect
+                      value={channelForm.yzj_image_trigger}
+                      options={yzjImageTriggerOptions}
+                      onChange={(v) => setChannelForm({ ...channelForm, yzj_image_trigger: v })}
+                    />
+                  </div>
+                  <div className="field full">
+                    <FieldLabel tip="机器人显示名/别名，逗号分隔；用于识别 @ 与引用">
+                      机器人名字 yzj_bot_names
+                    </FieldLabel>
+                    <input
+                      value={channelForm.yzj_bot_names}
+                      onChange={(e) =>
+                        setChannelForm({ ...channelForm, yzj_bot_names: e.target.value })
+                      }
+                      placeholder="如 寄件日志查询, 寄件日志查询机器人"
+                    />
+                  </div>
+                  <div className="field">
+                    <FieldLabel tip="可选；BOT- 开头的机器人 openId，用于精确匹配 @">
+                      机器人 OpenID
+                    </FieldLabel>
+                    <input
+                      value={channelForm.yzj_bot_open_id}
+                      onChange={(e) =>
+                        setChannelForm({ ...channelForm, yzj_bot_open_id: e.target.value })
+                      }
+                      placeholder="BOT-..."
+                    />
+                  </div>
+                </>
+              ) : null}
               {String(selectedRoleConfig?.backend || "") === "openai" ? (
                 <div className="field full">
                   <span className="field-label">通道模型（可选，覆盖机器人默认）</span>
