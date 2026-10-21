@@ -110,3 +110,9 @@ func (r *Registry) Names() []string {
 	}
 	return out
 }
+
+// HasMention reports whether content contains any @token syntax (whether or not
+// it resolves to a registered bot).
+func (r *Registry) HasMention(content string) bool {
+	return mentionRe.MatchString(content)
+}

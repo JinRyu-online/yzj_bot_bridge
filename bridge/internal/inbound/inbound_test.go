@@ -382,3 +382,18 @@ func TestPrepareAttachmentsDisabled(t *testing.T) {
 		t.Fatalf("expected empty block, got %q", block)
 	}
 }
+func TestWebsocketMessageForBot(t *testing.T) {
+	b := &bot.Bot{Config: bot.Config{Name: "寄件日志查询", YzjBotNames: []string{"寄件日志查询机器人"}}}
+	if websocketMessageForBot(b, Normalized{RobotName: "同城日志查询"}) {
+		t.Fatal("target=同城日志查询 不应命中 寄件日志查询")
+	}
+	if !websocketMessageForBot(b, Normalized{RobotName: "寄件日志查询"}) {
+		t.Fatal("target=寄件日志查询 应命中")
+	}
+	if !websocketMessageForBot(b, Normalized{RobotName: "寄件日志查询机器人"}) {
+		t.Fatal("yzj_bot_names 别名应命中")
+	}
+	if !websocketMessageForBot(b, Normalized{}) {
+		t.Fatal("缺少 robotName 时应放行")
+	}
+}

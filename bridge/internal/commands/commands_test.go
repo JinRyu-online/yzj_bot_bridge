@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"yzj-bridge/internal/bot"
+	"yzj-bridge/internal/registry"
 )
 
 func TestParseStopAlwaysAvailable(t *testing.T) {
@@ -63,5 +64,23 @@ func TestParseJobsAlwaysAvailable(t *testing.T) {
 		if got.Overrides["jobs"] != "1" || !got.Handled || got.RestText != "" {
 			t.Fatalf("%q => %+v", in, got)
 		}
+	}
+}
+func TestMessageTargetsBotOtherGroupMention(t *testing.T) {
+	reg := registry.New()
+	reg.Replace([]*bot.Bot{
+		{Config: bot.Config{ID: "border_bot", RoleID: "border_bot", Name: "寄件日志查询", Group: "寄件助手群"}},
+		{Config: bot.Config{ID: "same_city", RoleID: "bsame_city_log", Name: "同城日志查询", Group: "同城告警群"}},
+	})
+	content := "@寄件日志查询 查下此单下单原始日志"
+	if MessageTargetsBot(content, reg.Get("same_city"), reg) {
+		t.Fatal("@寄件日志查询 不应命中 同城日志查询")
+	}
+	if !MessageTargetsBot(content, reg.Get("border_bot"), reg) {
+		t.Fatal("@寄件日志查询 应命中 寄件日志查询")
+	}
+	// 无 @ 的消息仍按原有私聊/兜底语义处理。
+	if !MessageTargetsBot("你好", reg.Get("same_city"), reg) {
+		t.Fatal("无 @ 消息不应被过滤")
 	}
 }

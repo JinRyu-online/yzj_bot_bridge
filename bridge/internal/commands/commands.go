@@ -150,6 +150,11 @@ func MessageTargetsBot(content string, receive *bot.Bot, reg *registry.Registry)
 	}
 	mentioned := reg.ResolveMention(content, receive.Config.Group)
 	if len(mentioned) == 0 {
+		// 群里 @ 的是别的机器人/人：本 bot 不在目标范围内，不能当成私聊兜底。
+		// 旧逻辑这里直接 return true，导致 A 群 @botA 时其它群的 bot 也抢答。
+		if reg.HasMention(content) {
+			return false
+		}
 		return true
 	}
 	for _, m := range mentioned {

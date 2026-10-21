@@ -70,9 +70,9 @@ type Dispatcher struct {
 	// DownloadAttachment downloads one yzj-cli media item to outPath.
 	DownloadAttachment func(ctx context.Context, fileID, outPath string) error
 	// ImageEnabled turns attachment download/prompt injection on.
-	ImageEnabled bool
-	ImageMaxMB   int
-	ImageTypes   []string
+	ImageEnabled  bool
+	ImageMaxMB    int
+	ImageTypes    []string
 	ImageKeepDays int
 }
 
@@ -158,6 +158,7 @@ func ClassifyWS(raw map[string]any) ClassifyResult {
 		return ClassifyResult{Kind: "control"}
 	}
 	if n, ok := Normalize(raw); ok {
+		n.Source = "websocket"
 		return ClassifyResult{Kind: "dispatch", Norm: n}
 	}
 	needAck := false
@@ -202,6 +203,12 @@ func (d *Dispatcher) queueScope(b *bot.Bot, openID string) string {
 func (d *Dispatcher) Handle(botID string, n Normalized) {
 	b := d.Reg.Get(botID)
 	if b == nil {
+		return
+	}
+	// WSS token 收到的是账号下所有机器人的推送：按消息里的目标 robotName 过滤，
+	// 避免 A 群 @ 了寄件日志查询，其他群/其他机器人也抢答。
+	if n.Source == "websocket" && !websocketMessageForBot(b, n) {
+		log.Printf("bot=%s ws skip: target robot=%q (this bot=%q)", botID, n.RobotName, b.Config.Name)
 		return
 	}
 	key := n.Source + "|" + botID + ":" + n.MsgID
@@ -539,4 +546,24 @@ func (d *Dispatcher) handleForgetCmd(openID string) string {
 		return "清除记忆失败: " + err.Error()
 	}
 	return reply
+}
+
+// websocketMessageForBot 判断 WSS 推送是否发给当前 bot：
+// 平台把账号下所有机器人的消息推给每个连接，消息里的 robotName 是目标机器人；
+// 没有 robotName 时无法判断，保持放行（历史行为）。
+func websocketMessageForBot(b *bot.Bot, n Normalized) bool {
+	if b == nil {
+		return false
+	}
+	target := strings.TrimSpace(n.RobotName)
+	if target == "" {
+		return true
+	}
+	names := append([]string{b.Config.Name}, b.Config.YzjBotNames...)
+	for _, name := range names {
+		if name = strings.TrimSpace(name); name != "" && strings.EqualFold(name, target) {
+			return true
+		}
+	}
+	return false
 }
