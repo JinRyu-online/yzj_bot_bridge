@@ -1,6 +1,6 @@
 # YZJ Bridge（云之家多机器人桥接 · Go + Tauri）
 
-本地常驻 **Go** 服务：接收云之家群组消息（机器人 WebSocket / Webhook，**或**用 yzj-cli 轮询你本人可见的已配置群）→ 按 bot 路由到可插拔后端（Cursor CLI / Claude Code / OpenAI 兼容 `/v1` / DSH（DeepSeek Harness，默认直接用桌面客户端 runtime）/ Opencode 占位）→ 经各 bot 的 `sendMsgUrl` 回发。
+本地常驻 **Go** 服务：接收云之家群组消息（机器人 WebSocket / Webhook，**或**用 yzj-cli 轮询你本人可见的已配置群）→ 按 bot 路由到可插拔后端（Cursor CLI / Claude Code / OpenAI 兼容 `/v1` / DSH（DeepSeek Harness，默认调用桌面客户端 headless CLI）/ Opencode 占位）→ 经各 bot 的 `sendMsgUrl` 回发。
 
 控制面板为 **Tauri 2 + React**：托盘常驻、AI 设置、通道启停、运行日志。
 

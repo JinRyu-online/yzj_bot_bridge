@@ -64,7 +64,7 @@ func liveDSHBase(id string) bot.Config {
 	return bot.Config{
 		ID:            id,
 		Backend:       "dsh",
-		DSHMode:       "desktop",
+		DSHMode:       "headless",
 		DSHProvider:   "kuaidi100",
 		DSHModel:      "deepseek-flash",
 		DSHTimeout:    120,

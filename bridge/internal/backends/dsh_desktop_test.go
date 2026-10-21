@@ -76,13 +76,13 @@ func TestEnsureDesktopSDKProfile(t *testing.T) {
 		DSHHome:        home,
 		DSHProvider:    "kuaidi100",
 		DSHModel:       "deepseek-v4-flash",
-		DSHProfile:     dshManagedProfile,
+		DSHProfile:     dshManagedSDKProfile,
 		DSHDesktopPath: "",
 	}
-	if err := ensureDesktopSDKProfile(cfg, dshManagedProfile); err != nil {
+	if err := ensureDesktopSDKProfile(cfg, dshManagedSDKProfile); err != nil {
 		t.Fatalf("ensureDesktopSDKProfile: %v", err)
 	}
-	patch, err := os.ReadFile(filepath.Join(home, "profiles", dshManagedProfile, "cordis.patch.yml"))
+	patch, err := os.ReadFile(filepath.Join(home, "profiles", dshManagedSDKProfile, "cordis.patch.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestEnsureDesktopSDKProfile(t *testing.T) {
 		t.Fatalf("profile 不应再使用旧 resume 插件:\n%s", text)
 	}
 
-	pkg, err := os.ReadFile(filepath.Join(home, "profiles", dshManagedProfile, "package.json"))
+	pkg, err := os.ReadFile(filepath.Join(home, "profiles", dshManagedSDKProfile, "package.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,10 +111,10 @@ func TestEnsureDesktopSDKProfile(t *testing.T) {
 	}
 
 	// 幂等：第二次调用不应改变已生成内容。
-	if err := ensureDesktopSDKProfile(cfg, dshManagedProfile); err != nil {
+	if err := ensureDesktopSDKProfile(cfg, dshManagedSDKProfile); err != nil {
 		t.Fatal(err)
 	}
-	patch2, _ := os.ReadFile(filepath.Join(home, "profiles", dshManagedProfile, "cordis.patch.yml"))
+	patch2, _ := os.ReadFile(filepath.Join(home, "profiles", dshManagedSDKProfile, "cordis.patch.yml"))
 	if string(patch2) != text {
 		t.Fatal("ensureDesktopSDKProfile 非幂等")
 	}
@@ -131,7 +131,7 @@ func TestEnsureDesktopSDKProfileMissingProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := bot.Config{DSHHome: home, DSHProvider: "kuaidi100"}
-	if err := ensureDesktopSDKProfile(cfg, dshManagedProfile); err == nil {
+	if err := ensureDesktopSDKProfile(cfg, dshManagedSDKProfile); err == nil {
 		t.Fatal("expected error when desktop provider is missing")
 	}
 }

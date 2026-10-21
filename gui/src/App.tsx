@@ -1066,7 +1066,7 @@ function App() {
     claude_model: "",
     openai_model: "",
     node_bin: "node",
-    dsh_mode: "desktop",
+    dsh_mode: "headless",
     dsh_desktop_path: "",
     dsh_entry: "",
     dsh_model: "",
@@ -1671,7 +1671,7 @@ function App() {
       claude_model: String(defaults.claude_model || ""),
       openai_model: String(defaults.openai_model || ""),
       node_bin: pick("node_bin", "node"),
-      dsh_mode: pick("dsh_mode", "desktop"),
+      dsh_mode: pick("dsh_mode", "headless"),
       dsh_desktop_path: String(defaults.dsh_desktop_path || ""),
       dsh_entry: String(defaults.dsh_entry || ""),
       dsh_model: String(defaults.dsh_model || ""),
@@ -2485,7 +2485,9 @@ function App() {
         defaults.claude_model = cliForm.claude_model.trim();
         defaults.openai_model = cliForm.openai_model.trim();
         defaults.node_bin = cliForm.node_bin.trim() || "node";
-        defaults.dsh_mode = cliForm.dsh_mode === "cli" ? "cli" : "desktop";
+        defaults.dsh_mode = ["headless", "sdk", "cli"].includes(cliForm.dsh_mode)
+          ? cliForm.dsh_mode
+          : "headless";
         defaults.dsh_desktop_path = cliForm.dsh_desktop_path.trim();
         defaults.dsh_entry = cliForm.dsh_entry.trim();
         // dsh_profile/dsh_provider/dsh_timeout/dsh_ttl_seconds/dsh_max_warm/dsh_home 不再由 GUI 编辑，
@@ -2914,13 +2916,14 @@ function App() {
                       className="form-select"
                       value={cliForm.dsh_mode}
                       options={[
-                        { id: "desktop", label: "desktop（DSH 桌面客户端，推荐）" },
+                        { id: "headless", label: "headless（桌面客户端 headless CLI，推荐）" },
+                        { id: "sdk", label: "sdk（桌面客户端常驻 SDK server）" },
                         { id: "cli", label: "cli（独立 node + dsh 入口）" },
                       ]}
                       onChange={(v) => setCliForm({ ...cliForm, dsh_mode: v })}
                     />
                   </div>
-                  {cliForm.dsh_mode === "desktop" ? (
+                  {cliForm.dsh_mode !== "cli" ? (
                     <label className="full">
                       DSH 桌面客户端路径（dsh_desktop_path，可留空自动探测）
                       <input
@@ -2932,8 +2935,9 @@ function App() {
                         placeholder="留空自动从注册表 / 常见安装目录查找 DeepSeek Harness"
                       />
                       <span className="field-hint">
-                        将使用桌面客户端的 Electron 作 node、app.asar 内的 dsh runtime，并自动生成
-                        yzj-sdk profile（复制桌面里的模型 provider 配置）
+                        {cliForm.dsh_mode === "headless"
+                          ? "将用桌面客户端自带 headless CLI（--profile yzj-headless）逐条执行；自动生成 profile 并复制桌面里的模型 provider 配置"
+                          : "将用桌面客户端常驻官方 SDK JSON-RPC server（--profile yzj-sdk）"}
                       </span>
                     </label>
                   ) : null}

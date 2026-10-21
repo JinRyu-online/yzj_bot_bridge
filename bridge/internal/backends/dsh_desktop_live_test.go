@@ -17,14 +17,14 @@ import (
 	"yzj-bridge/internal/bot"
 )
 
-func TestLiveDSHDesktop(t *testing.T) {
+func TestLiveDSHSDK(t *testing.T) {
 	if os.Getenv("YZJ_DSH_DESKTOP") != "1" {
 		t.Skip("set YZJ_DSH_DESKTOP=1 to hit the real DSH desktop runtime")
 	}
 	cfg := bot.Config{
 		ID:            "live-dsh-desktop",
 		Backend:       "dsh",
-		DSHMode:       "desktop",
+		DSHMode:       "sdk",
 		DSHProvider:   "kuaidi100",
 		DSHModel:      "deepseek-flash",
 		DSHTimeout:    180,

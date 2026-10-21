@@ -64,6 +64,7 @@ func (d *DSH) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	if prevCWD != "" && opts.Workspace != "" && filepath.Clean(prevCWD) != filepath.Clean(opts.Workspace) {
 		sessionID = ""
 	}
+	hadPersistedSession := strings.TrimSpace(sessionID) != ""
 	if sessionID == "" {
 		sessionID, _ = d.CreateSession()
 	}
@@ -98,6 +99,16 @@ func (d *DSH) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	runtime, err := resolveDSHRuntime(d.cfg)
 	if err != nil {
 		return bot.RunResult{Reply: "启动 dsh 失败: " + err.Error(), Status: "agent_missing"}
+	}
+	if runtime.Headless {
+		persisted := ""
+		if hadPersistedSession {
+			persisted = sessionID
+		} else if strings.HasPrefix(strings.TrimSpace(opts.SessionID), "session-") {
+			// 调用方显式带回 headless 会话 id（没有 store 的测试/命令重放场景）。
+			persisted = strings.TrimSpace(opts.SessionID)
+		}
+		return d.runHeadless(prompt, opts, runtime, persisted, hasKey, entryKey)
 	}
 	key := runtime.key(provider, model)
 	proc, err := dshPoolGetOrCreate(key, d.cfg, provider, model)

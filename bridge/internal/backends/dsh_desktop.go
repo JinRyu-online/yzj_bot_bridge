@@ -17,19 +17,24 @@ import (
 // DSH 桌面客户端（DeepSeek Harness Electron 应用）集成。
 //
 // 桌面客户端自带完整 dsh runtime（app.asar/dsh/node_modules），桥不再要求本机
-// 单独安装 node + dsh CLI：
-//   - 用桌面客户端的 Electron 可执行文件以 ELECTRON_RUN_AS_NODE=1 充当 node；
-//   - 用 app.asar 内的 dsh/lib/bin.js 启动官方 SDK JSON-RPC profile；
-//   - profile 由桥生成（默认 yzj-sdk），复制桌面 profile 的模型 provider 配置，
-//     只把 app 层换成 @deepseek-ai/dsh-sdk-jsonrpc-server（官方 0.2.1 已内置
-//     session/resume，无需再装 @bridge/dsh-jsonrpc-resume）。
+// 单独安装 node + dsh CLI。两种使用方式：
+//   - headless（默认）：直接执行桌面客户端的 headless CLI（dsh --profile headless），
+//     一条消息一次进程，输出 NDJSON（session / text / final / status）；会话用
+//     --session-id 续跑。这是真正“用桌面客户端自带的 headless cli 执行”。
+//   - sdk：常驻 @deepseek-ai/dsh-sdk-jsonrpc-server 进程池（stdio JSON-RPC），
+//     适合需要共享进程/低延迟的多轮场景。
+//
+// 两种方式都由桥自动生成并维护 profile（yzj-headless / yzj-sdk）：复制桌面
+// profile 的模型 provider 配置，不需要用户手工部署。
 
 const (
-	dshModeDesktop = "desktop"
-	dshModeCLI     = "cli"
+	dshModeHeadless = "headless"
+	dshModeSDK      = "sdk"
+	dshModeCLI      = "cli"
 
-	// dshManagedProfile 是桥在 desktop 模式下自动生成并维护的 profile 名。
-	dshManagedProfile = "yzj-sdk"
+	// 桥自动生成并维护的 profile 名。
+	dshManagedHeadlessProfile = "yzj-headless"
+	dshManagedSDKProfile      = "yzj-sdk"
 )
 
 // dshRuntime 是一次 DSH 运行的实际启动方式。
@@ -39,13 +44,19 @@ type dshRuntime struct {
 	Profile        string
 	ElectronAsNode bool
 	Desktop        bool
+	Headless       bool
 }
 
-// resolveDSHRuntime 根据 dsh_mode 选择桌面客户端 runtime 或旧 CLI 入口。
+// resolveDSHRuntime 根据 dsh_mode 选择桌面 headless CLI / 桌面 SDK server / 旧 CLI 入口。
 func resolveDSHRuntime(cfg bot.Config) (dshRuntime, error) {
 	mode := strings.ToLower(strings.TrimSpace(cfg.DSHMode))
-	if mode == "" || mode == "auto" {
-		mode = dshModeDesktop
+	switch mode {
+	case "", "auto", "desktop", dshModeHeadless:
+		mode = dshModeHeadless
+	case dshModeSDK:
+	case dshModeCLI:
+	default:
+		return dshRuntime{}, fmt.Errorf("dsh_mode=%q 无效（可选 headless / sdk / cli）", cfg.DSHMode)
 	}
 	profile := strings.TrimSpace(cfg.DSHProfile)
 
@@ -55,9 +66,6 @@ func resolveDSHRuntime(cfg bot.Config) (dshRuntime, error) {
 			Entry:   resolveDSHEntry(cfg),
 			Profile: defaultCLIProfile(profile),
 		}, nil
-	}
-	if mode != dshModeDesktop {
-		return dshRuntime{}, fmt.Errorf("dsh_mode=%q 无效（可选 desktop / cli）", mode)
 	}
 
 	exe, dir, err := detectDSHDesktop(cfg.DSHDesktopPath)
@@ -74,26 +82,42 @@ func resolveDSHRuntime(cfg bot.Config) (dshRuntime, error) {
 		return dshRuntime{}, err
 	}
 
-	// jsonrpc 是旧版桥自建 profile，0.2.x 桌面 runtime 下改由桥维护的 yzj-sdk 取代。
-	if profile == "" || profile == "jsonrpc" {
-		profile = dshManagedProfile
+	entry := filepath.Join(dir, "resources", "app.asar", "dsh", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
+	rt := dshRuntime{
+		NodeBin:        exe,
+		Entry:          entry,
+		ElectronAsNode: true,
+		Desktop:        true,
 	}
-	if profile == dshManagedProfile {
+	if mode == dshModeHeadless {
+		if profile == "" || profile == "jsonrpc" || profile == dshManagedSDKProfile || profile == "headless" {
+			profile = dshManagedHeadlessProfile
+		}
+		if profile == dshManagedHeadlessProfile {
+			if err := ensureHeadlessProfile(cfg, profile); err != nil {
+				return dshRuntime{}, err
+			}
+		} else if !fileExists(filepath.Join(dshHome(cfg), "profiles", profile, "package.json")) {
+			return dshRuntime{}, fmt.Errorf("dsh profile %q 不存在（%s）", profile, filepath.Join(dshHome(cfg), "profiles", profile))
+		}
+		rt.Profile = profile
+		rt.Headless = true
+		return rt, nil
+	}
+
+	// sdk：常驻官方 SDK JSON-RPC server。
+	if profile == "" || profile == "jsonrpc" || profile == dshManagedHeadlessProfile {
+		profile = dshManagedSDKProfile
+	}
+	if profile == dshManagedSDKProfile {
 		if err := ensureDesktopSDKProfile(cfg, profile); err != nil {
 			return dshRuntime{}, err
 		}
 	} else if !fileExists(filepath.Join(dshHome(cfg), "profiles", profile, "package.json")) {
 		return dshRuntime{}, fmt.Errorf("dsh profile %q 不存在（%s）", profile, filepath.Join(dshHome(cfg), "profiles", profile))
 	}
-
-	entry := filepath.Join(dir, "resources", "app.asar", "dsh", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
-	return dshRuntime{
-		NodeBin:        exe,
-		Entry:          entry,
-		Profile:        profile,
-		ElectronAsNode: true,
-		Desktop:        true,
-	}, nil
+	rt.Profile = profile
+	return rt, nil
 }
 
 func defaultCLIProfile(profile string) string {
@@ -161,35 +185,13 @@ func desktopInstallCandidates(explicit string) []string {
 	return deduped
 }
 
-// ensureDesktopSDKProfile 生成/更新桥自维护的桌面 runtime profile。
-// 模型 provider 配置从桌面 profile 的 cordis.patch.yml 复制，桥只追加 sdk server。
+// ensureDesktopSDKProfile 生成/更新桌面 SDK server profile（yzj-sdk）。
 func ensureDesktopSDKProfile(cfg bot.Config, profile string) error {
-	home := dshHome(cfg)
-	desktopPatch := filepath.Join(home, "profiles", "desktop", "cordis.patch.yml")
-	data, err := os.ReadFile(desktopPatch)
+	entries, err := desktopBaseEntries(cfg)
 	if err != nil {
-		return fmt.Errorf("读取 DSH 桌面客户端配置失败（%s）：%w；请先启动一次 DSH 桌面客户端并配置模型", desktopPatch, err)
-	}
-	var entries []map[string]any
-	if err := yaml.Unmarshal(data, &entries); err != nil {
-		return fmt.Errorf("解析 DSH 桌面客户端配置失败（%s）：%w", desktopPatch, err)
-	}
-
-	var kept []map[string]any
-	for _, e := range entries {
-		switch fmt.Sprint(e["id"]) {
-		case "permission", "llm-pi-ai", "agent-default-model":
-			kept = append(kept, e)
-		}
-	}
-	if !hasPatchID(kept, "llm-pi-ai") {
-		return fmt.Errorf("DSH 桌面客户端配置缺少 llm-pi-ai 模型 provider（%s）；请先在桌面客户端里配置模型", desktopPatch)
-	}
-	if err := ensureProviderModel(kept, cfg); err != nil {
 		return err
 	}
-
-	kept = append(kept,
+	entries = append(entries,
 		map[string]any{
 			"id": "system-prompt",
 			"config": map[string]any{
@@ -203,19 +205,69 @@ func ensureDesktopSDKProfile(cfg bot.Config, profile string) error {
 			},
 		},
 	)
+	return writeManagedProfile(cfg, profile,
+		[]string{"@deepseek-ai/dsh-base"},
+		entries,
+		"# Generated by yzj-bridge for the DSH desktop SDK runtime. Do not edit.\n")
+}
 
-	patch, err := yaml.Marshal(kept)
+// ensureHeadlessProfile 生成/更新桌面 headless CLI profile（yzj-headless）。
+// headless bundle 默认禁用 credentials（一次性任务用 launch-time credentials）；
+// 我们显式重新启用，让 headless 能读桌面客户端写入的 ~/.dsh/.credentials.yaml。
+func ensureHeadlessProfile(cfg bot.Config, profile string) error {
+	entries, err := desktopBaseEntries(cfg)
 	if err != nil {
 		return err
 	}
-	patch = append([]byte("# Generated by yzj-bridge for the DSH desktop runtime. Do not edit.\n"), patch...)
+	entries = append([]map[string]any{{"id": "credentials", "disabled": false}}, entries...)
+	entries = append(entries, map[string]any{"id": "hmr", "disabled": true})
+	return writeManagedProfile(cfg, profile,
+		[]string{"@deepseek-ai/dsh-base", "@deepseek-ai/dsh-headless"},
+		entries,
+		"# Generated by yzj-bridge for the DSH desktop headless CLI. Do not edit.\n")
+}
 
-	dir := filepath.Join(home, "profiles", profile)
+// desktopBaseEntries 从桌面 profile 复制模型 provider / 权限配置，并补齐桥默认模型。
+func desktopBaseEntries(cfg bot.Config) ([]map[string]any, error) {
+	home := dshHome(cfg)
+	desktopPatch := filepath.Join(home, "profiles", "desktop", "cordis.patch.yml")
+	data, err := os.ReadFile(desktopPatch)
+	if err != nil {
+		return nil, fmt.Errorf("读取 DSH 桌面客户端配置失败（%s）：%w；请先启动一次 DSH 桌面客户端并配置模型", desktopPatch, err)
+	}
+	var entries []map[string]any
+	if err := yaml.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("解析 DSH 桌面客户端配置失败（%s）：%w", desktopPatch, err)
+	}
+	var kept []map[string]any
+	for _, e := range entries {
+		switch fmt.Sprint(e["id"]) {
+		case "permission", "llm-pi-ai", "agent-default-model":
+			kept = append(kept, e)
+		}
+	}
+	if !hasPatchID(kept, "llm-pi-ai") {
+		return nil, fmt.Errorf("DSH 桌面客户端配置缺少 llm-pi-ai 模型 provider（%s）；请先在桌面客户端里配置模型", desktopPatch)
+	}
+	if err := ensureProviderModel(kept, cfg); err != nil {
+		return nil, err
+	}
+	return kept, nil
+}
+
+func writeManagedProfile(cfg bot.Config, profile string, bundles []string, entries []map[string]any, header string) error {
+	patch, err := yaml.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	patch = append([]byte(header), patch...)
+
+	dir := filepath.Join(dshHome(cfg), "profiles", profile)
 	pkg := map[string]any{
 		"name":    "dsh-profile-" + profile,
 		"private": true,
 		"dsh": map[string]any{
-			"profile": map[string]any{"bundles": []string{"@deepseek-ai/dsh-base"}},
+			"profile": map[string]any{"bundles": bundles},
 		},
 	}
 	pkgData, err := json.MarshalIndent(pkg, "", "  ")
@@ -240,7 +292,6 @@ func hasPatchID(entries []map[string]any, id string) bool {
 }
 
 // ensureProviderModel 确保当前 provider 至少包含桥可能用到的模型 id。
-// 桌面配置里如果只有 deepseek-flash，桥的默认 model 也能正常 initialize。
 func ensureProviderModel(entries []map[string]any, cfg bot.Config) error {
 	provider := strings.TrimSpace(cfg.DSHProvider)
 	if provider == "" {
