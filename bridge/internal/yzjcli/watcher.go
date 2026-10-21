@@ -35,9 +35,10 @@ type Watcher struct {
 	cancel    context.CancelFunc
 	lastPoll  time.Time
 	lastMsgAt time.Time
-	lastErr   string
-	authFails int
-	backoff   time.Duration
+	lastErr      string
+	authFails    int
+	backoff      time.Duration
+	lastThrottle time.Time
 }
 
 // SetEnabled starts/stops the polling loop.
@@ -131,7 +132,11 @@ func (w *Watcher) pollOnce(ctx context.Context) {
 	w.lastPoll = time.Now()
 	w.lastErr = ""
 	w.authFails = 0
-	w.backoff = 0
+	// Only drop the throttle penalty after a quiet period; a single success
+	// right after a 10000429 must not immediately return to the fast cadence.
+	if !w.lastThrottle.IsZero() && time.Since(w.lastThrottle) > 5*time.Minute {
+		w.backoff = 0
+	}
 	w.mu.Unlock()
 	if len(page.List) == 0 {
 		return
@@ -236,14 +241,15 @@ func (w *Watcher) noteError(err error) {
 	w.mu.Lock()
 	w.lastErr = err.Error()
 	if IsRateLimited(err) {
-		next := w.backoff * 2
-		if next < 5*time.Second {
-			next = 5 * time.Second
+		next := 30 * time.Second
+		if w.backoff > 0 {
+			next = w.backoff * 2
 		}
-		if next > time.Minute {
-			next = time.Minute
+		if next > 5*time.Minute {
+			next = 5 * time.Minute
 		}
 		w.backoff = next
+		w.lastThrottle = time.Now()
 	}
 	auth := IsAuthError(err)
 	if auth {

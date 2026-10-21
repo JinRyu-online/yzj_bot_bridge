@@ -227,8 +227,37 @@ func reflowToMax(chunks []string, limit, max int) []string {
 }
 
 // FormatCompletionReply is the IM completion body wrapper.
+
+// collapseRepeatedReply removes an exact whole-text repetition. Cursor agents
+// occasionally replay the previous assistant answer when resuming a session,
+// which produces two identical bodies in one reply.
+func collapseRepeatedReply(s string) string {
+	t := strings.TrimSpace(s)
+	for {
+		changed := false
+		n := len(t)
+		for k := 2; k <= 4; k++ {
+			if n%k != 0 {
+				continue
+			}
+			part := t[:n/k]
+			if strings.TrimSpace(part) == "" {
+				continue
+			}
+			if strings.Repeat(part, k) == t {
+				t = strings.TrimSpace(part)
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			return t
+		}
+	}
+}
+
 func FormatCompletionReply(body, openID, name string, mention bool) string {
-	body = strings.TrimSpace(body)
+	body = collapseRepeatedReply(body)
 	body = strings.TrimPrefix(body, "@"+name)
 	body = strings.TrimSpace(body)
 	body = strings.TrimPrefix(body, "任务已完成")

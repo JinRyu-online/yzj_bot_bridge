@@ -132,3 +132,13 @@ func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestIsRateLimitedPlatformThrottle(t *testing.T) {
+	err := &CLIError{ExitCode: 1, Type: "api_error", Message: "API error: code=10000429, 请求过于频繁"}
+	if !IsRateLimited(err) {
+		t.Fatal("api throttle must be rate limited")
+	}
+	if IsRateLimited(&CLIError{ExitCode: 1, Type: "api_error", Message: "invalid group id"}) {
+		t.Fatal("plain api error must not be rate limited")
+	}
+}

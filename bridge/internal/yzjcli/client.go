@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -67,6 +68,7 @@ type CLIError struct {
 	Subtype  string `json:"subtype"`
 	Message  string `json:"message"`
 	Hint     string `json:"hint"`
+	Code     string `json:"code"`
 }
 
 func (e *CLIError) Error() string {
@@ -105,12 +107,32 @@ func IsAuthError(err error) bool {
 }
 
 // IsRateLimited reports a retryable server-side throttle/transient failure.
+// yzj-cli surfaces platform throttling as exit 1 with an api_error such as
+// "API error: code=10000429, 请求过于频繁", and transport failures as exit 4.
 func IsRateLimited(err error) bool {
 	var e *CLIError
 	if !errors.As(err, &e) {
 		return false
 	}
-	return e.ExitCode == 4
+	if e.ExitCode == 4 {
+		return true
+	}
+	msg := strings.ToLower(e.Message)
+	for _, needle := range []string{"请求过于频繁", "too many requests", "rate limit", "throttle", "10000429", "频繁"} {
+		if strings.Contains(msg, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	if e.Code == "10000429" {
+		return true
+	}
+	for _, s := range []string{e.Type, e.Subtype} {
+		s = strings.ToLower(s)
+		if strings.Contains(s, "rate") || strings.Contains(s, "throttle") || strings.Contains(s, "transport") {
+			return true
+		}
+	}
+	return false
 }
 
 // Client is a typed wrapper around `yzj-cli`.
@@ -206,7 +228,7 @@ func (c *Client) run(ctx context.Context, args ...string) (json.RawMessage, erro
 	if !env.Success {
 		if env.Error != nil {
 			return nil, &CLIError{ExitCode: code, Type: env.Error.Type, Subtype: env.Error.Subtype,
-				Message: env.Error.Message, Hint: env.Error.Hint}
+				Message: env.Error.Message, Hint: env.Error.Hint, Code: extractAPICode(env.Error.Message)}
 		}
 		return nil, &CLIError{ExitCode: code, Message: "unsuccessful response"}
 	}
@@ -222,7 +244,7 @@ func parseError(code int, stdout, stderr []byte) error {
 		var env envelope
 		if err := json.Unmarshal(trimmed, &env); err == nil && env.Error != nil {
 			return &CLIError{ExitCode: code, Type: env.Error.Type, Subtype: env.Error.Subtype,
-				Message: env.Error.Message, Hint: env.Error.Hint}
+				Message: env.Error.Message, Hint: env.Error.Hint, Code: extractAPICode(env.Error.Message)}
 		}
 	}
 	msg := strings.TrimSpace(string(stderr))
@@ -237,7 +259,7 @@ func parseError(code int, stdout, stderr []byte) error {
 	if len(msg) > 500 {
 		msg = msg[:500] + "…"
 	}
-	return &CLIError{ExitCode: code, Message: msg}
+	return &CLIError{ExitCode: code, Message: msg, Code: extractAPICode(msg)}
 }
 
 // WhoAmI returns the logged-in user identity.
@@ -370,6 +392,15 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 		return "", parseError(code, stdout, stderr)
 	}
 	return strings.TrimSpace(string(stdout)), nil
+}
+
+var apiCodeRe = regexp.MustCompile(`(?i)(?:code=|code\s*[:=]\s*)([0-9]{4,})`)
+
+func extractAPICode(msg string) string {
+	if m := apiCodeRe.FindStringSubmatch(msg); len(m) == 2 {
+		return m[1]
+	}
+	return ""
 }
 
 func itoa(n int) string {

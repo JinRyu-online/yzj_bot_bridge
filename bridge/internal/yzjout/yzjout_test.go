@@ -293,3 +293,19 @@ func TestSendTextSuccessBodyNotBizError(t *testing.T) {
 		t.Fatalf("SendText: %v", err)
 	}
 }
+
+func TestCollapseRepeatedReply(t *testing.T) {
+	part := "Jinryu，你好。\n\n**当前时间：** 2026-10-21 15:27:36。"
+	if got := collapseRepeatedReply(part + part); got != part {
+		t.Fatalf("2x collapse failed: %q", got)
+	}
+	if got := collapseRepeatedReply(part + part + part); got != part {
+		t.Fatalf("3x collapse failed: %q", got)
+	}
+	if got := collapseRepeatedReply("unique reply"); got != "unique reply" {
+		t.Fatalf("false positive: %q", got)
+	}
+	if got := FormatCompletionReply(part+part, "u1", "n", true); strings.Contains(got, part+part) {
+		t.Fatalf("FormatCompletionReply did not dedupe: %q", got)
+	}
+}
