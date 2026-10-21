@@ -51,17 +51,29 @@ func AvailableBackends(defs map[string]any) []BackendAvailable {
 		byID["openai"].Reason = "未配置 Base URL"
 	}
 
-	// dsh：node 可执行 且 DSH 入口可解析并存在。
-	nodeBin := resolveNodeBin(str("node_bin"))
-	entry := resolveDSHEntry(bot.Config{
-		NodeBin:  str("node_bin"),
-		DSHEntry: str("dsh_entry"),
-		DSHHome:  str("dsh_home"),
-	})
-	if nodeBin != "" && entry != "" && nodeResolvable(nodeBin) && cliExists(entry) {
-		byID["dsh"].Available = true
-	} else {
-		byID["dsh"].Reason = "未找到 DSH 入口或 Node"
+	// dsh：默认桌面客户端（headless/sdk）或旧 CLI（node + dsh_entry）。
+	dshMode := strings.ToLower(str("dsh_mode"))
+	useDesktop := dshMode == "" || dshMode == "auto" || dshMode == "desktop" ||
+		dshMode == "headless" || dshMode == "sdk"
+	if useDesktop {
+		if _, _, err := detectDSHDesktop(str("dsh_desktop_path")); err == nil {
+			byID["dsh"].Available = true
+		}
+	}
+	if !byID["dsh"].Available {
+		nodeBin := resolveNodeBin(str("node_bin"))
+		entry := resolveDSHEntry(bot.Config{
+			NodeBin:  str("node_bin"),
+			DSHEntry: str("dsh_entry"),
+			DSHHome:  str("dsh_home"),
+		})
+		if nodeBin != "" && entry != "" && nodeResolvable(nodeBin) && cliExists(entry) {
+			byID["dsh"].Available = true
+		} else if dshMode == "cli" {
+			byID["dsh"].Reason = "未找到 DSH 入口或 Node"
+		} else {
+			byID["dsh"].Reason = "未找到 DSH 桌面客户端或 CLI 入口"
+		}
 	}
 
 	// opencode 占位后端，尚未实现：固定不可用。

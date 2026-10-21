@@ -486,6 +486,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  font-size: 13px;
   border-radius: 999px;
   border: 1px solid var(--panel-border);
   background: color-mix(in srgb, var(--bg2) 88%, var(--accent));
@@ -526,6 +527,7 @@ textarea {
   background: transparent;
   color: var(--text);
   text-align: left;
+  font-size: 13px;
   padding: 9px 12px;
   cursor: pointer;
   overflow: hidden;
@@ -1573,6 +1575,7 @@ textarea {
   -webkit-appearance: none;
   width: 100%;
   min-width: 160px;
+  font-size: 13px;
   border-radius: 999px;
   border: 1px solid var(--panel-border);
   background: var(--bg2);

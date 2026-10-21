@@ -28,6 +28,8 @@ func TestAvailableBackends(t *testing.T) {
 		"openai_base_url": "https://example.com/v1",
 		"node_bin":        filepath.Join(dir, "no-node.exe"),
 		"dsh_home":        filepath.Join(dir, "no-dsh"),
+		// 强制 cli 模式：避免测试机装了 DSH 桌面客户端时默认 desktop 模式把它判为可用。
+		"dsh_mode": "cli",
 	}
 	items := AvailableBackends(defs)
 	byID := map[string]BackendAvailable{}
@@ -75,4 +77,31 @@ func TestAvailableBackendsOpenAIRequiresBaseURL(t *testing.T) {
 	if byID["openai"].Reason == "" {
 		t.Fatal("openai reason required when unavailable")
 	}
+}
+
+// TestAvailableBackendsDSHDesktop 验证 desktop/headless 模式下探测桌面客户端即视为可用。
+func TestAvailableBackendsDSHDesktop(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "resources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "DeepSeek Harness.exe"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "resources", "app.asar"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	items := AvailableBackends(map[string]any{
+		"dsh_mode":         "headless",
+		"dsh_desktop_path": dir,
+	})
+	for _, it := range items {
+		if it.ID == "dsh" {
+			if !it.Available {
+				t.Fatalf("dsh desktop should be available: %+v", it)
+			}
+			return
+		}
+	}
+	t.Fatal("dsh item missing")
 }

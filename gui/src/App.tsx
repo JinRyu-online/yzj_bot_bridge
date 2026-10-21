@@ -219,6 +219,61 @@ const BACKEND_LABELS: Record<string, string> = {
 };
 const MIN_LOADING_MS = 500;
 
+function isPollInbound(mode?: string): boolean {
+  const m = String(mode || "").toLowerCase();
+  return m === "yzj_cli" || m === "poll";
+}
+
+/** yzj-cli 限流是暂时的：轮询进程仍在跑，展示上应算“在线/重试中”，不要误报离线。 */
+function isPollThrottledError(err?: string): boolean {
+  const s = String(err || "").toLowerCase();
+  return (
+    s.includes("请求过于频繁") ||
+    s.includes("too many") ||
+    s.includes("rate limit") ||
+    s.includes("10000429") ||
+    s.includes("429")
+  );
+}
+
+function shortError(err: string, max = 56): string {
+  const s = err.trim().replace(/\s+/g, " ");
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+/** 通道是否处于可用态：WSS 看 connected；yzj-cli 轮询看 poll_enabled（限流重试仍算在线）。 */
+function channelLive(s?: StatusItem | null): boolean {
+  if (!s) return false;
+  if (isPollInbound(s.inbound_mode)) {
+    if (!s.poll_enabled) return false;
+    const err = String(s.last_poll_error || "").trim();
+    return !err || isPollThrottledError(err);
+  }
+  return !!s.connected;
+}
+
+/** 预览页通道状态文案：yzj-cli 不再误报「未连接」。 */
+function channelStatusLabel(s?: StatusItem | null, inboundMode?: string): string {
+  const mode = inboundMode || s?.inbound_mode;
+  if (isPollInbound(mode)) {
+    if (!s) return "yzj-cli · 已启用";
+    const pollErr = String(s.last_poll_error || "").trim();
+    if (pollErr) {
+      return isPollThrottledError(pollErr)
+        ? "yzj-cli · 限流重试中"
+        : `yzj-cli · 轮询异常：${shortError(pollErr)}`;
+    }
+    if (!String(s.yzj_group_id || "").trim()) return "yzj-cli · 未配置会话";
+    if (s.poll_enabled) {
+      return s.last_poll_at ? "yzj-cli · 轮询中" : "yzj-cli · 已启用";
+    }
+    return "yzj-cli · 轮询已暂停";
+  }
+  if (!s) return "无状态";
+  if (s.connected) return "已连接";
+  return String(s.last_error || "").trim() || "未连接";
+}
+
 type CliEngine = "cursor" | "claude" | "dsh" | "node";
 
 interface CliDiscoverResult {
@@ -1969,8 +2024,10 @@ function App() {
 
   const summary = useMemo(() => {
     const total = status.length;
-    const enabled = status.filter((s) => s.ws_enabled).length;
-    const connected = status.filter((s) => s.connected).length;
+    const enabled = status.filter((s) =>
+      isPollInbound(s.inbound_mode) ? !!s.poll_enabled : !!s.ws_enabled,
+    ).length;
+    const connected = status.filter((s) => channelLive(s)).length;
     return { total, enabled, connected };
   }, [status]);
 
@@ -2587,16 +2644,18 @@ function App() {
       label,
       icon: <EngineIcon id={id} size={14} />,
     });
-    const list = availableBackends
-      .filter((b) => b.available)
-      .map((b) => withIcon(b.id, b.label));
-    // 编辑已有 bot 时，原后端可能已不可用，仍附加该项以便保存原配置。
+    const byId = new Map(availableBackends.map((b) => [b.id, b]));
+    // 始终列出全部已知引擎；不可用时附带原因，避免 DSH 等因探测失败从下拉消失。
+    const list = BACKENDS.map((id) => {
+      const info = byId.get(id);
+      const base = info?.label || BACKEND_LABELS[id] || id;
+      if (info && !info.available && info.reason) {
+        return withIcon(id, `${base}（${info.reason}）`);
+      }
+      return withIcon(id, base);
+    });
     if (botForm.backend && !list.some((o) => o.id === botForm.backend)) {
       list.push(withIcon(botForm.backend, botForm.backend));
-    }
-    // 空兜底：全部不可用或列表为空时仍显示全部引擎，避免下拉空白。
-    if (!list.length) {
-      return BACKENDS.map((b) => withIcon(b, BACKEND_LABELS[b] || b));
     }
     return list;
   }, [availableBackends, botForm.backend]);
@@ -2689,7 +2748,7 @@ function App() {
           <div className={`status-chip${ready ? " ok" : ""}`} data-testid="bridge-status">
             <div>{booting ? "桥启动中…" : ready ? "桥已连接" : "桥未就绪"}</div>
             <div className="status-chip-sub" data-testid="bridge-summary">
-              通道 {summary.total} · 启用 {summary.enabled} · 已连接 {summary.connected}
+              通道 {summary.total} · 启用 {summary.enabled} · 在线 {summary.connected}
             </div>
           </div>
           {error ? (
@@ -3591,8 +3650,14 @@ function App() {
                     >
                       <div className="role-card-top">
                         <strong>{primary.name || roleId}</strong>
-                        <span className={`pill${channels.some((c) => c.connected) ? " live" : ""}`}>
-                          {channels.some((c) => c.connected) ? "在线" : "离线"}
+                        <span className={`pill${channels.some((c) => channelLive(c)) ? " live" : ""}`}>
+                          {channels.some((c) => channelLive(c))
+                            ? isPollInbound(primary.inbound_mode)
+                              ? "轮询中"
+                              : "在线"
+                            : isPollInbound(primary.inbound_mode)
+                              ? "未轮询"
+                              : "离线"}
                         </span>
                       </div>
                       <div className="role-meta">
@@ -3638,6 +3703,10 @@ function App() {
                                   s.id === `${selectedRoleId}__${ch.group}`),
                             ) ||
                             status.find((s) => s.role_id === selectedRoleId && selectedChannels.length === 1);
+                          const pollMode = isPollInbound(
+                            runtime?.inbound_mode || selectedItem.inbound_mode,
+                          );
+                          const live = channelLive(runtime);
                           return (
                             <div className="channel-card" key={`${ch.group}-${idx}`}>
                               <div className="channel-card-head">
@@ -3647,14 +3716,30 @@ function App() {
                                     checked={!!runtime.ws_enabled}
                                     onChange={(v) => setChannelEnabled(runtime.id, v)}
                                   />
+                                ) : pollMode && runtime ? (
+                                  <Switch
+                                    checked={!!runtime.poll_enabled}
+                                    onChange={(v) => setChannelEnabled(runtime.id, v)}
+                                  />
                                 ) : (
-                                  <span className="pill">无 WSS</span>
+                                  <span className="pill">{pollMode ? "yzj-cli" : "无 WSS"}</span>
                                 )}
                               </div>
-                              <code className="url-line">{String(ch.send_msg_url || "-")}</code>
+                              <code className="url-line">
+                                {pollMode
+                                  ? runtime?.yzj_group_name ||
+                                    runtime?.yzj_group_id ||
+                                    String(ch.send_msg_url || "-")
+                                  : String(ch.send_msg_url || "-")}
+                              </code>
                               <div className="channel-card-foot">
-                                <span className={`dot${runtime?.connected ? " on" : ""}`} />
-                                <span>{runtime?.connected ? "已连接" : runtime?.last_error || "未连接"}</span>
+                                <span className={`dot${live ? " on" : ""}`} />
+                                <span>
+                                  {channelStatusLabel(
+                                    runtime,
+                                    runtime?.inbound_mode || selectedItem.inbound_mode,
+                                  )}
+                                </span>
                                 <div className="spacer" />
                                 <button className="link" onClick={() => openEditChannel(idx)}>
                                   编辑
