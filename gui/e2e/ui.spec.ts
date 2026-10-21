@@ -991,39 +991,49 @@ test("AI 设置：Cursor 模型下拉与 OpenAI 连通性", async ({ page }) => 
   ).toBeVisible();
 });
 
-test("AI 设置：DSH 精简卡片（入口/Node/模型）与保存回读", async ({ page }) => {
+test("AI 设置：DSH 精简卡片（desktop/cli 切换、入口/Node/模型）与保存回读", async ({ page }) => {
   await page.getByTestId("nav-settings").click();
   await expect(page.getByTestId("group-dsh")).toBeVisible();
-  // 精简后仅保留 3 项配置：DSH CLI 入口 / Node 可执行 / 默认模型。
-  await expect(page.getByTestId("dsh-entry")).toBeVisible();
-  await expect(page.getByTestId("dsh-node-bin")).toBeVisible();
+  // 默认 desktop 模式：只渲染桌面客户端路径与模型，不渲染 CLI 入口/Node。
+  await expect(page.getByTestId("dsh-mode")).toBeVisible();
+  await expect(page.getByTestId("dsh-desktop-path")).toBeVisible();
+  await expect(page.getByTestId("dsh-entry")).toHaveCount(0);
+  await expect(page.getByTestId("dsh-node-bin")).toHaveCount(0);
   await expect(page.getByTestId("dsh-model")).toBeVisible();
-  // 其余 6 个字段的输入框不再渲染。
+  // 其余 6 个字段不渲染。
   await expect(page.getByTestId("dsh-profile")).toHaveCount(0);
   await expect(page.getByTestId("dsh-provider")).toHaveCount(0);
   await expect(page.getByTestId("dsh-timeout")).toHaveCount(0);
   await expect(page.getByTestId("dsh-ttl-seconds")).toHaveCount(0);
   await expect(page.getByTestId("dsh-max-warm")).toHaveCount(0);
   await expect(page.getByTestId("dsh-home")).toHaveCount(0);
-  // 进入设置页自动扫描（与 Cursor CLI 一致）：DSH/Node 命中 mock 并 autofill。
-  await expect(page.getByTestId("dsh-discover-hint")).toContainText("已找到");
-  await expect(page.getByTestId("dsh-entry")).toHaveValue(/bin\.js/);
-  await expect(page.getByTestId("dsh-node-bin")).toHaveValue(/node\.exe/);
-  // 手动重新扫描仍可用。
+
+  // 切到 cli 模式：CLI 入口/Node 字段出现；重新扫描可 autofill。
+  await page.getByTestId("dsh-mode").locator(".fancy-select-trigger").click();
+  await page
+    .getByTestId("dsh-mode-menu")
+    .getByRole("option", { name: "cli（独立 node + dsh 入口）" })
+    .click();
+  await expect(page.getByTestId("dsh-entry")).toBeVisible();
+  await expect(page.getByTestId("dsh-node-bin")).toBeVisible();
   await page.getByTestId("discover-dsh").click();
   await expect(page.getByTestId("dsh-discover-hint")).toContainText("已找到");
   await expect(page.getByTestId("dsh-entry")).toHaveValue(/bin\.js/);
-  // 默认模型：进入设置页已自动拉取一次；手动刷新仍可用。
+  await expect(page.getByTestId("dsh-node-bin")).toHaveValue(/node\.exe/);
+
+  // 默认模型：手动刷新仍可用。
   await page.getByTestId("refresh-dsh-models").click();
   await expect(page.getByTestId("save-toast").filter({ hasText: "已拉取 2 个 DSH 模型" })).toBeVisible();
   await page.getByTestId("dsh-model").locator(".fancy-select-trigger").click();
   const dshMenu = page.getByTestId("dsh-model-menu");
   await expect(dshMenu.getByRole("option", { name: "DeepSeek-V4-Flash" })).toBeVisible();
   await dshMenu.getByRole("option", { name: "DeepSeek-V4-Flash" }).click();
-  // 保存 → 回读保留 dsh_model。
+
+  // 保存 → 回读保留 dsh_mode=cli 与 dsh_model。
   await page.getByTestId("save-settings").click();
   await expect(page.getByTestId("save-toast").filter({ hasText: "设置已保存" })).toBeVisible();
   await expect(page.getByTestId("dsh-model")).toContainText("DeepSeek-V4-Flash");
+  await expect(page.getByTestId("dsh-entry")).toBeVisible();
 });
 
 test("AI 设置：卡片顺序 cursor → dsh → openai → claude → memory → dirs", async ({ page }) => {
