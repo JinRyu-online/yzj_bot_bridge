@@ -1,6 +1,7 @@
 # Build Go bridge + Tauri GUI Windows installer (NSIS) and portable folder.
 param(
-    [switch]$SkipPause
+    [switch]$SkipPause,
+    [switch]$SkipTests
 )
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -18,8 +19,13 @@ try {
     Push-Location bridge
     try {
         $env:GOTOOLCHAIN = "local"
-        go test ./...
-        Assert-LastExit "go test"
+        if (-not $SkipTests) {
+            # -p 1：逐包串行，避免并发编译/测试把 Windows 提交内存打满（VirtualAlloc 1455）。
+            go test -p 1 ./...
+            Assert-LastExit "go test"
+        } else {
+            Write-Host "  (SkipTests) 跳过 go test"
+        }
         New-Item -ItemType Directory -Force -Path bin | Out-Null
         go build -o bin/yzj-bridge.exe ./cmd/yzj-bridge
         Assert-LastExit "go build"
