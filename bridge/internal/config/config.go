@@ -23,12 +23,13 @@ type File struct {
 func defaultMap() map[string]any {
 	return map[string]any{
 		"cursor_api_key": "",
-		"cursor_bin": "agent", "cursor_model": "", "claude_model": "", "session_mode": "shared", "job_queue": "",
+		"cursor_bin":     "agent", "cursor_model": "", "claude_model": "", "session_mode": "shared", "job_queue": "",
 		"allow_openids": []any{}, "allow_users": []any{},
 		"cursor_timeout": 600, "ack_pending": true, "mention_on_reply": true,
 		"cursor_sandbox": "disabled", "cursor_force": true,
 		"cursor_stream": true, "cursor_stream_partial": true,
-		"log_level": "info", "commands_enabled": true,
+		"cursor_daily_reset": true,
+		"log_level":          "info", "commands_enabled": true,
 		"reconnect_delay_sec": 5, "reconnect_max_delay_sec": 60,
 		"heartbeat_interval_sec": 30, "sessions_file": "sessions.json",
 		"conversations_dir": "logs/conversations", "projects_root": "~",
@@ -363,6 +364,7 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		CursorForce:   asBool(m["cursor_force"], true), CursorStream: asBool(m["cursor_stream"], true),
 		CursorStreamPart: asBool(m["cursor_stream_partial"], true),
 		CursorTimeout:    asInt(m["cursor_timeout"], 600),
+		CursorDailyReset: asBool(m["cursor_daily_reset"], true),
 		ClaudeBin:        firstNonEmpty(asString(m["claude_bin"]), "claude"),
 		PermissionMode:   firstNonEmpty(asString(m["permission_mode"]), "bypassPermissions"),
 		AllowedTools:     asStringSlice(m["allowed_tools"]), MaxBudgetUSD: asFloat(m["max_budget_usd"], 0),

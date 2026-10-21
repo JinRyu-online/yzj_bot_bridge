@@ -36,5 +36,6 @@ GUI 聊天页走 stream 端点；思考过程在气泡内可折叠展示。
 ## 相关配置
 
 - `bots[].session_mode`：仅影响云之家（及 webhook）入站；GUI 始终 per-session。
-- `sessions.json`：存各 key 对应的 Cursor/Claude chat id；GUI key 形如 `gui-chat:0a7c0510-…`。
+- `sessions.json`：存各 key 对应的 Cursor/Claude chat id（含 `session_day`）；GUI key 形如 `gui-chat:0a7c0510-…`。
+- `cursor_daily_reset`：见 [README 配置要点](../README.md#配置要点) 与 [`Cursor.Run`](../bridge/internal/backends/cursor.go)；GUI Cursor 会话同样按自然日懒重置。
 - 清空 GUI 某会话 agent 上下文：对该会话发 `--clear`（若 bot 启用了 commands），或删除 GUI 会话后新建。

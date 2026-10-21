@@ -27,6 +27,8 @@ type Config struct {
 	CursorStream     bool     `json:"cursor_stream"`
 	CursorStreamPart bool     `json:"cursor_stream_partial"`
 	CursorTimeout    int      `json:"cursor_timeout"`
+	// CursorDailyReset：自然日懒重置 Cursor --resume 会话（见 backends/cursor.go）。
+	CursorDailyReset bool     `json:"cursor_daily_reset"`
 	ClaudeBin        string   `json:"claude_bin"`
 	PermissionMode   string   `json:"permission_mode"`
 	AllowedTools     []string `json:"allowed_tools"`

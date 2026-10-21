@@ -71,7 +71,15 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	}
 	sessionID := opts.SessionID
 	if key, ok := sessions.ResolveSessionKey(c.cfg, opts.OperatorOpenID); ok && c.store != nil && sessionID == "" {
-		sessionID = c.store.GetEntry(c.cfg.ID, key).Current
+		e := c.store.GetEntry(c.cfg.ID, key)
+		sessionID = e.Current
+		today := sessions.LocalSessionDay(time.Now())
+		if sessions.NeedsDailyReset(c.cfg.CursorDailyReset, e.SessionDay, today) {
+			log.Printf("bot=%s cursor: daily reset old_chat=%s session_day=%s", c.cfg.ID, e.Current, e.SessionDay)
+			c.store.ClearSession(c.cfg.ID, key)
+			_ = c.store.Save()
+			sessionID = ""
+		}
 	}
 	if sessionID == "" {
 		t0 := time.Now()

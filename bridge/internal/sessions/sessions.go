@@ -47,6 +47,19 @@ type Entry struct {
 	ProjectPath   string        `json:"project_path,omitempty"`
 	AgentCWD      string        `json:"agent_cwd,omitempty"`
 	OpenAICompact CompactState  `json:"openai_compact,omitempty"`
+	// SessionDay is the local calendar day (2006-01-02) when Current was created.
+	SessionDay string `json:"session_day,omitempty"`
+}
+
+// LocalSessionDay formats t as a local calendar day key.
+func LocalSessionDay(t time.Time) string {
+	return t.Format("2006-01-02")
+}
+
+// NeedsDailyReset is true when daily reset is on and the chat was born on a prior day.
+// Empty sessionDay (legacy entries) never resets until stamped.
+func NeedsDailyReset(enabled bool, sessionDay, today string) bool {
+	return enabled && sessionDay != "" && sessionDay != today
 }
 
 type Store struct {
@@ -151,6 +164,7 @@ func entryFromAny(v any) Entry {
 			ProjectName: asStr(t["project_name"]), ProjectPath: asStr(t["project_path"]),
 			AgentCWD:      asStr(t["agent_cwd"]),
 			OpenAICompact: compactFromAny(t["openai_compact"]),
+			SessionDay:    asStr(t["session_day"]),
 		}
 		if e.Current == "" {
 			e.Current = asStr(t["chat_id"])
@@ -193,9 +207,13 @@ func (s *Store) SetChatID(botID, userKey, chatID, name string) {
 	defer s.mu.Unlock()
 	users := s.getUsers(botID)
 	e := entryFromAny(users[userKey])
+	changed := e.Current != chatID
 	e.Current = chatID
 	if name != "" {
 		e.Name = name
+	}
+	if changed || e.SessionDay == "" {
+		e.SessionDay = LocalSessionDay(time.Now())
 	}
 	users[userKey] = e
 }
@@ -211,6 +229,7 @@ func (s *Store) ClearSession(botID, userKey string) {
 		})
 	}
 	e.Current = ""
+	e.SessionDay = ""
 	e.OpenAICompact = CompactState{}
 	users[userKey] = e
 }
@@ -237,7 +256,17 @@ func (s *Store) SetProject(botID, userKey, name, path string) {
 	e := entryFromAny(users[userKey])
 	e.ProjectName = name
 	e.ProjectPath = path
-	e.AgentCWD = path
+	// 不再顺手写 AgentCWD：它应由实际运行 workspace 决定，而不是 project path。
+	users[userKey] = e
+}
+
+// SetAgentCWD 记录实际运行 workspace，用于换目录时重置 agent 会话。
+func (s *Store) SetAgentCWD(botID, userKey, cwd string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users := s.getUsers(botID)
+	e := entryFromAny(users[userKey])
+	e.AgentCWD = cwd
 	users[userKey] = e
 }
 
