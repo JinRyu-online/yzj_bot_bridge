@@ -67,6 +67,9 @@ type Config struct {
 	YzjBotNames     []string `json:"yzj_bot_names"`
 	YzjBotOpenID    string   `json:"yzj_bot_open_id"`
 	YzjImageTrigger string   `json:"yzj_image_trigger"`
+	// YzjTrigger: mention（群聊默认，需 @机器人）| direct（个人机器人/私聊，全部用户消息）
+	// | any（任意用户消息）。
+	YzjTrigger string `json:"yzj_trigger"`
 	// MemoryEnabled defaults true; only effective when defaults.memory.enabled is on.
 	MemoryEnabled bool `json:"memory_enabled"`
 }

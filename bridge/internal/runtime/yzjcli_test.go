@@ -43,6 +43,10 @@ func TestPollTriggerMatrix(t *testing.T) {
 		{"image quotes other bot", target, imageOtherBot, false},
 		{"image any", pollTarget{Aliases: []string{"Fairy"}, ImageTrigger: "any"}, imagePlain, true},
 		{"image off", pollTarget{Aliases: []string{"Fairy"}, ImageTrigger: "off"}, imageQuote, false},
+		{"direct text", pollTarget{Trigger: "direct"}, yzjcli.Message{MsgID: "m5", FromOpenID: "u1", MsgType: "text", Content: "直接对话"}, true},
+		{"direct image", pollTarget{Trigger: "direct"}, imagePlain, true},
+		{"direct bot message", pollTarget{Trigger: "direct"}, yzjcli.Message{MsgID: "m6", FromOpenID: "BOT-6a7294", MsgType: "text", Content: "@你 正在处理中"}, false},
+		{"any group text", pollTarget{Trigger: "any"}, yzjcli.Message{MsgID: "m7", FromOpenID: "u1", MsgType: "text", Content: "普通群消息"}, true},
 	}
 	for _, c := range cases {
 		if got := pollTrigger(c.t, c.msg); got != c.want {

@@ -340,3 +340,28 @@ func TestMergedDefaultsDeepMergesYzjCLI(t *testing.T) {
 		t.Fatalf("version default lost: %v", m["version"])
 	}
 }
+
+func TestExpandPollTrigger(t *testing.T) {
+	base := map[string]any{
+		"id": "fairy", "name": "Fairy", "group": "g",
+		"send_msg_url": "https://h/x?yzjtoken=t",
+		"inbound_mode": "yzj_cli", "yzj_group_id": "G1",
+	}
+	f := &File{Bots: []map[string]any{base}}
+	bots, err := ExpandBots(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bots[0].YzjTrigger != "mention" {
+		t.Fatalf("default trigger = %q", bots[0].YzjTrigger)
+	}
+	base["yzj_trigger"] = "direct"
+	base["yzj_bot_open_id"] = "BOT-abc"
+	bots, err = ExpandBots(&File{Bots: []map[string]any{base}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bots[0].YzjTrigger != "direct" || bots[0].YzjBotOpenID != "BOT-abc" {
+		t.Fatalf("unexpected: %+v", bots[0])
+	}
+}

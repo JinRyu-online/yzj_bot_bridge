@@ -127,7 +127,7 @@ bots:
 - `defaults` + `bots` + 可选 `channels` 多群展开（runtime id：`{role}__{group}`）
 - **yzj-cli 轮询入站**（`inbound_mode: yzj_cli`）：只轮询 `yzj_group_id` 显式配置的群（不会扫全部会话）；`yzj_group_name` 仅用于展示/选择群；默认 5s ±20% 抖动；首次启动只建游标不回放（`startup_mode: baseline`）。文本需 @机器人 触发；纯图片默认仅「引用机器人消息」触发（`yzj_cli.image_trigger: quote_bot|any|off`）
 - yzj-cli 配置在 `defaults.yzj_cli`：`bin/version/profile/config_dir/auto_install/timeout_sec/poll_interval_sec/catchup_pages/startup_mode/image_trigger/image.*`；桥不保存凭据，登录态由 `yzj-cli auth login` 管理
-- 机器人相关字段：`bots[].yzj_group_id`、`yzj_group_name`、`yzj_profile`、`yzj_bot_names`（@/引用识别别名）、`yzj_bot_open_id`（可选，精确识别机器人）
+- 机器人相关字段：`bots[].yzj_group_id`、`yzj_group_name`、`yzj_profile`、`yzj_trigger`（`mention` 群聊默认 | `direct` 个人机器人/私聊 | `any`）、`yzj_bot_names`（@/引用识别别名）、`yzj_bot_open_id`（可选，精确识别机器人）。机器人自己发的消息（`fromOpenId` 以 `BOT-` 开头）不会触发，避免自问自答循环
 - `bots[].skills`：已安装 Skill 的 id 白名单（跨 OpenAI / Cursor / Claude）
 - `inbound_mode`: `websocket` | `webhook` | `both` | `yzj_cli`（轮询，仅配置群）
 - 会话：`session_mode` 为 `shared`（默认，同通道共享上下文且通道内排队）| `per_user`（按人隔离）| `oneshot`

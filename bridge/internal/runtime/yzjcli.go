@@ -17,6 +17,7 @@ type pollTarget struct {
 	Aliases      []string
 	BotOpenIDs   []string
 	ImageTrigger string // quote_bot | any | off
+	Trigger      string // mention | direct | any
 }
 
 // pollGroup identifies the group behind a watcher key.
@@ -81,8 +82,13 @@ func (r *Runtime) setupPollers(bots []*bot.Bot) {
 		if trigger == "" {
 			trigger = "quote_bot"
 		}
+		msgTrigger := strings.ToLower(strings.TrimSpace(c.YzjTrigger))
+		if msgTrigger == "" {
+			msgTrigger = "mention"
+		}
 		targets[key] = append(targets[key], pollTarget{
-			BotID: c.ID, Aliases: aliases, BotOpenIDs: ids, ImageTrigger: trigger,
+			BotID: c.ID, Aliases: aliases, BotOpenIDs: ids,
+			ImageTrigger: trigger, Trigger: msgTrigger,
 		})
 		if _, ok := meta[key]; !ok {
 			meta[key] = pollGroup{GroupID: gid, GroupName: c.YzjGroupName, Profile: profile}
@@ -173,9 +179,18 @@ func (r *Runtime) onPollMessage(key string, msg yzjcli.Message) {
 }
 
 // pollTrigger decides whether a message should reach a bot for this group.
-// Text requires an @bot; media defaults to "quote the bot" so image-only
-// messages can trigger without an @ (per product decision).
+// Robot-sent messages never trigger (prevents reply loops).
+// - mention: text requires @bot; media defaults to "quote the bot"
+// - direct:  personal robot / DM conversations: every user message triggers
+// - any:     every user message in a group triggers (opt-in)
 func pollTrigger(t pollTarget, msg yzjcli.Message) bool {
+	if msg.IsFromBot() {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(t.Trigger)) {
+	case "direct", "any":
+		return true
+	}
 	if msg.HasImages() {
 		switch t.ImageTrigger {
 		case "off":

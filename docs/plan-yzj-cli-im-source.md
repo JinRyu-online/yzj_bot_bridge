@@ -68,10 +68,12 @@
 
 | 配置里的 group 标签 | 真实群名 | groupId |
 |---|---|---|
-| `workAssistant`（fairy） | **待你确认**（未匹配到同名群；候选：`API产研支持沟通群` / `API开放平台产品研发部`） | 待定 |
+| `workAssistant`（fairy） | **Fairy（个人机器人会话，groupType=3）** | `BOT-67bfd544e4b0cc79e38a4271-BOT-6a7294c1e4b0a214555b2935` |
 | `同城线上问题排查群` | 同城线上问题排查群 | `6a2b63f5e4b0718dc04be1b8` |
 | `寄件助手群` | 寄件助手 | `6a850d9ae4b0e54b216106a7` |
 | `同城告警群` | 同城告警群 | `6a9535cce4b0a737044473d7` |
+
+> fairy 是通过 `https://yunzhijia.com/im/personalRobotCreate` 创建的个人机器人，IM 里表现为 groupType=3 的助手会话；消息直接从用户发给机器人，无需 @，因此用 `yzj_trigger: direct`（全部用户消息触发，机器人自身 `BOT-` 消息自动跳过）。
 
 ### 0.3 登录生命周期（回答你的问题）
 
@@ -134,9 +136,10 @@ yzjout.SendText（机器人 webhook，不变）
 
 | 消息 | 触发条件 |
 |---|---|
-| 文本 | `param.desc` 有 `type=at & data=BOT-*`（精确）；或退回 `content` 含 `@机器人名/别名`（兼容）；且通过白名单 |
-| 图片（`msgType=file, ftype=1`） | **默认：引用机器人**（`replyOpenId` 以 `BOT-` 开头且 `replyPersonName` ∈ 机器人名/别名）→ 复用机器人上下文；可选 `image_trigger: any` 表示本群图片都触发；`off` 关闭 |
-| 富文本（含图 + 文字） | 文本中的 @ 命中即触发；未 @ 但引用机器人也触发；`any` 时同图片规则 |
+| 机器人自己发的消息 | 永不触发（`fromOpenId` 以 `BOT-` 开头），防自问自答 |
+| 文本 | 群聊：`param.desc` 有 `type=at & data=BOT-*`（精确），或退回 `content` 含 `@机器人名/别名`；`yzj_trigger: direct`（个人机器人/私聊）：全部用户消息 |
+| 图片（`msgType=file, ftype=1`） | 群聊默认：引用机器人（`replyOpenId` 以 `BOT-` 开头且 `replyPersonName` ∈ 机器人名/别名）；`direct`：直接触发；`image_trigger: any` 本群图片都触发；`off` 关闭 |
+| 富文本（含图 + 文字） | 文本中的 @ 命中即触发；未 @ 但引用机器人也触发；`direct`/`any` 直接触发 |
 | 文件（非图片） | Phase 2 起：引用机器人时接收并按普通附件处理；默认不触发 |
 | `other`（撤回/系统） | 忽略 |
 
@@ -294,8 +297,8 @@ bots:
 
 ## 6. 剩余待确认（不阻塞 Phase 1 开工）
 
-1. **fairy 的群**：`workAssistant` 不是真实群名，请确认是 `API产研支持沟通群`、`API开放平台产品研发部`，还是其它群。
-2. **图片引用探针**：Phase 0b 需要你在测试群发一条「引用机器人 + 图片」。
+1. ~~fairy 的群~~ **已确认**：个人机器人会话（groupId 见 §0.2），使用 `yzj_trigger: direct`。
+2. **图片引用探针**：fairy 是个人机器人会话，`direct` 模式下图片无需引用即可触发；群聊场景的引用图片字段仍建议补一次实测。
 3. 机器人展示名：`yzj_bot_names` 里填的别名是否就是群里 @ 时显示的名字（如 `Fairy`、`同城日志查询`）。
 
 ---

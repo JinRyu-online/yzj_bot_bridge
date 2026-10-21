@@ -386,6 +386,7 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		YzjBotOpenID: strings.TrimSpace(asString(m["yzj_bot_open_id"])),
 		YzjImageTrigger: firstNonEmpty(asString(m["yzj_image_trigger"]),
 			firstNonEmpty(asString(asMap(m["yzj_cli"])["image_trigger"]), "quote_bot")),
+		YzjTrigger: strings.ToLower(firstNonEmpty(asString(m["yzj_trigger"]), "mention")),
 	}
 }
 
