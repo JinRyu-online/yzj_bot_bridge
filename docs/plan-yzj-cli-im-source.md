@@ -252,8 +252,9 @@ bots:
 - 你在测试群给机器人发一条「**引用机器人消息 + 图片**」，我确认图片消息是否携带 `replyOpenId/replyPersonName`（决定 `image_trigger: quote_bot` 是否 100% 可靠；若不带，则退回“本群图片触发”或“最近机器人对话窗口”兜底）。
 - 确认 fairy 的群（候选见 §0.2 表格）。
 
-### Phase 1：轮询入站骨架（不含图片）
-- `yzjcli` 包 + 配置/runtime/控制 API + GUI 最小字段 + 单测；fairy 先切 `yzj_cli`。
+### Phase 1：轮询入站骨架（不含图片）—— **后端已完成（2026-10-21）**，GUI/真实迁移待办
+- 已完成：`bridge/internal/yzjcli`（client/message/state/watcher/install）、config 校验、runtime 装配与启停、控制 API（status/groups）、单测；`go vet`/`go test ./...` 全绿。
+- 待办：GUI 表单与群选择器；fairy 配置切换与实测。
 - 验收：@ 机器人正常回复；重启不重放；停用通道即停轮询；`go vet/test` 全绿。
 
 ### Phase 2：图片接收
