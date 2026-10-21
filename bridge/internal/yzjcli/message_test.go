@@ -9,7 +9,7 @@ func TestMessageAttachmentsFileImage(t *testing.T) {
 	msg := Message{
 		MsgType: "file",
 		Param: MessageParam{
-			FileID: "f1", Ext: "png", Name: "图片.png", FType: intPtr(1),
+			FileID: "f1", Ext: "png", Name: "图片.png", FType: flexIntPtr(1),
 			Size: []byte(`"108992"`), PicWidth: 720, PicHeight: 1005,
 		},
 	}
@@ -27,7 +27,7 @@ func TestMessageAttachmentsFileImage(t *testing.T) {
 }
 
 func TestMessageAttachmentsFileNonImageIgnored(t *testing.T) {
-	msg := Message{MsgType: "file", Param: MessageParam{FileID: "f9", Ext: "pdf", FType: intPtr(2)}}
+	msg := Message{MsgType: "file", Param: MessageParam{FileID: "f9", Ext: "pdf", FType: flexIntPtr(2)}}
 	if got := msg.Attachments(); len(got) != 0 {
 		t.Fatalf("unexpected attachments: %+v", got)
 	}
@@ -85,7 +85,7 @@ func TestMentionsBotsIgnoresAtAll(t *testing.T) {
 func TestQuotesBot(t *testing.T) {
 	msg := Message{
 		MsgType: "file", Content: "[图片]", Param: MessageParam{
-			FileID: "f1", Ext: "jpg", FType: intPtr(1),
+			FileID: "f1", Ext: "jpg", FType: flexIntPtr(1),
 			ReplyOpenID: "BOT-6a953c", ReplyPersonName: "同城日志查询",
 		},
 	}
@@ -138,4 +138,4 @@ func TestFileIDsFromText(t *testing.T) {
 	}
 }
 
-func intPtr(n int) *int { return &n }
+func flexIntPtr(n int) *FlexInt { v := FlexInt(n); return &v }

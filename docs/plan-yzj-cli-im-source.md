@@ -260,9 +260,10 @@ bots:
 - 待办：GUI 表单与群选择器；fairy 配置切换与实测。
 - 验收：@ 机器人正常回复；重启不重放；停用通道即停轮询；`go vet/test` 全绿。
 
-### Phase 2：图片接收
-- 下载/校验/清理 + `RunOpts.Attachments` + 各后端 prompt 注入 + GUI 图片配置 + 单测。
-- 验收：@ + 图片、引用机器人 + 图片 均能被模型读取（至少 Claude Code、Cursor、DSH 中两个实测）；失败有降级提示。
+### Phase 2：图片接收（后端已完成，GUI/视觉原生块待办）
+- 已完成：runJob 前用 `yzj-cli file download` 下载到 `workspace/incoming_media/YYYYMMDD/`；校验大小/类型/PNG 魔数；本地路径写入 prompt（所有后端通用）；失败/超限在 prompt 说明；按 `keep_days` 启动清理；单测覆盖。
+- 待办：GUI 图片开关；OpenAI 原生 vision content block、DSH image block（当前先走“路径 + 模型自行读图”）。
+- 验收：@ + 图片、引用机器人 + 图片、个人机器人直接发图 均能被模型读取；失败有降级提示。
 
 ### Phase 3：体验与边界
 - 机器人身份自动学习与多机器人区分；OpenAI 原生 vision / DSH image block 评估；

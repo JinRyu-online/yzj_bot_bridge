@@ -1,6 +1,10 @@
 package inbound
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -312,4 +316,69 @@ func TestAttachmentOnlyForceTargetDispatches(t *testing.T) {
 		defer mu.Unlock()
 		return len(*sentPtr) > 0
 	})
+}
+
+func TestPrepareAttachmentsDownloadsAndBuildsPrompt(t *testing.T) {
+	dir := t.TempDir()
+	d := &Dispatcher{ImageEnabled: true, ImageMaxMB: 20}
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	d.DownloadAttachment = func(ctx context.Context, fileID, out string) error {
+		if fileID != "f1" {
+			t.Fatalf("file id = %q", fileID)
+		}
+		return os.WriteFile(out, png, 0o600)
+	}
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: dir}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID: "m1", Attachments: []Attachment{{Kind: "image", FileID: "f1", Ext: "png", Size: int64(len(png))}},
+	})
+	if !strings.Contains(block, "1 张图片") || !strings.Contains(block, "incoming_media") {
+		t.Fatalf("prompt block = %q", block)
+	}
+	if !strings.Contains(block, "image/png") {
+		t.Fatalf("missing mime: %q", block)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "incoming_media", "*", "m1-1.png"))
+	if len(matches) != 1 {
+		t.Fatalf("downloaded file not found: %v", matches)
+	}
+}
+
+func TestPrepareAttachmentsFailureIsReported(t *testing.T) {
+	dir := t.TempDir()
+	d := &Dispatcher{ImageEnabled: true, ImageMaxMB: 20}
+	d.DownloadAttachment = func(ctx context.Context, fileID, out string) error {
+		return errors.New("network down")
+	}
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: dir}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID: "m2", Attachments: []Attachment{{Kind: "image", FileID: "f2", Ext: "png"}},
+	})
+	if !strings.Contains(block, "图片下载失败") || !strings.Contains(block, "network down") {
+		t.Fatalf("block = %q", block)
+	}
+}
+
+func TestPrepareAttachmentsRejectsOversizeAndType(t *testing.T) {
+	d := &Dispatcher{ImageEnabled: true, ImageMaxMB: 1}
+	d.DownloadAttachment = func(ctx context.Context, fileID, out string) error {
+		return os.WriteFile(out, []byte("x"), 0o600)
+	}
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: t.TempDir()}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID: "m3", Attachments: []Attachment{
+			{Kind: "image", FileID: "f3", Ext: "png", Size: 2 << 20},
+			{Kind: "image", FileID: "f4", Ext: "pdf"},
+		},
+	})
+	if !strings.Contains(block, "超过 1MB") || !strings.Contains(block, "类型不支持") {
+		t.Fatalf("block = %q", block)
+	}
+}
+
+func TestPrepareAttachmentsDisabled(t *testing.T) {
+	d := &Dispatcher{ImageEnabled: false}
+	if block := d.prepareAttachments(context.Background(), &bot.Bot{}, Normalized{Attachments: []Attachment{{Kind: "image"}}}); block != "" {
+		t.Fatalf("expected empty block, got %q", block)
+	}
 }

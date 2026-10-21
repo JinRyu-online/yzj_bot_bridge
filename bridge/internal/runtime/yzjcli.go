@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -102,6 +104,7 @@ func (r *Runtime) setupPollers(bots []*bot.Bot) {
 		log.Printf("yzjcli: open poll state: %v", err)
 		return
 	}
+	var downloadClient *yzjcli.Client
 	for key, tg := range targets {
 		m := meta[key]
 		profileCfg := cfg
@@ -117,6 +120,9 @@ func (r *Runtime) setupPollers(bots []*bot.Bot) {
 			continue
 		}
 		client := yzjcli.NewClient(bin, m.Profile, profileCfg.ConfigDir, profileCfg.Timeout)
+		if downloadClient == nil {
+			downloadClient = client
+		}
 		groupID := m.GroupID
 		watcher := &yzjcli.Watcher{
 			Client: client, Store: state, Key: key,
@@ -131,6 +137,15 @@ func (r *Runtime) setupPollers(bots []*bot.Bot) {
 		}
 		r.PollWatchers[key] = watcher
 		_ = tg
+	}
+	if r.Disp != nil {
+		enabled, maxMB, types, _ := r.yzjImageSettingsLocked()
+		r.Disp.ImageEnabled = enabled
+		r.Disp.ImageMaxMB = maxMB
+		r.Disp.ImageTypes = types
+		if downloadClient != nil {
+			r.Disp.DownloadAttachment = downloadClient.FileDownload
+		}
 	}
 	r.pollTargets = targets
 	r.pollMeta = meta
@@ -300,6 +315,59 @@ func (r *Runtime) yzjCatchupPagesLocked() int {
 func (r *Runtime) yzjStartupModeLocked() string {
 	m := r.yzjDefaultsLocked()
 	return strings.ToLower(strFrom(m["startup_mode"], "baseline"))
+}
+
+// yzjImageSettingsLocked reads defaults.yzj_cli.image.
+func (r *Runtime) yzjImageSettingsLocked() (enabled bool, maxMB int, types []string, keepDays int) {
+	img := mapFrom(r.yzjDefaultsLocked()["image"])
+	enabled = true
+	if b, ok := img["enabled"].(bool); ok {
+		enabled = b
+	}
+	maxMB = intFrom(img["max_mb"], 20)
+	if maxMB <= 0 {
+		maxMB = 20
+	}
+	if list, ok := img["types"].([]any); ok {
+		for _, v := range list {
+			if s := strings.TrimSpace(strFrom(v, "")); s != "" {
+				types = append(types, s)
+			}
+		}
+	}
+	keepDays = intFrom(img["keep_days"], 7)
+	if keepDays < 1 {
+		keepDays = 1
+	}
+	return enabled, maxMB, types, keepDays
+}
+
+// cleanupIncomingMedia removes old files under each bot workspace's
+// incoming_media directory so downloaded images do not accumulate forever.
+func (r *Runtime) cleanupIncomingMedia(bots []*bot.Bot) {
+	_, _, _, keepDays := r.yzjImageSettingsLocked()
+	cutoff := time.Now().Add(-time.Duration(keepDays) * 24 * time.Hour)
+	seen := map[string]bool{}
+	for _, b := range bots {
+		ws := strings.TrimSpace(b.Config.Workspace)
+		if ws == "" || seen[ws] {
+			continue
+		}
+		seen[ws] = true
+		root := filepath.Join(ws, "incoming_media")
+		if st, err := os.Stat(root); err != nil || !st.IsDir() {
+			continue
+		}
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if info, err := d.Info(); err == nil && info.ModTime().Before(cutoff) {
+				_ = os.Remove(path)
+			}
+			return nil
+		})
+	}
 }
 
 // YzjCLIStatus reports binary/login state for the control API / GUI.

@@ -1,8 +1,12 @@
 package runtime
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"yzj-bridge/internal/bot"
 	"yzj-bridge/internal/yzjcli"
 )
 
@@ -14,18 +18,18 @@ func TestPollTriggerMatrix(t *testing.T) {
 	imageQuote := yzjcli.Message{
 		MsgID: "m2", MsgType: "file", Content: "[图片]",
 		Param: yzjcli.MessageParam{
-			FileID: "f1", Ext: "png", FType: intPtr(1),
+			FileID: "f1", Ext: "png", FType: flexIntPtr(1),
 			ReplyOpenID: "BOT-abc", ReplyPersonName: "Fairy",
 		},
 	}
 	imagePlain := yzjcli.Message{
 		MsgID: "m3", MsgType: "file", Content: "[图片]",
-		Param: yzjcli.MessageParam{FileID: "f1", Ext: "png", FType: intPtr(1)},
+		Param: yzjcli.MessageParam{FileID: "f1", Ext: "png", FType: flexIntPtr(1)},
 	}
 	imageOtherBot := yzjcli.Message{
 		MsgID: "m4", MsgType: "file", Content: "[图片]",
 		Param: yzjcli.MessageParam{
-			FileID: "f1", Ext: "png", FType: intPtr(1),
+			FileID: "f1", Ext: "png", FType: flexIntPtr(1),
 			ReplyOpenID: "BOT-other", ReplyPersonName: "别的机器人",
 		},
 	}
@@ -67,4 +71,30 @@ func TestConvertAttachments(t *testing.T) {
 	}
 }
 
-func intPtr(n int) *int { return &n }
+func flexIntPtr(n int) *yzjcli.FlexInt { v := yzjcli.FlexInt(n); return &v }
+
+func TestCleanupIncomingMedia(t *testing.T) {
+	dir := t.TempDir()
+	oldFile := filepath.Join(dir, "incoming_media", "20200101", "old.png")
+	newFile := filepath.Join(dir, "incoming_media", "20261021", "new.png")
+	for _, p := range []string{oldFile, newFile} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	_ = os.Chtimes(oldFile, old, old)
+	r := &Runtime{Defaults: map[string]any{"yzj_cli": map[string]any{
+		"image": map[string]any{"keep_days": 7},
+	}}}
+	r.cleanupIncomingMedia([]*bot.Bot{{Config: bot.Config{Workspace: dir}}})
+	if _, err := os.Stat(oldFile); !os.IsNotExist(err) {
+		t.Fatalf("old file should be removed: %v", err)
+	}
+	if _, err := os.Stat(newFile); err != nil {
+		t.Fatalf("new file should stay: %v", err)
+	}
+}

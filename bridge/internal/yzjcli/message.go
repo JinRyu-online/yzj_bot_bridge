@@ -26,6 +26,48 @@ type Segment struct {
 	H      int    `json:"h"`
 }
 
+// FlexBool tolerates the platform's inconsistency (bool vs "true"/"false").
+type FlexBool bool
+
+// UnmarshalJSON accepts bool, numeric and quoted boolean forms.
+func (b *FlexBool) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	s = strings.Trim(s, `"`)
+	switch strings.ToLower(s) {
+	case "true", "1", "yes":
+		*b = true
+	default:
+		*b = false
+	}
+	return nil
+}
+
+// Value returns the parsed boolean.
+func (b FlexBool) Value() bool { return bool(b) }
+
+// FlexInt tolerates number vs quoted number fields.
+type FlexInt int
+
+// UnmarshalJSON accepts number and quoted-number forms.
+func (i *FlexInt) UnmarshalJSON(data []byte) error {
+	s := strings.Trim(strings.TrimSpace(string(data)), `"`)
+	if s == "" || s == "null" {
+		*i = 0
+		return nil
+	}
+	if v, err := strconv.Atoi(s); err == nil {
+		*i = FlexInt(v)
+		return nil
+	}
+	var f float64
+	if err := json.Unmarshal([]byte(s), &f); err == nil {
+		*i = FlexInt(int(f))
+		return nil
+	}
+	*i = 0
+	return nil
+}
+
 // MessageParam carries the message metadata observed via
 // `yzj-cli im message list`. Fields not present for a message type stay zero.
 type MessageParam struct {
@@ -35,18 +77,18 @@ type MessageParam struct {
 	ReplyPersonName string          `json:"replyPersonName"`
 	ReplyRootMsgID  string          `json:"replyRootMsgId"`
 	ReplySummary    string          `json:"replySummary"`
-	IsReference     *bool           `json:"isReference"`
+	IsReference     FlexBool        `json:"isReference"`
 	FormatType      string          `json:"formatType"`
 	FileID          string          `json:"file_id"`
 	Ext             string          `json:"ext"`
 	Name            string          `json:"name"`
 	Size            json.RawMessage `json:"size"`
-	FType           *int            `json:"ftype"`
+	FType           *FlexInt        `json:"ftype"`
 	PicWidth        int             `json:"picWidth"`
 	PicHeight       int             `json:"picHeight"`
-	IsEncrypted     *bool           `json:"isEncrypted"`
+	IsEncrypted     FlexBool        `json:"isEncrypted"`
 	SysType         string          `json:"sysType"`
-	NotifyToAll     bool            `json:"notifyToAll"`
+	NotifyToAll     FlexBool        `json:"notifyToAll"`
 }
 
 // Message is one chat message returned by `yzj-cli im message list`.
@@ -110,7 +152,7 @@ func (m Message) ImageAttachments() []Attachment {
 	switch strings.ToLower(strings.TrimSpace(m.MsgType)) {
 	case "file":
 		ext := normalizeExt(m.Param.Ext)
-		if m.Param.FType != nil && *m.Param.FType == 1 || isImageExt(ext) {
+		if (m.Param.FType != nil && int(*m.Param.FType) == 1) || isImageExt(ext) {
 			out = append(out, Attachment{
 				Kind: "image", FileID: strings.TrimSpace(m.Param.FileID),
 				Name: m.Param.Name, Ext: ext, Size: rawSize(m.Param.Size),

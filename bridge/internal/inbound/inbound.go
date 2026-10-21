@@ -1,12 +1,17 @@
 package inbound
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"yzj-bridge/internal/bot"
 	"yzj-bridge/internal/commands"
@@ -62,6 +67,13 @@ type Dispatcher struct {
 	Memory *memory.Service
 	// SendText, when set, replaces yzjout.SendText (tests).
 	SendText func(sendURL, content, openID string, reply *yzjout.ReplyMeta) error
+	// DownloadAttachment downloads one yzj-cli media item to outPath.
+	DownloadAttachment func(ctx context.Context, fileID, outPath string) error
+	// ImageEnabled turns attachment download/prompt injection on.
+	ImageEnabled bool
+	ImageMaxMB   int
+	ImageTypes   []string
+	ImageKeepDays int
 }
 
 type queuedJob struct {
@@ -263,6 +275,170 @@ func (d *Dispatcher) notifyQueue(b *bot.Bot, notices []jobs.Notice) {
 	}
 }
 
+// prepareAttachments downloads message images into the bot workspace and
+// returns a prompt block with local paths. It never fails the job: download or
+// validation problems become a short note in the returned text.
+func (d *Dispatcher) prepareAttachments(ctx context.Context, b *bot.Bot, n Normalized) string {
+	if !d.ImageEnabled || d.DownloadAttachment == nil || len(n.Attachments) == 0 {
+		return ""
+	}
+	ws := sessions.ResolveAgentWorkspace(b.Config, n.OpenID, d.Store)
+	if strings.TrimSpace(ws) == "" {
+		ws = b.Config.Workspace
+	}
+	if strings.TrimSpace(ws) == "" {
+		return ""
+	}
+	allowed := map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".bmp": true}
+	if len(d.ImageTypes) > 0 {
+		allowed = map[string]bool{}
+		for _, t := range d.ImageTypes {
+			if e := normalizeImageExt(t); e != "" {
+				allowed[e] = true
+			}
+		}
+	}
+	maxMB := d.ImageMaxMB
+	if maxMB <= 0 {
+		maxMB = 20
+	}
+	maxBytes := int64(maxMB) << 20
+	dir := filepath.Join(ws, "incoming_media", time.Now().Format("20060102"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Sprintf("（图片保存目录创建失败：%v）", err)
+	}
+	safeMsg := safeFileToken(n.MsgID)
+	var lines, fails []string
+	idx := 0
+	for _, a := range n.Attachments {
+		if !strings.EqualFold(strings.TrimSpace(a.Kind), "image") {
+			continue
+		}
+		ext := normalizeImageExt(a.Ext)
+		if ext == "" {
+			ext = normalizeImageExt(filepath.Ext(a.Name))
+		}
+		if ext != "" && !allowed[ext] {
+			fails = append(fails, fmt.Sprintf("%s（类型不支持）", displayName(a)))
+			continue
+		}
+		if a.Size > maxBytes && maxBytes > 0 {
+			fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), maxMB))
+			continue
+		}
+		idx++
+		out := filepath.Join(dir, fmt.Sprintf("%s-%d%s", safeMsg, idx, ext))
+		dctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		err := d.DownloadAttachment(dctx, a.FileID, out)
+		cancel()
+		if err != nil {
+			fails = append(fails, fmt.Sprintf("%s（%v）", displayName(a), err))
+			continue
+		}
+		st, serr := os.Stat(out)
+		if serr != nil {
+			fails = append(fails, fmt.Sprintf("%s（未落盘）", displayName(a)))
+			continue
+		}
+		if maxBytes > 0 && st.Size() > maxBytes {
+			_ = os.Remove(out)
+			fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), maxMB))
+			continue
+		}
+		mime, ok := sniffImageMime(out)
+		if !ok {
+			_ = os.Remove(out)
+			fails = append(fails, fmt.Sprintf("%s（不是可识别的图片）", displayName(a)))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- 图片 %d: %s (%s, %s)", idx, out, mime, humanSize(st.Size())))
+	}
+	if len(lines) == 0 && len(fails) == 0 {
+		return ""
+	}
+	var bld strings.Builder
+	if len(lines) > 0 {
+		fmt.Fprintf(&bld, "用户随消息发送了 %d 张图片（本地路径，可直接读取）：\n", len(lines))
+		bld.WriteString(strings.Join(lines, "\n"))
+		bld.WriteString("\n如需理解图片内容，请使用你的读图/读文件能力打开；若当前模型无法读图，请明确说明并用文字追问。")
+	}
+	if len(fails) > 0 {
+		if bld.Len() > 0 {
+			bld.WriteString("\n")
+		}
+		bld.WriteString("（图片下载失败：" + strings.Join(fails, "；") + "）")
+	}
+	return bld.String()
+}
+
+func displayName(a Attachment) string {
+	if strings.TrimSpace(a.Name) != "" {
+		return a.Name
+	}
+	return a.FileID
+}
+
+func normalizeImageExt(ext string) string {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext == "" {
+		return ""
+	}
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return ext
+}
+
+func safeFileToken(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "msg"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "msg"
+	}
+	if len(out) > 80 {
+		out = out[:80]
+	}
+	return out
+}
+
+func sniffImageMime(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return "", false
+	}
+	ct := http.DetectContentType(buf[:n])
+	return ct, strings.HasPrefix(ct, "image/")
+}
+
+func humanSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := int64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.0f%cB", float64(n)/float64(div), "KMGT"[exp])
+}
+
 func (d *Dispatcher) runJob(b *bot.Bot, n Normalized, cmdRes commands.Result) {
 	scope := d.queueScope(b, n.OpenID)
 	defer func() {
@@ -283,6 +459,13 @@ func (d *Dispatcher) runJob(b *bot.Bot, n Normalized, cmdRes commands.Result) {
 		d.startJob(job.Bot, job.N, job.Cmd, true)
 	}()
 	content := cmdRes.RestText
+	if block := d.prepareAttachments(d.Jobs.Context(scope), b, n); block != "" {
+		if strings.TrimSpace(content) == "" {
+			content = block
+		} else {
+			content = block + "\n\n" + content
+		}
+	}
 	overrides := cmdRes.Overrides
 	var parts []string
 	if strings.TrimSpace(cmdRes.Reply) != "" {
