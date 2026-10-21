@@ -33,6 +33,7 @@ type dshHeadlessOutput struct {
 	Cwd       string
 	Final     string
 	Texts     []string
+	Thinking  []string
 	Err       string
 	Reason    string
 }
@@ -55,6 +56,11 @@ func parseDSHHeadlessOutput(data []byte) dshHeadlessOutput {
 		case "session":
 			out.SessionID = fmt.Sprint(obj["sessionId"])
 			out.Cwd = fmt.Sprint(obj["cwd"])
+		case "thinking":
+			// headless --json 的思考块（reasoning），只进日志，不进回复正文。
+			if t, ok := obj["text"].(string); ok && strings.TrimSpace(t) != "" {
+				out.Thinking = append(out.Thinking, t)
+			}
 		case "text":
 			if t, ok := obj["text"].(string); ok && t != "" {
 				out.Texts = append(out.Texts, t)
@@ -109,6 +115,11 @@ func (d *DSH) runHeadless(prompt string, opts bot.RunOpts, rt dshRuntime, persis
 			return bot.RunResult{}, "", true
 		}
 
+		for _, t := range out.Thinking {
+			if s := strings.TrimSpace(compactSpace(t)); s != "" {
+				log.Printf("bot=%s dsh headless thinking: %s", d.cfg.ID, clipRunes(s, 400))
+			}
+		}
 		reply := strings.TrimSpace(out.Final)
 		if reply == "" {
 			reply = strings.TrimSpace(strings.Join(out.Texts, ""))

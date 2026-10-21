@@ -12,6 +12,7 @@ import (
 func TestParseDSHHeadlessOutput(t *testing.T) {
 	data := []byte(`{"type":"session","sessionId":"session-abc","cwd":"C:\\ws"}
 {"type":"status","phase":"turn_start","turn":1}
+{"type":"thinking","text":"let me calculate"}
 {"type":"text","text":"po"}
 {"type":"text","text":"ng"}
 {"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}
@@ -26,6 +27,9 @@ func TestParseDSHHeadlessOutput(t *testing.T) {
 	}
 	if out.Err != "" || out.Reason != "completed" {
 		t.Fatalf("reason parse: %+v", out)
+	}
+	if len(out.Thinking) != 1 || out.Thinking[0] != "let me calculate" {
+		t.Fatalf("thinking parse: %+v", out)
 	}
 }
 
