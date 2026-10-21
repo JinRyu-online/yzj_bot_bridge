@@ -365,3 +365,26 @@ func TestExpandPollTrigger(t *testing.T) {
 		t.Fatalf("unexpected: %+v", bots[0])
 	}
 }
+
+func TestExpandPollRejectsInvalidTrigger(t *testing.T) {
+	base := map[string]any{
+		"id": "fairy", "name": "Fairy", "group": "g",
+		"send_msg_url": "https://h/x?yzjtoken=t",
+		"inbound_mode": "yzj_cli", "yzj_group_id": "G1",
+	}
+	for _, bad := range []map[string]string{
+		{"yzj_trigger": "sometimes"},
+		{"yzj_image_trigger": "sometimes"},
+	} {
+		m := map[string]any{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range bad {
+			m[k] = v
+		}
+		if _, err := ExpandBots(&File{Bots: []map[string]any{m}}); err == nil {
+			t.Fatalf("expected error for %v", bad)
+		}
+	}
+}

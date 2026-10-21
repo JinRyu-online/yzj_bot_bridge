@@ -21,7 +21,26 @@ type StatusItem = {
   ws_enabled: boolean;
   last_error: string;
   has_ws: boolean;
+  poll_enabled?: boolean;
+  last_poll_at?: string;
+  last_poll_error?: string;
+  yzj_group_id?: string;
+  yzj_group_name?: string;
 };
+
+type YzjCliStatus = {
+  found: boolean;
+  bin?: string;
+  version?: string;
+  version_want?: string;
+  profile?: string;
+  config_dir?: string;
+  logged_in: boolean;
+  error?: string;
+  identity?: { openId?: string; name?: string; expiresAt?: string; tokenStatus?: string };
+};
+
+type YzjGroup = { groupId: string; groupName?: string; groupType?: number };
 
 type LogLine = { seq: number; time: string; level: string; bot?: string; message: string };
 type ThemeId = "aurora" | "midnight" | "sand" | "ice";
@@ -71,6 +90,12 @@ type BotForm = {
   inbound_mode: string;
   session_mode: string;
   workspace: string;
+  yzj_group_id: string;
+  yzj_group_name: string;
+  yzj_trigger: string;
+  yzj_image_trigger: string;
+  yzj_bot_names: string;
+  yzj_bot_open_id: string;
 };
 
 type ChannelForm = {
@@ -556,6 +581,12 @@ function emptyBotForm(): BotForm {
     inbound_mode: "websocket",
     session_mode: "shared",
     workspace: defaultBotWorkspace(""),
+    yzj_group_id: "",
+    yzj_group_name: "",
+    yzj_trigger: "mention",
+    yzj_image_trigger: "quote_bot",
+    yzj_bot_names: "",
+    yzj_bot_open_id: "",
   };
 }
 
@@ -1003,6 +1034,10 @@ function App() {
   const [botModalError, setBotModalError] = useState<{ text: string; seq: number } | null>(null);
   const [botFieldErrors, setBotFieldErrors] = useState<Record<string, string>>({});
   const [botWorkspaceTouched, setBotWorkspaceTouched] = useState(false);
+  const [yzjStatus, setYzjStatus] = useState<YzjCliStatus | null>(null);
+  const [yzjStatusErr, setYzjStatusErr] = useState("");
+  const [yzjGroups, setYzjGroups] = useState<YzjGroup[]>([]);
+  const [yzjGroupsBusy, setYzjGroupsBusy] = useState(false);
   const [channelForm, setChannelForm] = useState<ChannelForm>({
     id: "",
     group: "",
@@ -2093,6 +2128,14 @@ function App() {
         ? (selectedRoleConfig.skills as unknown[]).map((x) => String(x))
         : [],
       inbound_mode: String(selectedRoleConfig.inbound_mode || "websocket"),
+      yzj_group_id: String(selectedRoleConfig.yzj_group_id || ""),
+      yzj_group_name: String(selectedRoleConfig.yzj_group_name || ""),
+      yzj_trigger: String(selectedRoleConfig.yzj_trigger || "mention"),
+      yzj_image_trigger: String(selectedRoleConfig.yzj_image_trigger || "quote_bot"),
+      yzj_bot_names: Array.isArray(selectedRoleConfig.yzj_bot_names)
+        ? (selectedRoleConfig.yzj_bot_names as unknown[]).map((x) => String(x)).join(", ")
+        : "",
+      yzj_bot_open_id: String(selectedRoleConfig.yzj_bot_open_id || ""),
       session_mode: String(
         selectedRoleConfig.session_mode ||
           (rawConfig?.defaults as Record<string, unknown> | undefined)?.session_mode ||
@@ -2105,6 +2148,39 @@ function App() {
     setBotFieldErrors({});
     setBotModal("edit");
   }
+
+  async function refreshYzjCli() {
+    try {
+      const raw = await api("GET", "/v1/yzj/cli/status");
+      setYzjStatus(JSON.parse(raw) as YzjCliStatus);
+      setYzjStatusErr("");
+    } catch (e) {
+      setYzjStatus(null);
+      setYzjStatusErr(String(e));
+    }
+  }
+
+  async function loadYzjGroups(keyword: string) {
+    setYzjGroupsBusy(true);
+    try {
+      const qs = keyword.trim() ? `&keyword=${encodeURIComponent(keyword.trim())}` : "";
+      const raw = await api("GET", `/v1/yzj/cli/groups?limit=20${qs}`);
+      const data = JSON.parse(raw) as { list?: YzjGroup[] };
+      setYzjGroups(Array.isArray(data.list) ? data.list : []);
+    } catch (e) {
+      setYzjGroups([]);
+      showToast(`拉取会话失败：${e}`, "err");
+    } finally {
+      setYzjGroupsBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (page === "settings" || botForm.inbound_mode === "yzj_cli") {
+      void refreshYzjCli();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, botForm.inbound_mode]);
 
   async function submitBot() {
     if (!rawConfig) return;
@@ -2143,6 +2219,9 @@ function App() {
         if (!botForm.model.trim()) fieldErrs.model = "请选择或填写模型";
       }
     }
+    if (botForm.inbound_mode === "yzj_cli" && !botForm.yzj_group_id.trim()) {
+      fieldErrs.yzj_group_id = "请填写或从最近会话选择 yzj_group_id";
+    }
     if (Object.keys(fieldErrs).length) {
       setBotFieldErrors(fieldErrs);
       flashBotModalError(
@@ -2167,6 +2246,19 @@ function App() {
       workspace: botForm.workspace.trim() || defaultBotWorkspace(botForm.id),
       skills: botForm.skills,
     };
+    if (botForm.inbound_mode === "yzj_cli") {
+      payload.yzj_group_id = botForm.yzj_group_id.trim();
+      payload.yzj_group_name = botForm.yzj_group_name.trim();
+      payload.yzj_trigger = botForm.yzj_trigger || "mention";
+      payload.yzj_image_trigger = botForm.yzj_image_trigger || "quote_bot";
+      payload.yzj_bot_names = botForm.yzj_bot_names
+        .split(/[,，\s]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (botForm.yzj_bot_open_id.trim()) {
+        payload.yzj_bot_open_id = botForm.yzj_bot_open_id.trim();
+      }
+    }
     if (botForm.backend === "openai") {
       if (botForm.openai_use_defaults) {
         // 不写覆盖字段，运行时回退到 defaults；编辑时需删掉旧覆盖。
@@ -2445,6 +2537,17 @@ function App() {
     { id: "websocket", label: "websocket" },
     { id: "webhook", label: "webhook" },
     { id: "both", label: "both" },
+    { id: "yzj_cli", label: "yzj_cli（轮询，仅配置会话）" },
+  ];
+  const yzjTriggerOptions = [
+    { id: "mention", label: "mention（群聊：需 @机器人）" },
+    { id: "direct", label: "direct（个人机器人/私聊：全部消息）" },
+    { id: "any", label: "any（群聊：任意用户消息）" },
+  ];
+  const yzjImageTriggerOptions = [
+    { id: "quote_bot", label: "quote_bot（引用机器人时才触发）" },
+    { id: "any", label: "any（本会话所有图片）" },
+    { id: "off", label: "off（关闭图片触发）" },
   ];
   const sessionModeOptions = [
     { id: "per_user", label: "per_user（按用户隔离）" },
@@ -2668,6 +2771,32 @@ function App() {
               </div>
             </header>
             <div className="stack page-body settings-groups">
+              <div className="card soft pad settings-group" data-testid="group-yzj-cli">
+                <h3 className="section-inline">云之家 yzj-cli（轮询入站）</h3>
+                <p className="group-desc">个人机器人/群聊消息轮询与图片下载；登录态由 yzj-cli 自己管理，桥不保存凭据</p>
+                <div className="form-grid">
+                  <div className="field full">
+                    <span className={`field-hint ${yzjStatus?.logged_in ? "ok" : "error"}`}>
+                      {yzjStatus
+                        ? yzjStatus.logged_in
+                          ? `已登录：${yzjStatus.identity?.name || ""}（${yzjStatus.identity?.openId || ""}）· token 到期 ${yzjStatus.identity?.expiresAt || "?"}`
+                          : yzjStatus.error || "未登录（终端执行 yzj-cli auth login）"
+                        : yzjStatusErr || "检测中…"}
+                    </span>
+                  </div>
+                  <div className="field full">
+                    <span className="field-hint">
+                      bin：{yzjStatus?.bin || "（自动探测 PATH / npm 全局 / 受控目录）"} · 版本：
+                      {yzjStatus?.version || yzjStatus?.version_want || "-"}
+                    </span>
+                  </div>
+                  <div className="field full">
+                    <button type="button" className="action-chip side" onClick={() => void refreshYzjCli()}>
+                      刷新登录状态
+                    </button>
+                  </div>
+                </div>
+              </div>
               <div className="card soft pad settings-group" data-testid="group-cursor">
                 <h3 className="section-inline">
                   <EngineIcon id="cursor_cli" size={16} />
@@ -3754,6 +3883,109 @@ function App() {
                   onChange={(v) => setBotForm({ ...botForm, inbound_mode: v })}
                 />
               </div>
+              {botForm.inbound_mode === "yzj_cli" ? (
+                <>
+                  <div className="field full">
+                    <FieldLabel tip="只轮询这个会话；个人机器人会话也会出现在「最近会话」中">
+                      会话 ID yzj_group_id
+                    </FieldLabel>
+                    <div className="inline-field">
+                      <input
+                        data-testid="yzj-group-id"
+                        className={botFieldErrors.yzj_group_id ? "invalid" : undefined}
+                        value={botForm.yzj_group_id}
+                        onChange={(e) => {
+                          setBotForm({ ...botForm, yzj_group_id: e.target.value });
+                          if (botFieldErrors.yzj_group_id) {
+                            setBotFieldErrors({ ...botFieldErrors, yzj_group_id: "" });
+                          }
+                        }}
+                        placeholder="6a2b... 或 BOT-... 开头的会话 ID"
+                      />
+                      <button
+                        type="button"
+                        className={`action-chip side${yzjGroupsBusy ? " loading" : ""}`}
+                        disabled={yzjGroupsBusy}
+                        onClick={() => void loadYzjGroups("")}
+                      >
+                        {yzjGroupsBusy ? <span className="spinner dark" /> : null}
+                        <span>{yzjGroupsBusy ? "拉取中" : "拉取最近会话"}</span>
+                      </button>
+                    </div>
+                    {botFieldErrors.yzj_group_id ? (
+                      <span className="field-hint error">{botFieldErrors.yzj_group_id}</span>
+                    ) : null}
+                  </div>
+                  {yzjGroups.length ? (
+                    <div className="field full">
+                      <FieldLabel tip="从你最近会话里选择，自动填充 ID 与名称">最近会话</FieldLabel>
+                      <FancySelect
+                        value={botForm.yzj_group_id}
+                        options={[
+                          { id: "", label: "（保留手动填写）" },
+                          ...yzjGroups.map((g) => ({
+                            id: g.groupId,
+                            label: `${g.groupName || g.groupId}${g.groupType === 3 ? " · 个人机器人" : ""}`,
+                          })),
+                        ]}
+                        onChange={(v) => {
+                          const g = yzjGroups.find((x) => x.groupId === v);
+                          setBotForm({
+                            ...botForm,
+                            yzj_group_id: v,
+                            yzj_group_name: g?.groupName || botForm.yzj_group_name,
+                          });
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="field">
+                    <FieldLabel tip="群聊需要 @机器人；个人机器人/私聊建议 direct">触发方式 yzj_trigger</FieldLabel>
+                    <FancySelect
+                      value={botForm.yzj_trigger}
+                      options={yzjTriggerOptions}
+                      onChange={(v) => setBotForm({ ...botForm, yzj_trigger: v })}
+                    />
+                  </div>
+                  <div className="field">
+                    <FieldLabel tip="图片消息的触发规则">图片触发 yzj_image_trigger</FieldLabel>
+                    <FancySelect
+                      value={botForm.yzj_image_trigger}
+                      options={yzjImageTriggerOptions}
+                      onChange={(v) => setBotForm({ ...botForm, yzj_image_trigger: v })}
+                    />
+                  </div>
+                  <div className="field">
+                    <FieldLabel tip="机器人显示名/别名，逗号分隔；用于识别 @ 与引用">机器人别名 yzj_bot_names</FieldLabel>
+                    <input
+                      value={botForm.yzj_bot_names}
+                      onChange={(e) => setBotForm({ ...botForm, yzj_bot_names: e.target.value })}
+                      placeholder="Fairy, 同城日志查询"
+                    />
+                  </div>
+                  <div className="field">
+                    <FieldLabel tip="可选；机器人 openId（BOT- 开头）用于精确区分同群多机器人">
+                      机器人 openId yzj_bot_open_id
+                    </FieldLabel>
+                    <input
+                      value={botForm.yzj_bot_open_id}
+                      onChange={(e) => setBotForm({ ...botForm, yzj_bot_open_id: e.target.value })}
+                      placeholder="BOT-..."
+                    />
+                  </div>
+                  <div className="field full">
+                    <span className={`field-hint ${yzjStatus?.logged_in ? "ok" : "error"}`}>
+                      {yzjStatus?.logged_in
+                        ? `yzj-cli ${yzjStatus.version || ""} 已登录：${yzjStatus.identity?.name || ""}（token ${yzjStatus.identity?.expiresAt || "?"} 到期）`
+                        : yzjStatus?.found
+                          ? "yzj-cli 已安装但未登录：终端执行 yzj-cli auth login"
+                          : yzjStatusErr
+                            ? `检测 yzj-cli 失败：${yzjStatusErr}`
+                            : "未检测到 yzj-cli：首次轮询会自动安装 0.1.8，或手动 npm i -g @yunzhijia/cli"}
+                    </span>
+                  </div>
+                </>
+              ) : null}
               <div className="field">
                 <FieldLabel tip="多轮上下文隔离方式：per_user 按用户；shared 同通道共享（默认通道内排队）；oneshot 每次新会话">
                   会话模式 session_mode

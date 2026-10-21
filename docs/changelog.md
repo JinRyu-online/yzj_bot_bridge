@@ -4,6 +4,24 @@
 
 ---
 
+## Unreleased（yzj-cli 轮询入站）
+
+### 新功能
+- 新增 inbound_mode: yzj_cli：通过官方 yzj-cli im message list 轮询已配置群/个人机器人会话，不再依赖本地登录的云之家桌面端；支持按 yzj_group_id 精确指定、yzj_trigger mention/direct/any、yzj_bot_names/yzj_bot_open_id 识别机器人。
+- 图片消息支持：轮询到图片后 yzj-cli file download 下载到 bot workspace incoming_media/YYYYMMDD/，校验大小/类型/魔数并把本地路径注入 prompt；失败在回复中说明；按 keep_days 清理。
+- 控制 API 新增 GET /v1/yzj/cli/status、GET /v1/yzj/cli/groups；GUI 新增 yzj-cli 状态卡、群/会话选择、触发方式/图片规则/别名等字段。
+- yzj-cli 检测与自动安装：配置 bin → 受控目录 → npm 全局 → PATH；缺失时下载官方 .pak 并校验 SHA256（固定版本 0.1.8）。
+
+### 优化/体验
+- 轮询默认 5s（±20% 抖动）；遇 10000429 请求过于频繁/exit 4 自动指数退避（30s→5min），避免持续限流。
+- 机器人自身消息（BOT- 开头）永不触发，避免自问自答；消息去重键带 source，兼容 WSS/Webhook/轮询并存。
+- 回复出现整段完全重复（Cursor 恢复旧会话时偶发）时自动折叠为一份。
+
+### 修复
+- 兼容平台 isReference 返回 bool/字符串两种形态，避免轮询解析失败。
+
+---
+
 ## v0.3.3（2026-08-21）
 
 ### 新功能

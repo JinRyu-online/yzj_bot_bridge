@@ -276,6 +276,18 @@ func ExpandBots(f *File) ([]bot.Config, error) {
 			if bot.ModeUsesPoll(mode) && strings.TrimSpace(cfg.YzjGroupID) == "" {
 				return nil, fmt.Errorf("bot %s channel yzj_group_id is required when inbound_mode=%s", runtimeID, mode)
 			}
+			if bot.ModeUsesPoll(mode) {
+				switch strings.ToLower(strings.TrimSpace(cfg.YzjTrigger)) {
+				case "mention", "direct", "any":
+				default:
+					return nil, fmt.Errorf("invalid yzj_trigger for %s (want mention|direct|any)", runtimeID)
+				}
+				switch strings.ToLower(strings.TrimSpace(cfg.YzjImageTrigger)) {
+				case "quote_bot", "any", "off":
+				default:
+					return nil, fmt.Errorf("invalid yzj_image_trigger for %s (want quote_bot|any|off)", runtimeID)
+				}
+			}
 			if err := checkWebhookUnique(runtimeID, sendURL, cfg.WebhookPath, seenToken, seenURL, seenPath); err != nil {
 				return nil, err
 			}

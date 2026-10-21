@@ -265,10 +265,10 @@ bots:
 - 待办：GUI 图片开关；OpenAI 原生 vision content block、DSH image block（当前先走“路径 + 模型自行读图”）。
 - 验收：@ + 图片、引用机器人 + 图片、个人机器人直接发图 均能被模型读取；失败有降级提示。
 
-### Phase 3：体验与边界
-- 机器人身份自动学习与多机器人区分；OpenAI 原生 vision / DSH image block 评估；
-- 自动安装 GUI 引导、登录过期提示、安装包不捆绑的文档；
-- README / config.default.yaml / changelog / bridge-runtime / chat-test 同步。
+### Phase 3：体验与边界（GUI/文档已完成；视觉原生块待评估）
+- 已完成：GUI 新增 yzj-cli 状态卡、最近会话选择、yzj_trigger/图片规则/别名/openId 字段，且编辑保存不会丢未知字段；README / config.default.yaml / changelog / bridge-runtime 已同步；登录过期在状态卡与通道状态中提示。
+- 多机器人区分：yzj_bot_names / yzj_bot_open_id 已支持；自动学习暂未实现（个人机器人 direct 场景不需要）。
+- 待办/评估：OpenAI 原生 vision content block、DSH image block（当前为本地路径注入，模型用读图能力打开）。
 
 ---
 
@@ -322,7 +322,7 @@ bots:
 | Phase 0b 探针 | 0.5 天（依赖你测试） |
 | Phase 1 骨架 | 2–3 天 |
 | Phase 2 图片 | 2 天 |
-| Phase 3 体验/文档 | 1–2 天 |
+| Phase 3 体验/文档 | 已完成（视觉原生块待评估） |
 | 合计 | 约 6–8 个工作日 |
 
 ---
