@@ -194,6 +194,7 @@ func (m Message) HasImages() bool {
 // must match one of them, otherwise any robot mention matches. When no robot
 // at-segment is present we fall back to matching "@<alias>" in content.
 func (m Message) MentionsBots(aliases, botOpenIDs []string) bool {
+	hasBotAt := false
 	for _, seg := range m.Param.Desc {
 		if !strings.EqualFold(strings.TrimSpace(seg.Type), "at") {
 			continue
@@ -205,10 +206,15 @@ func (m Message) MentionsBots(aliases, botOpenIDs []string) bool {
 		if !strings.HasPrefix(strings.ToUpper(data), "BOT-") {
 			continue
 		}
-		if len(botOpenIDs) > 0 && !containsFold(botOpenIDs, data) {
+		if len(botOpenIDs) == 0 {
+			// 没有配置本 bot 的 openId 时，不能“看到任意 BOT- 就算 @ 我”，
+			// 否则同群多个机器人会一起响应；先标记，再按 content 里的 @别名判断。
+			hasBotAt = true
 			continue
 		}
-		return true
+		if containsFold(botOpenIDs, data) {
+			return true
+		}
 	}
 	if len(botOpenIDs) > 0 {
 		return false
@@ -220,7 +226,8 @@ func (m Message) MentionsBots(aliases, botOpenIDs []string) bool {
 			return true
 		}
 	}
-	return false
+	// 没有任何别名信息时，保留旧行为：BOT- at 段只能是机器人。
+	return hasBotAt && len(aliases) == 0
 }
 
 // QuotesBot reports whether the message quotes/replies to a robot message.

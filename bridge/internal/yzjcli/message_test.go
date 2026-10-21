@@ -139,3 +139,18 @@ func TestFileIDsFromText(t *testing.T) {
 }
 
 func flexIntPtr(n int) *FlexInt { v := FlexInt(n); return &v }
+func TestMentionsBotsSameGroupOnlyTarget(t *testing.T) {
+	msg := Message{
+		Content: "@寄件日志查询 查下此单",
+		Param:   MessageParam{Desc: []Segment{{Type: "at", Data: "BOT-6a850de1e4b0e54b21614295"}}},
+	}
+	if !msg.MentionsBots([]string{"寄件日志查询"}, nil) {
+		t.Fatal("target bot should match")
+	}
+	if msg.MentionsBots([]string{"同城日志查询"}, nil) {
+		t.Fatal("same-group other bot must not match without open id")
+	}
+	if msg.MentionsBots([]string{"同城日志查询"}, []string{"BOT-other"}) {
+		t.Fatal("other bot with its own open id must not match")
+	}
+}
