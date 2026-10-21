@@ -61,7 +61,7 @@ defaults:
     config_dir: ""                      # 空=~/.yzj-cli
     auto_install: true                  # 缺失时自动下载官方 .pak 并校验 SHA256
     timeout_sec: 20
-    poll_interval_sec: 10               # 仅对已配置群轮询，±20% 抖动；5s 会被平台 10000429 限流
+    poll_interval_sec: 5                # 仅对已配置群轮询，±20% 抖动；遇 10000429 自动退避
     catchup_pages: 3                    # 单次最多向前翻 3 页（每页 ≤20 条）
     startup_mode: baseline              # baseline=首次只建游标不回放；replay=回放最近 20 条
     image_trigger: quote_bot            # quote_bot=引用机器人的图片才触发 | any | off

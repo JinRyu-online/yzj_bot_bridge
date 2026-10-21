@@ -333,7 +333,7 @@ func TestMergedDefaultsDeepMergesYzjCLI(t *testing.T) {
 	if m["bin"] != "/custom/yzj-cli" {
 		t.Fatalf("bin = %v", m["bin"])
 	}
-	if m["poll_interval_sec"] != 10 {
+	if m["poll_interval_sec"] != 5 {
 		t.Fatalf("defaults lost in merge: %v", m["poll_interval_sec"])
 	}
 	if m["version"] != "0.1.8" {

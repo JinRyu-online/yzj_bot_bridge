@@ -18,7 +18,7 @@
 | 4 | 迁移顺序：**先 fairy** | fairy 切 `yzj_cli` 观察后再迁 `bsame_city_log` / `border_bot` |
 | 5 | 纯图片消息**可以触发** | 默认按「引用机器人消息发图」触发（Q6）；另提供 `image_trigger: any` 开关 |
 | 6 | 入站只处理 @机器人 / 引用机器人；出站仍用机器人 webhook | 与现网回复身份一致 |
-| 7 | 轮询间隔 **10s**（±20% 抖动；实测 5s 触发 10000429 限流） | 仅对已配置群、串行调用；限流指数退避 30s→5min |
+| 7 | 轮询间隔 **5s**（±20% 抖动；遇 10000429 自动退避） | 仅对已配置群、串行调用；限流指数退避 30s→5min |
 | 8 | 图片：单张 ≤20MB、保留 7 天、总量 500MB 上限清理 | 下载到 bot workspace 的 `incoming_media/` |
 | 9 | 迁移期保留 `websocket` 回退，不做删代码式重构 | 每 bot 改配置即可切回 |
 
@@ -88,7 +88,7 @@
 
 ```text
 云之家（你本人账号可见的、已配置的群）
-        │  yzj-cli im message list（10s 轮询，只读，仅配置群）
+        │  yzj-cli im message list（5s 轮询，只读，仅配置群）
         ▼
 bridge/internal/yzjcli
   GroupWatcher（profile+groupId，仅配置群）
@@ -148,7 +148,7 @@ yzjout.SendText（机器人 webhook，不变）
 - 自动学习：用户引用机器人时 `replyOpenId` 即机器人 openId；或发出的回复在轮询里以 `BOT-` 消息出现（内容匹配）→ 记录 `botOpenId`；
 - 同群多机器人按 `replyPersonName`/`botOpenId` 区分，避免抢答。
 
-### 2.4 轮询算法（10s）
+### 2.4 轮询算法（5s）
 
 ```text
 每 profile 一个串行 worker（防 token 刷新竞态）；每群独立 next-tick（±20% 抖动）
@@ -161,7 +161,7 @@ tick(group):
   6) 失败：exit 4 / 10000429 → 指数退避(30s→1m→2m→5m，5 分钟无再限流后恢复)；exit 3 → 通道「需重新登录」并暂停
 ```
 
-- 10s × N 群 ≈ N/10 次/秒调用；实测 5s 会触发 10000429 请求过于频繁，故默认 10s，并带限流退避。
+- 5s × N 群 ≈ N/5 次/秒调用；遇 10000429 请求过于频繁 自动退避，先只开 fairy 观察。
 - `catchup_pages`、`poll_interval_sec`、`image_trigger` 均可按 bot 覆盖。
 
 ### 2.5 图片接收与模型注入
@@ -274,7 +274,7 @@ bots:
 
 ## 4. 测试计划
 
-- 单元：CLI 信封/错误码/超时解析；消息解析 fixture（文本/@/图片/多图/引用/撤回/未知 msgType）；游标与 baseline；10s 调度抖动；触发规则；图片校验与清理；配置校验。
+- 单元：CLI 信封/错误码/超时解析；消息解析 fixture（文本/@/图片/多图/引用/撤回/未知 msgType）；游标与 baseline；5s 调度抖动；触发规则；图片校验与清理；配置校验。
 - 集成：假 CLI（Go test helper）跑 Runtime，验证「只轮询配置群」「重启不重放」「同群多 bot 不抢答」。
 - 手工 E2E：@ 文本；@ + 图片；引用机器人 + 图片；引用机器人 + 纯图片；非 @ 闲聊不回复；`auth logout` 后状态正确且不刷屏；重启后不重复；停用/启用。
 - 回归：`gofmt/vet/test`、`npm run build`、现有 41 条 GUI e2e、WSS/webhook 模式冒烟。
@@ -285,7 +285,7 @@ bots:
 
 | 风险 | 对策 |
 |---|---|
-| 轮询触发频控 | 只轮询配置群；per-profile 串行；10000429/exit4 指数退避；默认 10s，先单群观察 |
+| 轮询触发频控 | 只轮询配置群；per-profile 串行；10000429/exit4 指数退避；默认 5s，先单群观察 |
 | 图片消息引用字段未实测（Phase 0b） | 若图片引用不携带 reply 字段：用「本群最近一次机器人对话后 N 秒内的图片」兜底，或显式 `image_trigger: any` |
 | 同群多机器人抢答/误触发 | `replyPersonName` + `botOpenId` 双重判定；同一消息只交给最先匹配的 bot |
 | 自动安装供应链 | 固定版本 + 官方 HTTPS CDN + SHA256 双校验 + 原子落盘；失败回退手动安装 |

@@ -56,7 +56,7 @@ func defaultMap() map[string]any {
 		"memory_enabled": true,
 		"yzj_cli": map[string]any{
 			"bin": "", "version": "0.1.8", "profile": "default", "config_dir": "",
-			"auto_install": true, "timeout_sec": 20, "poll_interval_sec": 10,
+			"auto_install": true, "timeout_sec": 20, "poll_interval_sec": 5,
 			"catchup_pages": 3, "startup_mode": "baseline", "image_trigger": "quote_bot",
 			"image": map[string]any{
 				"enabled": true, "max_mb": 20, "keep_days": 7, "total_mb": 500,
