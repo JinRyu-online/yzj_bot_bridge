@@ -66,7 +66,7 @@ agent-default-model: kuaidi100/deepseek-v4-flash
 	}
 }
 
-// TestDSHModelsEndpointMissingFile 验证配置文件缺失时返回 ok=false + 中文错误。
+// TestDSHModelsEndpointMissingFile 验证 settings.yaml / 桌面 profile 都缺失时返回 ok=false + 可操作错误。
 func TestDSHModelsEndpointMissingFile(t *testing.T) {
 	s := newMetaTestServer(map[string]any{"dsh_home": t.TempDir()})
 	w := doMetaReq(t, s, "/v1/backends/dsh/models")
@@ -81,8 +81,72 @@ func TestDSHModelsEndpointMissingFile(t *testing.T) {
 	if resp.OK {
 		t.Fatal("expected ok=false")
 	}
-	if !strings.Contains(resp.Error, "未找到 DSH 配置文件") || !strings.Contains(resp.Error, "请先部署 dsh profile") {
+	if !strings.Contains(resp.Error, "未找到 DSH 模型配置") || !strings.Contains(resp.Error, "DSH 桌面客户端") {
 		t.Fatalf("error=%q", resp.Error)
+	}
+}
+
+// TestDSHModelsEndpointDesktopProfile 验证 DSH 0.2.x 桌面客户端布局：
+// 没有 settings.yaml 时从 profiles/desktop/cordis.patch.yml 列模型，并保留当前 dsh_model。
+func TestDSHModelsEndpointDesktopProfile(t *testing.T) {
+	dir := t.TempDir()
+	desktopDir := filepath.Join(dir, "profiles", "desktop")
+	if err := os.MkdirAll(desktopDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	patch := `- id: llm-pi-ai
+  config:
+    providers:
+      kuaidi100:
+        models:
+          - id: deepseek-flash
+            name: deepseek-flash
+          - id: deepseek-v4-pro
+            name: deepseek-v4-pro
+- id: agent-default-model
+  config:
+    provider: kuaidi100
+    model: deepseek-flash
+`
+	if err := os.WriteFile(filepath.Join(desktopDir, "cordis.patch.yml"), []byte(patch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newMetaTestServer(map[string]any{"dsh_home": dir, "dsh_model": "deepseek-v4-flash-vision-exp"})
+	w := doMetaReq(t, s, "/v1/backends/dsh/models")
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool   `json:"ok"`
+		Source string `json:"source"`
+		Models []struct {
+			ID string `json:"id"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.OK {
+		t.Fatalf("expected ok: %s", w.Body.String())
+	}
+	var ids []string
+	for _, m := range resp.Models {
+		ids = append(ids, m.ID)
+	}
+	for _, want := range []string{"deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"} {
+		found := false
+		for _, id := range ids {
+			if id == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing %q in %v", want, ids)
+		}
+	}
+	if !strings.Contains(resp.Source, "cordis.patch.yml") {
+		t.Fatalf("source=%q", resp.Source)
 	}
 }
 

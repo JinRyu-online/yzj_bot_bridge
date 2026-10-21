@@ -21,10 +21,10 @@ import (
 )
 
 type Server struct {
-	RT      *runtime.Runtime
-	Addr    string
-	Token   string
-	Logs    *logbuf.Buffer
+	RT         *runtime.Runtime
+	Addr       string
+	Token      string
+	Logs       *logbuf.Buffer
 	OnShutdown func()
 
 	// Chat is the lazily-initialized GUI chat test store. Leave nil to
@@ -33,8 +33,8 @@ type Server struct {
 	ChatPath string
 
 	chatOnce sync.Once
-	mu  sync.Mutex
-	srv *http.Server
+	mu       sync.Mutex
+	srv      *http.Server
 }
 
 func NewToken() string {
@@ -326,17 +326,34 @@ func (s *Server) dshModels(w http.ResponseWriter, r *http.Request) {
 		defs = map[string]any{}
 	}
 	dshHome, _ := defs["dsh_home"].(string)
-	path := backends.ResolveDSHSettingsPath(dshHome)
-	models, err := backends.ListDSHModelsFile(path)
+	models, source, err := backends.ListDSHModels(dshHome)
 	if err != nil {
 		writeJSON(w, map[string]any{
 			"ok":     false,
-			"error":  "未找到 DSH 配置文件 " + path + "（请先部署 dsh profile）",
+			"error":  err.Error(),
 			"models": []any{},
 		})
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "models": models})
+	// 保留当前已选择的模型（例如手工填的 vision 模型），避免刷新后下拉里消失。
+	if cur, _ := defs["dsh_model"].(string); strings.TrimSpace(cur) != "" {
+		cur = strings.TrimSpace(cur)
+		found := false
+		for _, m := range models {
+			if m.ID == cur {
+				found = true
+				break
+			}
+		}
+		if !found {
+			models = append(models, backends.ModelInfo{ID: cur, Label: cur})
+		}
+	}
+	out := map[string]any{"ok": true, "models": models}
+	if source != "" {
+		out["source"] = source
+	}
+	writeJSON(w, out)
 }
 
 // available 返回各后端引擎是否已配置可用，供 GUI 机器人表单过滤后端下拉。
