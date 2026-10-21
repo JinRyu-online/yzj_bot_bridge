@@ -80,6 +80,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/v1/backends/cli/discover", s.auth(s.cliDiscover))
 	mux.HandleFunc("/v1/skills", s.auth(s.skillsRoot))
 	mux.HandleFunc("/v1/skills/", s.auth(s.skillsRoot))
+	mux.HandleFunc("/v1/yzj/cli/status", s.auth(s.yzjCliStatus))
+	mux.HandleFunc("/v1/yzj/cli/groups", s.auth(s.yzjCliGroups))
 	mux.HandleFunc("/v1/chat/sessions", s.auth(s.chatSessions))
 	mux.HandleFunc("/v1/chat/sessions/", s.auth(s.chatSessionsPath))
 	mux.HandleFunc("/v1/memory/profiles", s.auth(s.memoryProfiles))

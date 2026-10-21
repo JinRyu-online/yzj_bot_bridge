@@ -54,6 +54,14 @@ func defaultMap() map[string]any {
 			"gui_bind_enabled": false,
 		},
 		"memory_enabled": true,
+		"yzj_cli": map[string]any{
+			"bin": "", "version": "0.1.8", "profile": "default", "config_dir": "",
+			"auto_install": true, "timeout_sec": 20, "poll_interval_sec": 5,
+			"catchup_pages": 3, "startup_mode": "baseline", "image_trigger": "quote_bot",
+			"image": map[string]any{
+				"enabled": true, "max_mb": 20, "keep_days": 7, "total_mb": 500,
+			},
+		},
 	}
 }
 
@@ -99,9 +107,30 @@ func ParseRaw(raw map[string]any) (*File, error) {
 func (f *File) Raw() map[string]any { return f.raw }
 
 func (f *File) MergedDefaults() map[string]any {
-	out := defaultMap()
+	base := defaultMap()
+	out := map[string]any{}
+	for k, v := range base {
+		out[k] = v
+	}
 	for k, v := range f.Defaults {
 		out[k] = v
+	}
+	// Nested defaults (memory / yzj_cli) must merge key-by-key; assigning the
+	// user's partial block must not drop unset defaults.
+	for _, key := range []string{"memory", "yzj_cli"} {
+		def, _ := base[key].(map[string]any)
+		got, _ := out[key].(map[string]any)
+		if def == nil || got == nil {
+			continue
+		}
+		merged := make(map[string]any, len(def)+len(got))
+		for k, v := range def {
+			merged[k] = v
+		}
+		for k, v := range got {
+			merged[k] = v
+		}
+		out[key] = merged
 	}
 	syncModel(out)
 	for _, key := range []string{"projects_root"} {
@@ -239,10 +268,14 @@ func ExpandBots(f *File) ([]bot.Config, error) {
 				cfg.WebhookPath = "/yzj/webhook/" + cfg.ID
 			}
 			mode := strings.ToLower(cfg.InboundMode)
-			if mode != "websocket" && mode != "webhook" && mode != "both" {
+			if mode != "websocket" && mode != "webhook" && mode != "both" &&
+				mode != "yzj_cli" && mode != "poll" {
 				return nil, fmt.Errorf("invalid inbound_mode for %s", runtimeID)
 			}
 			cfg.InboundMode = mode
+			if bot.ModeUsesPoll(mode) && strings.TrimSpace(cfg.YzjGroupID) == "" {
+				return nil, fmt.Errorf("bot %s channel yzj_group_id is required when inbound_mode=%s", runtimeID, mode)
+			}
 			if err := checkWebhookUnique(runtimeID, sendURL, cfg.WebhookPath, seenToken, seenURL, seenPath); err != nil {
 				return nil, err
 			}
@@ -344,7 +377,15 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		CommandsEnabled: asBool(m["commands_enabled"], true),
 		InboundMode:     firstNonEmpty(asString(m["inbound_mode"]), "websocket"),
 		WebhookPath:     asString(m["webhook_path"]), Secret: asString(m["secret"]),
-		MemoryEnabled:   asBool(m["memory_enabled"], true),
+		MemoryEnabled: asBool(m["memory_enabled"], true),
+		YzjGroupID:    strings.TrimSpace(asString(m["yzj_group_id"])),
+		YzjGroupName:  strings.TrimSpace(asString(m["yzj_group_name"])),
+		YzjProfile: firstNonEmpty(asString(m["yzj_profile"]),
+			asString(asMap(m["yzj_cli"])["profile"])),
+		YzjBotNames:  asStringSlice(m["yzj_bot_names"]),
+		YzjBotOpenID: strings.TrimSpace(asString(m["yzj_bot_open_id"])),
+		YzjImageTrigger: firstNonEmpty(asString(m["yzj_image_trigger"]),
+			firstNonEmpty(asString(asMap(m["yzj_cli"])["image_trigger"]), "quote_bot")),
 	}
 }
 
@@ -443,6 +484,13 @@ func asString(v any) string {
 	default:
 		return fmt.Sprint(t)
 	}
+}
+
+func asMap(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{}
 }
 
 func asStringSlice(v any) []string {

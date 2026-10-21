@@ -24,6 +24,7 @@ import (
 	"yzj-bridge/internal/webhook"
 	"yzj-bridge/internal/ws"
 	"yzj-bridge/internal/wssstate"
+	"yzj-bridge/internal/yzjcli"
 )
 
 type Runtime struct {
@@ -39,7 +40,11 @@ type Runtime struct {
 	Disp       *inbound.Dispatcher
 	Clients    map[string]*ws.Client
 	Webhook    *webhook.Server
-	enabled    map[string]bool
+	// yzj-cli 轮询入站：每个已配置群一个 watcher（profile|groupId）。
+	PollWatchers map[string]*yzjcli.Watcher
+	pollTargets  map[string][]pollTarget
+	pollMeta     map[string]pollGroup
+	enabled      map[string]bool
 }
 
 func New(cfgPath string) *Runtime {
@@ -123,6 +128,7 @@ func (r *Runtime) Load(restoreWSS bool) error {
 	r.Disp = &inbound.Dispatcher{
 		Reg: r.Reg, Orch: r.Orch, Dedupe: dedupe.New(), Jobs: jobs.New(), Store: store, Memory: r.Memory,
 	}
+	r.setupPollers(bots)
 
 	// teardown old clients
 	for _, c := range r.Clients {
@@ -180,6 +186,7 @@ func (r *Runtime) Load(restoreWSS bool) error {
 			c.SetEnabled(en)
 			r.enabled[id] = en
 		}
+		r.recomputePollersLocked()
 		_ = wssstate.Save(r.enabled)
 	}
 	log.Printf("runtime loaded bots=%d ws_clients=%d", len(bots), len(r.Clients))
@@ -197,6 +204,12 @@ func (r *Runtime) StartAllWSS() {
 		c.SetEnabled(true)
 		r.enabled[id] = true
 	}
+	for _, b := range r.Reg.List() {
+		if bot.ModeUsesPoll(b.Config.InboundMode) {
+			r.enabled[b.Config.ID] = true
+		}
+	}
+	r.recomputePollersLocked()
 	r.persistEnabled()
 }
 
@@ -207,6 +220,12 @@ func (r *Runtime) StopAllWSS() {
 		c.SetEnabled(false)
 		r.enabled[id] = false
 	}
+	for _, b := range r.Reg.List() {
+		if bot.ModeUsesPoll(b.Config.InboundMode) {
+			r.enabled[b.Config.ID] = false
+		}
+	}
+	r.recomputePollersLocked()
 	r.persistEnabled()
 }
 
@@ -215,10 +234,18 @@ func (r *Runtime) SetChannelEnabled(id string, en bool) error {
 	defer r.mu.Unlock()
 	c, ok := r.Clients[id]
 	if !ok {
-		return fmt.Errorf("channel not found: %s", id)
+		b := r.Reg.Get(id)
+		if b == nil || !bot.ModeUsesPoll(b.Config.InboundMode) {
+			return fmt.Errorf("channel not found: %s", id)
+		}
+		r.enabled[id] = en
+		r.recomputePollersLocked()
+		r.persistEnabled()
+		return nil
 	}
 	c.SetEnabled(en)
 	r.enabled[id] = en
+	r.recomputePollersLocked()
 	r.persistEnabled()
 	return nil
 }
@@ -232,6 +259,13 @@ func (r *Runtime) SetRoleEnabled(roleID string, en bool) {
 			r.enabled[id] = en
 		}
 	}
+	for _, b := range r.Reg.List() {
+		if b.Config.RoleID != roleID || !bot.ModeUsesPoll(b.Config.InboundMode) {
+			continue
+		}
+		r.enabled[b.Config.ID] = en
+	}
+	r.recomputePollersLocked()
 	r.persistEnabled()
 }
 
@@ -246,6 +280,11 @@ type StatusItem struct {
 	WSEnabled   bool   `json:"ws_enabled"`
 	LastError   string `json:"last_error"`
 	HasWS       bool   `json:"has_ws"`
+	PollEnabled bool   `json:"poll_enabled"`
+	LastPollAt  string `json:"last_poll_at,omitempty"`
+	LastPollErr string `json:"last_poll_error,omitempty"`
+	YzjGroupID  string `json:"yzj_group_id,omitempty"`
+	YzjGroup    string `json:"yzj_group_name,omitempty"`
 }
 
 func (r *Runtime) SnapshotStatus() []StatusItem {
@@ -255,11 +294,22 @@ func (r *Runtime) SnapshotStatus() []StatusItem {
 	for _, b := range r.Reg.List() {
 		st := b.SnapshotStatus()
 		_, hasWS := r.Clients[b.Config.ID]
-		out = append(out, StatusItem{
+		item := StatusItem{
 			ID: b.Config.ID, RoleID: b.Config.RoleID, Name: b.Config.Name, Group: b.Config.Group,
 			Backend: b.Config.Backend, InboundMode: b.Config.InboundMode,
 			Connected: st.Connected, WSEnabled: st.WSEnabled, LastError: st.LastError, HasWS: hasWS,
-		})
+			YzjGroupID: b.Config.YzjGroupID, YzjGroup: b.Config.YzjGroupName,
+		}
+		if bot.ModeUsesPoll(b.Config.InboundMode) {
+			if en, lastPoll, _, pollErr := r.pollStatusLocked(b.Config); en || pollErr != "" || !lastPoll.IsZero() {
+				item.PollEnabled = en
+				item.LastPollErr = pollErr
+				if !lastPoll.IsZero() {
+					item.LastPollAt = lastPoll.Format(time.RFC3339)
+				}
+			}
+		}
+		out = append(out, item)
 	}
 	return out
 }
@@ -325,6 +375,7 @@ func (r *Runtime) SaveAndReload(raw map[string]any, keepWSS bool) error {
 			c.SetEnabled(en)
 			r.enabled[id] = en
 		}
+		r.recomputePollersLocked()
 		r.persistEnabled()
 		r.mu.Unlock()
 	}
@@ -354,6 +405,7 @@ func (r *Runtime) ReloadFromDisk(keepWSS bool) error {
 			c.SetEnabled(en)
 			r.enabled[id] = en
 		}
+		r.recomputePollersLocked()
 		r.persistEnabled()
 		r.mu.Unlock()
 	} else {
@@ -366,6 +418,9 @@ func (r *Runtime) Shutdown() {
 	r.StopAllWSS()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for _, w := range r.PollWatchers {
+		w.Dispose()
+	}
 	if r.Memory != nil && r.Memory.Sched != nil {
 		r.Memory.Sched.Stop()
 	}

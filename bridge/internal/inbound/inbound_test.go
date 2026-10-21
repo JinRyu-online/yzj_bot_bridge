@@ -293,3 +293,23 @@ func hasMsg(sent []sentMsg, openID, content string) bool {
 	}
 	return false
 }
+
+func TestAttachmentOnlyForceTargetDispatches(t *testing.T) {
+	g := &gateBackend{enter: make(chan string, 1), release: make(chan struct{})}
+	d, sentPtr, mu := newSharedDispatcher(t, g)
+	d.Handle("logbot", Normalized{
+		OpenID: "a", MsgID: "img1", Content: "[图片]", Source: "yzj_cli", ForceTarget: true,
+		Attachments: []Attachment{{Kind: "image", FileID: "f1"}},
+	})
+	select {
+	case <-g.enter:
+	case <-time.After(2 * time.Second):
+		t.Fatal("attachment-only forced message was not dispatched")
+	}
+	close(g.release)
+	waitUntil(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(*sentPtr) > 0
+	})
+}

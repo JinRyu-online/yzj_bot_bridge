@@ -27,7 +27,30 @@ type Normalized struct {
 	RobotID   string
 	RobotName string
 	GroupType int
-	Raw       map[string]any
+	// GroupID is the real Yunzhijia conversation id (yzj-cli poll source only).
+	GroupID string
+	// MsgType is the platform message type (text|richText|file|other).
+	MsgType string
+	// Source identifies the inbound channel: websocket|webhook|yzj_cli.
+	Source string
+	// Attachments are media items carried by the message (Phase 2 downloads
+	// them to the bot workspace before dispatch).
+	Attachments []Attachment
+	// ForceTarget skips the "@bot" text check because the poller already
+	// matched the message (image quote, at-segment, etc.).
+	ForceTarget bool
+	Raw         map[string]any
+}
+
+// Attachment is one media item carried by an inbound message.
+type Attachment struct {
+	Kind   string // image | file
+	FileID string
+	Name   string
+	Ext    string
+	Size   int64
+	Width  int
+	Height int
 }
 
 type Dispatcher struct {
@@ -169,11 +192,11 @@ func (d *Dispatcher) Handle(botID string, n Normalized) {
 	if b == nil {
 		return
 	}
-	key := botID + ":" + n.MsgID
+	key := n.Source + "|" + botID + ":" + n.MsgID
 	if d.Dedupe.AlreadySeen(key) {
 		return
 	}
-	if !commands.MessageTargetsBot(n.Content, b, d.Reg) {
+	if !n.ForceTarget && !commands.MessageTargetsBot(n.Content, b, d.Reg) {
 		return
 	}
 	if !commands.Allowed(b.Config, n.OpenID, n.Name) {

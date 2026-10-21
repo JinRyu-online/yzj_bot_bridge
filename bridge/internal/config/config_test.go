@@ -111,6 +111,28 @@ func TestOpenAICompactDefaultsOn(t *testing.T) {
 	}
 }
 
+func TestCursorDailyResetDefaultsOn(t *testing.T) {
+	f := &File{
+		Bots: []map[string]any{
+			{"id": "c", "backend": "cursor_cli", "group": "g", "send_msg_url": "https://h/x?yzjtoken=t"},
+			{"id": "off", "backend": "cursor_cli", "cursor_daily_reset": false, "group": "g", "send_msg_url": "https://h/x?yzjtoken=u"},
+		},
+	}
+	bots, err := ExpandBots(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bots) != 2 {
+		t.Fatalf("len=%d", len(bots))
+	}
+	if !bots[0].CursorDailyReset {
+		t.Fatalf("default should be true: %+v", bots[0])
+	}
+	if bots[1].CursorDailyReset {
+		t.Fatalf("explicit false: %+v", bots[1])
+	}
+}
+
 func TestJobQueueAndSharedSession(t *testing.T) {
 	f := &File{
 		Bots: []map[string]any{
@@ -252,5 +274,69 @@ func TestExpandHome(t *testing.T) {
 	}
 	if got := ExpandHome(""); got != home {
 		t.Fatalf("ExpandHome(\"\")=%q want home", got)
+	}
+}
+
+func TestExpandPollModeRequiresGroupID(t *testing.T) {
+	f := &File{Bots: []map[string]any{{
+		"id": "fairy", "name": "Fairy", "group": "g",
+		"send_msg_url": "https://h/x?yzjtoken=t", "inbound_mode": "yzj_cli",
+	}}}
+	if _, err := ExpandBots(f); err == nil {
+		t.Fatal("expected yzj_group_id validation error")
+	}
+}
+
+func TestExpandPollModeFieldsAndChannelOverride(t *testing.T) {
+	f := &File{
+		Defaults: map[string]any{"yzj_cli": map[string]any{"profile": "work", "image_trigger": "any"}},
+		Bots: []map[string]any{{
+			"id": "fairy", "name": "Fairy", "inbound_mode": "yzj_cli",
+			"yzj_group_id": "G-bot", "yzj_group_name": "bot-group",
+			"yzj_bot_names": []any{"Fairy"},
+			"channels": []any{
+				map[string]any{"group": "a", "send_msg_url": "https://h/a?yzjtoken=t1", "yzj_group_id": "G-a"},
+				map[string]any{"group": "b", "send_msg_url": "https://h/b?yzjtoken=t2", "yzj_group_id": "G-b", "yzj_group_name": "b-group"},
+			},
+		}},
+	}
+	bots, err := ExpandBots(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bots) != 2 {
+		t.Fatalf("bots = %d", len(bots))
+	}
+	if bots[0].YzjGroupID != "G-a" || bots[0].YzjGroupName != "bot-group" {
+		t.Fatalf("channel a = %+v", bots[0])
+	}
+	if bots[1].YzjGroupID != "G-b" || bots[1].YzjGroupName != "b-group" {
+		t.Fatalf("channel b = %+v", bots[1])
+	}
+	for _, b := range bots {
+		if b.InboundMode != "yzj_cli" || b.YzjProfile != "work" || b.YzjImageTrigger != "any" {
+			t.Fatalf("unexpected config: %+v", b)
+		}
+		if len(b.YzjBotNames) != 1 || b.YzjBotNames[0] != "Fairy" {
+			t.Fatalf("bot names = %v", b.YzjBotNames)
+		}
+	}
+}
+
+func TestMergedDefaultsDeepMergesYzjCLI(t *testing.T) {
+	f := &File{Defaults: map[string]any{"yzj_cli": map[string]any{"bin": "/custom/yzj-cli"}}}
+	got := f.MergedDefaults()
+	m, ok := got["yzj_cli"].(map[string]any)
+	if !ok {
+		t.Fatalf("yzj_cli not a map: %T", got["yzj_cli"])
+	}
+	if m["bin"] != "/custom/yzj-cli" {
+		t.Fatalf("bin = %v", m["bin"])
+	}
+	if m["poll_interval_sec"] != 5 {
+		t.Fatalf("defaults lost in merge: %v", m["poll_interval_sec"])
+	}
+	if m["version"] != "0.1.8" {
+		t.Fatalf("version default lost: %v", m["version"])
 	}
 }

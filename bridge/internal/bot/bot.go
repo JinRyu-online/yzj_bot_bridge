@@ -60,16 +60,26 @@ type Config struct {
 	InboundMode             string   `json:"inbound_mode"`
 	WebhookPath             string   `json:"webhook_path"`
 	Secret                  string   `json:"secret"`
+	// yzj-cli 轮询入站（inbound_mode: yzj_cli）：只轮询已配置的群。
+	YzjGroupID      string   `json:"yzj_group_id"`
+	YzjGroupName    string   `json:"yzj_group_name"`
+	YzjProfile      string   `json:"yzj_profile"`
+	YzjBotNames     []string `json:"yzj_bot_names"`
+	YzjBotOpenID    string   `json:"yzj_bot_open_id"`
+	YzjImageTrigger string   `json:"yzj_image_trigger"`
 	// MemoryEnabled defaults true; only effective when defaults.memory.enabled is on.
 	MemoryEnabled bool `json:"memory_enabled"`
 }
 
 type RuntimeStatus struct {
-	Connected   bool      `json:"connected"`
-	WSEnabled   bool      `json:"ws_enabled"`
-	LastError   string    `json:"last_error"`
-	LastEvent   time.Time `json:"last_event,omitempty"`
-	InboundMode string    `json:"inbound_mode"`
+	Connected     bool      `json:"connected"`
+	WSEnabled     bool      `json:"ws_enabled"`
+	LastError     string    `json:"last_error"`
+	LastEvent     time.Time `json:"last_event,omitempty"`
+	InboundMode   string    `json:"inbound_mode"`
+	PollEnabled   bool      `json:"poll_enabled"`
+	LastPollAt    time.Time `json:"last_poll_at,omitempty"`
+	LastPollError string    `json:"last_poll_error,omitempty"`
 }
 
 type Backend interface {
@@ -175,4 +185,11 @@ func ModeUsesWS(mode string) bool {
 
 func ModeUsesWebhook(mode string) bool {
 	return mode == "webhook" || mode == "both"
+}
+
+// ModeUsesPoll reports whether the channel receives messages by polling
+// yzj-cli (inbound_mode: yzj_cli). Poll mode is exclusive: it does not start a
+// WSS client and needs only the configured group id.
+func ModeUsesPoll(mode string) bool {
+	return mode == "yzj_cli" || mode == "poll"
 }
