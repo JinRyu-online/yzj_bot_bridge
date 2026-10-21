@@ -7,59 +7,62 @@ import (
 )
 
 type Config struct {
-	ID                      string   `json:"id"`
-	Name                    string   `json:"name"`
-	Group                   string   `json:"group"`
-	SendMsgURL              string   `json:"send_msg_url"`
-	RoleID                  string   `json:"role_id"`
-	ChannelKey              string   `json:"channel_key"`
-	Backend                 string   `json:"backend"`
-	SystemPrompt            string   `json:"system_prompt"`
-	Skills                  []string `json:"skills"`
-	Model                   string   `json:"model"`
-	Workspace               string   `json:"workspace"`
-	AllowUsers              []string `json:"allow_users"`
-	AllowOpenIDs            []string `json:"allow_openids"`
-	CursorAPIKey            string   `json:"cursor_api_key"`
-	CursorBin               string   `json:"cursor_bin"`
-	CursorSandbox           string   `json:"cursor_sandbox"`
-	CursorForce             bool     `json:"cursor_force"`
-	CursorStream            bool     `json:"cursor_stream"`
-	CursorStreamPart        bool     `json:"cursor_stream_partial"`
-	CursorTimeout           int      `json:"cursor_timeout"`
-	ClaudeBin               string   `json:"claude_bin"`
-	PermissionMode          string   `json:"permission_mode"`
-	AllowedTools            []string `json:"allowed_tools"`
-	MaxBudgetUSD            float64  `json:"max_budget_usd"`
-	OpenCodeBin             string   `json:"opencode_bin"`
-	// DSH 后端：每模型共享进程池 + resume 插件（@bridge/dsh-jsonrpc-resume）。
-	NodeBin       string `json:"node_bin"`
-	DSHEntry      string `json:"dsh_entry"`
-	DSHProfile    string `json:"dsh_profile"`
-	DSHProvider   string `json:"dsh_provider"`
-	DSHModel      string `json:"dsh_model"`
-	DSHTimeout    int    `json:"dsh_timeout"`
-	DSHTTLSeconds int    `json:"dsh_ttl_seconds"`
-	DSHMaxWarm    int    `json:"dsh_max_warm"`
-	DSHHome       string `json:"dsh_home"`
-	OpenAIBaseURL           string   `json:"openai_base_url"`
-	OpenAIAPIKey            string   `json:"openai_api_key"`
-	OpenAITimeout           int      `json:"openai_timeout"`
-	OpenAIMaxRounds         int      `json:"openai_max_tool_rounds"`
-	ConversationsDir        string   `json:"conversations_dir"`
-	OpenAICompact           bool     `json:"openai_compact"`
-	OpenAICompactKeep       int      `json:"openai_compact_keep"`
-	OpenAICompactAfterTurns int      `json:"openai_compact_after_turns"`
-	OpenAICompactAfterRunes int      `json:"openai_compact_after_runes"`
-	SessionMode             string   `json:"session_mode"`
-	JobQueue                string   `json:"job_queue"`
-	SharedSessionKey        string   `json:"shared_session_key"`
-	AckPending              bool     `json:"ack_pending"`
-	MentionOnReply          bool     `json:"mention_on_reply"`
-	CommandsEnabled         bool     `json:"commands_enabled"`
-	InboundMode             string   `json:"inbound_mode"`
-	WebhookPath             string   `json:"webhook_path"`
-	Secret                  string   `json:"secret"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Group            string   `json:"group"`
+	SendMsgURL       string   `json:"send_msg_url"`
+	RoleID           string   `json:"role_id"`
+	ChannelKey       string   `json:"channel_key"`
+	Backend          string   `json:"backend"`
+	SystemPrompt     string   `json:"system_prompt"`
+	Skills           []string `json:"skills"`
+	Model            string   `json:"model"`
+	Workspace        string   `json:"workspace"`
+	AllowUsers       []string `json:"allow_users"`
+	AllowOpenIDs     []string `json:"allow_openids"`
+	CursorAPIKey     string   `json:"cursor_api_key"`
+	CursorBin        string   `json:"cursor_bin"`
+	CursorSandbox    string   `json:"cursor_sandbox"`
+	CursorForce      bool     `json:"cursor_force"`
+	CursorStream     bool     `json:"cursor_stream"`
+	CursorStreamPart bool     `json:"cursor_stream_partial"`
+	CursorTimeout    int      `json:"cursor_timeout"`
+	ClaudeBin        string   `json:"claude_bin"`
+	PermissionMode   string   `json:"permission_mode"`
+	AllowedTools     []string `json:"allowed_tools"`
+	MaxBudgetUSD     float64  `json:"max_budget_usd"`
+	OpenCodeBin      string   `json:"opencode_bin"`
+	// DSH 后端：dsh_mode=desktop 时用 DSH 桌面客户端自带 runtime（默认），
+	// cli 时保留旧 node + dsh 入口；其余字段为模型/池参数。
+	DSHMode                 string `json:"dsh_mode"`
+	DSHDesktopPath          string `json:"dsh_desktop_path"`
+	NodeBin                 string `json:"node_bin"`
+	DSHEntry                string `json:"dsh_entry"`
+	DSHProfile              string `json:"dsh_profile"`
+	DSHProvider             string `json:"dsh_provider"`
+	DSHModel                string `json:"dsh_model"`
+	DSHTimeout              int    `json:"dsh_timeout"`
+	DSHTTLSeconds           int    `json:"dsh_ttl_seconds"`
+	DSHMaxWarm              int    `json:"dsh_max_warm"`
+	DSHHome                 string `json:"dsh_home"`
+	OpenAIBaseURL           string `json:"openai_base_url"`
+	OpenAIAPIKey            string `json:"openai_api_key"`
+	OpenAITimeout           int    `json:"openai_timeout"`
+	OpenAIMaxRounds         int    `json:"openai_max_tool_rounds"`
+	ConversationsDir        string `json:"conversations_dir"`
+	OpenAICompact           bool   `json:"openai_compact"`
+	OpenAICompactKeep       int    `json:"openai_compact_keep"`
+	OpenAICompactAfterTurns int    `json:"openai_compact_after_turns"`
+	OpenAICompactAfterRunes int    `json:"openai_compact_after_runes"`
+	SessionMode             string `json:"session_mode"`
+	JobQueue                string `json:"job_queue"`
+	SharedSessionKey        string `json:"shared_session_key"`
+	AckPending              bool   `json:"ack_pending"`
+	MentionOnReply          bool   `json:"mention_on_reply"`
+	CommandsEnabled         bool   `json:"commands_enabled"`
+	InboundMode             string `json:"inbound_mode"`
+	WebhookPath             string `json:"webhook_path"`
+	Secret                  string `json:"secret"`
 	// yzj-cli 轮询入站（inbound_mode: yzj_cli）：只轮询已配置的群。
 	YzjGroupID      string   `json:"yzj_group_id"`
 	YzjGroupName    string   `json:"yzj_group_name"`
@@ -99,13 +102,13 @@ type ToolSpec struct {
 }
 
 type RunOpts struct {
-	Workspace      string
-	SessionID      string
-	Mode           string
-	Skills         []string
-	SkillPrompt    string
-	SkillTools     []ToolSpec
-	SkillDispatch  func(toolName, argsJSON, workspace string) string
+	Workspace     string
+	SessionID     string
+	Mode          string
+	Skills        []string
+	SkillPrompt   string
+	SkillTools    []ToolSpec
+	SkillDispatch func(toolName, argsJSON, workspace string) string
 	// MemoryPrompt is the user-profile appendix; backends append it after SkillPrompt.
 	MemoryPrompt   string
 	Model          string

@@ -18,12 +18,16 @@ defaults:
   claude_bin: "claude"                  # Windows 建议 claude.exe（勿用 claude.cmd）
   cursor_model: ""
   claude_model: ""
-  # DSH（DeepSeek Harness）JSON-RPC 后端：每模型一个共享进程池 + resume 插件。
-  # 前提：~/.dsh/profiles/jsonrpc 已部署（见 scripts/setup-dsh-profile.ps1 与 plugin/dsh-jsonrpc-resume/README.md）。
-  node_bin: "node"                    # node 可执行文件（或绝对路径）
-  dsh_entry: ""                       # DSH CLI 入口；留空自动从 ~/.dsh 定位 dsh 包 bin.js
-  dsh_profile: "jsonrpc"              # DSH profile 名
-  dsh_provider: "kuaidi100"           # LLM provider（settings.yaml 中配置，默认 kuaidi100）
+  # DSH（DeepSeek Harness）后端：默认直接用 DSH 桌面客户端自带 runtime。
+  # 桥会探测桌面客户端（注册表 / 常见安装目录），用其 Electron 作 node、app.asar 内 dsh，
+  # 并自动生成 ~/.dsh/profiles/yzj-sdk（复制桌面里的模型 provider 配置）。
+  # 只有没装桌面客户端时才用 cli 模式（独立 node + dsh 入口，旧 jsonrpc profile）。
+  dsh_mode: "desktop"                 # desktop（默认，DSH 桌面客户端）| cli（独立 node + dsh）
+  dsh_desktop_path: ""                # 桌面客户端目录或 exe；留空自动探测
+  node_bin: "node"                    # 仅 cli 模式：node 可执行文件（或绝对路径）
+  dsh_entry: ""                       # 仅 cli 模式：DSH bin.js 入口
+  dsh_profile: "jsonrpc"              # desktop 模式自动映射为 yzj-sdk；cli 模式默认 jsonrpc
+  dsh_provider: "kuaidi100"           # LLM provider（桌面客户端 profile 中配置）
   dsh_model: ""                       # 空=复用机器人 model，再空=deepseek-v4-flash
   dsh_timeout: 600                    # 单轮超时秒
   dsh_ttl_seconds: 300                # 池进程空闲回收秒

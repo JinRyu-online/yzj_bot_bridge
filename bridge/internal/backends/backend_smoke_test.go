@@ -95,14 +95,15 @@ func TestLiveBackendSmoke(t *testing.T) {
 				}
 				// dsh 无现成机器人时用默认配置合成（live 冒烟专用，仅当 YZJ_SMOKE=1 才会走到）。
 				cfg = bot.Config{
-					ID:             "smoke-live-dsh",
-					Backend:        "dsh",
-					DSHProfile:     "jsonrpc",
-					DSHProvider:    "kuaidi100",
-					DSHModel:       "",
-					DSHTimeout:     60,
-					DSHTTLSeconds:  300,
-					DSHMaxWarm:     3,
+					ID:            "smoke-live-dsh",
+					Backend:       "dsh",
+					DSHMode:       "desktop",
+					DSHProfile:    "",
+					DSHProvider:   "kuaidi100",
+					DSHModel:      "",
+					DSHTimeout:    60,
+					DSHTTLSeconds: 300,
+					DSHMaxWarm:    3,
 				}
 			}
 			liveSmoke(t, cfg)
@@ -214,6 +215,7 @@ func smokeDSH(t *testing.T, stubEntry, ws string) {
 	cfg := bot.Config{
 		ID:            "smoke-dsh",
 		Backend:       "dsh",
+		DSHMode:       "cli",
 		NodeBin:       resolveNodeBin(""),
 		DSHEntry:      stubEntry,
 		DSHProfile:    "jsonrpc",
@@ -432,19 +434,17 @@ func canonicalBackend(name string) string {
 
 // dshLiveReady 判断 live 冒烟所需环境：node 可执行、dsh 入口可解析、profile 目录存在。
 func dshLiveReady(cfg bot.Config) bool {
-	if _, err := exec.LookPath(resolveNodeBin(cfg.NodeBin)); err != nil {
+	// desktop 模式：桌面客户端 + 自动生成的 SDK profile 任一缺失都不跑 live 冒烟。
+	// cli 模式：保留旧 node + 入口检查。
+	if rt, err := resolveDSHRuntime(cfg); err != nil {
 		return false
-	}
-	entry := resolveDSHEntry(cfg)
-	if entry == "" {
-		return false
-	}
-	if st, err := os.Stat(entry); err != nil || st.IsDir() {
-		return false
-	}
-	profile := filepath.Join(dshHome(cfg), "profiles", firstNonEmptyStr(cfg.DSHProfile, "jsonrpc"))
-	if st, err := os.Stat(profile); err != nil || !st.IsDir() {
-		return false
+	} else if !rt.Desktop {
+		if _, err := exec.LookPath(resolveNodeBin(cfg.NodeBin)); err != nil {
+			return false
+		}
+		if st, err := os.Stat(rt.Entry); err != nil || st.IsDir() {
+			return false
+		}
 	}
 	return true
 }

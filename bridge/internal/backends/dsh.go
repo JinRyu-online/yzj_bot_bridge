@@ -39,8 +39,10 @@ func (d *DSH) ClearSession(sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if p := dshPoolGet(d.poolKey(d.resolveProvider(), d.resolveModel(""))); p != nil {
-		p.evictSession(sessionID)
+	if rt, err := resolveDSHRuntime(d.cfg); err == nil {
+		if p := dshPoolGet(rt.key(d.resolveProvider(), d.resolveModel(""))); p != nil {
+			p.evictSession(sessionID)
+		}
 	}
 	return sid, nil
 }
@@ -93,7 +95,11 @@ func (d *DSH) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 	ctx, cancel := withRunTimeout(opts, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	key := d.poolKey(provider, model)
+	runtime, err := resolveDSHRuntime(d.cfg)
+	if err != nil {
+		return bot.RunResult{Reply: "启动 dsh 失败: " + err.Error(), Status: "agent_missing"}
+	}
+	key := runtime.key(provider, model)
 	proc, err := dshPoolGetOrCreate(key, d.cfg, provider, model)
 	if err != nil {
 		return bot.RunResult{Reply: "启动 dsh 失败: " + err.Error(), Status: "agent_missing"}
@@ -119,8 +125,11 @@ func (d *DSH) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 			return bot.RunResult{Reply: err.Error(), Status: "error", SessionID: sessionID}
 		}
 		defer unsub()
+		if err := proc.setWorkingDir(sessionID, opts.Workspace); err != nil {
+			return d.dshErrResult(err, sessionID)
+		}
 		if _, err := proc.call("session/prompt", map[string]any{
-			"sessionId": sessionID, "cwd": opts.Workspace, "contentBlocks": contentBlocks,
+			"sessionId": sessionID, "contentBlocks": contentBlocks,
 		}, dshCallTimeout); err != nil {
 			return d.dshErrResult(err, sessionID)
 		}
@@ -129,27 +138,37 @@ func (d *DSH) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		return res
 	}
 
-	// 未知 sid：先 session/resume 冷载（从磁盘 header 恢复 cwd，无需参数）。
+	// 未知 sid：先 session/resume 冷载（官方 0.2.x 已内置 resume，无 contentBlocks）。
 	ch, unsub, err := proc.subscribe(sessionID)
 	if err != nil {
 		return bot.RunResult{Reply: err.Error(), Status: "error", SessionID: sessionID}
 	}
 	defer unsub()
-	_, err = proc.call("session/resume", map[string]any{
-		"sessionId": sessionID, "contentBlocks": contentBlocks,
-	}, dshCallTimeout)
-	if err == nil {
+	_, resumeErr := proc.call("session/resume", map[string]any{"sessionId": sessionID}, dshCallTimeout)
+	if resumeErr == nil {
 		proc.markKnown(sessionID)
+		if err := proc.setWorkingDir(sessionID, opts.Workspace); err != nil {
+			return d.dshErrResult(err, sessionID)
+		}
+		if _, err := proc.call("session/prompt", map[string]any{
+			"sessionId": sessionID, "contentBlocks": contentBlocks,
+		}, dshCallTimeout); err != nil {
+			return d.dshErrResult(err, sessionID)
+		}
 		res := d.collectReply(ctx, proc, ch, sessionID)
 		d.persist(sessionID, opts, hasKey, entryKey)
 		return res
 	}
-	// 仅 not-found 回退 session/prompt 创建（cwd 参数此时生效）；其他错误直接上报。
-	if !strings.Contains(err.Error(), "not found") {
+	// 仅“会话不存在”回退创建；其他错误（磁盘格式不兼容等）直接上报，避免静默丢上下文。
+	if !dshSessionMissing(resumeErr) {
+		return d.dshErrResult(resumeErr, sessionID)
+	}
+	// 新会话：先 set working directory（创建 session 并烘焙 cwd），再 prompt。
+	if err := proc.setWorkingDir(sessionID, opts.Workspace); err != nil {
 		return d.dshErrResult(err, sessionID)
 	}
 	if _, err := proc.call("session/prompt", map[string]any{
-		"sessionId": sessionID, "cwd": opts.Workspace, "contentBlocks": contentBlocks,
+		"sessionId": sessionID, "contentBlocks": contentBlocks,
 	}, dshCallTimeout); err != nil {
 		return d.dshErrResult(err, sessionID)
 	}
@@ -183,15 +202,14 @@ func (d *DSH) resolveProvider() string {
 	return p
 }
 
-// poolKey 计算该 bot 命中的池键（provider|model|profile|nodeBin|dshEntry）。
-func (d *DSH) poolKey(provider, model string) dshPoolKey {
-	return dshPoolKey{
-		Provider: provider,
-		Model:    model,
-		Profile:  firstNonEmptyStr(d.cfg.DSHProfile, "jsonrpc"),
-		NodeBin:  resolveNodeBin(d.cfg.NodeBin),
-		DSHEntry: resolveDSHEntry(d.cfg),
+// dshSessionMissing 判断 resume 失败是否只是“会话不存在”。
+// 官方 0.2.x 抛 `unknown SDK session: ...`，旧版/磁盘缺失可能是 not found。
+func dshSessionMissing(err error) bool {
+	if err == nil {
+		return false
 	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unknown sdk session") || strings.Contains(msg, "not found") || strings.Contains(msg, "no such session")
 }
 
 // collectReply 订阅事件流直至本 turn 结束（turn/end）或超时/进程退出，提取 assistant text。

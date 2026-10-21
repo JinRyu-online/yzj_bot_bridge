@@ -29,10 +29,12 @@ type dshPoolKey struct {
 	Profile  string
 	NodeBin  string
 	DSHEntry string
+	// ElectronAsNode 为 true 时用桌面客户端 Electron 二进制以 ELECTRON_RUN_AS_NODE=1 充当 node。
+	ElectronAsNode bool
 }
 
 func (k dshPoolKey) String() string {
-	return strings.Join([]string{k.Provider, k.Model, k.Profile, k.NodeBin, k.DSHEntry}, "|")
+	return strings.Join([]string{k.Provider, k.Model, k.Profile, k.NodeBin, k.DSHEntry, fmt.Sprint(k.ElectronAsNode)}, "|")
 }
 
 // dshRPCError 是 JSON-RPC error 对象（服务端错误响应）。
@@ -78,8 +80,8 @@ type dshProc struct {
 	mu         sync.Mutex
 	dead       bool
 	deadCh     chan struct{}
-	known      map[string]bool                 // sessionId 是否在本进程内有活会话
-	inflight   map[string]bool                 // sessionId 是否有未结束的 turn
+	known      map[string]bool // sessionId 是否在本进程内有活会话
+	inflight   map[string]bool // sessionId 是否有未结束的 turn
 	lastActive time.Time
 	nextID     int64
 	pending    map[int64]chan *dshFrame
@@ -144,6 +146,18 @@ func dshPoolGet(key dshPoolKey) *dshProc {
 	return nil
 }
 
+// setWorkingDir 设置会话级工作目录（官方 0.2.x session/prompt 不再接受 cwd；
+// 新会话首次调用会创建 session 并把 cwd 烘焙进 header）。
+func (p *dshProc) setWorkingDir(sessionID, cwd string) error {
+	if strings.TrimSpace(cwd) == "" {
+		return nil
+	}
+	_, err := p.call("session/working-directory/set", map[string]any{
+		"sessionId": sessionID, "path": cwd,
+	}, dshCallTimeout)
+	return err
+}
+
 // spawnDshProc 启动 node 直调 bin.js + 握手 initialize。失败视为 spawn 失败（进程已清理）。
 func spawnDshProc(key dshPoolKey, cfg bot.Config, provider, model string) (*dshProc, error) {
 	// 中性工作目录：非任何 bot workspace，session 的 cwd 由协议参数（header.cwd）决定。
@@ -156,6 +170,9 @@ func spawnDshProc(key dshPoolKey, cfg bot.Config, provider, model string) (*dshP
 	cmd.Dir = neutral
 	env := os.Environ()
 	env = append(env, "DSH_PERMISSION_MODE=danger-full-access")
+	if key.ElectronAsNode {
+		env = append(env, "ELECTRON_RUN_AS_NODE=1")
+	}
 	if home := strings.TrimSpace(cfg.DSHHome); home != "" {
 		env = append(env, "DSH_HOME="+home)
 	}

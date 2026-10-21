@@ -1066,6 +1066,8 @@ function App() {
     claude_model: "",
     openai_model: "",
     node_bin: "node",
+    dsh_mode: "desktop",
+    dsh_desktop_path: "",
     dsh_entry: "",
     dsh_model: "",
     memory_enabled: false,
@@ -1669,6 +1671,8 @@ function App() {
       claude_model: String(defaults.claude_model || ""),
       openai_model: String(defaults.openai_model || ""),
       node_bin: pick("node_bin", "node"),
+      dsh_mode: pick("dsh_mode", "desktop"),
+      dsh_desktop_path: String(defaults.dsh_desktop_path || ""),
       dsh_entry: String(defaults.dsh_entry || ""),
       dsh_model: String(defaults.dsh_model || ""),
       memory_enabled: Boolean(
@@ -2481,6 +2485,8 @@ function App() {
         defaults.claude_model = cliForm.claude_model.trim();
         defaults.openai_model = cliForm.openai_model.trim();
         defaults.node_bin = cliForm.node_bin.trim() || "node";
+        defaults.dsh_mode = cliForm.dsh_mode === "cli" ? "cli" : "desktop";
+        defaults.dsh_desktop_path = cliForm.dsh_desktop_path.trim();
         defaults.dsh_entry = cliForm.dsh_entry.trim();
         // dsh_profile/dsh_provider/dsh_timeout/dsh_ttl_seconds/dsh_max_warm/dsh_home 不再由 GUI 编辑，
         // 通过上面展开 defaults 自然保留 config.yaml 中的既有值（后端仍读取）。
@@ -2897,9 +2903,42 @@ function App() {
                   DSH（DeepSeek Harness）
                 </h3>
                 <p className="group-desc">
-                  每模型一个共享进程池 + resume 插件；node 直调 bin.js，工作目录按会话隔离
+                  默认直接使用 DSH 桌面客户端（DeepSeek Harness）自带 runtime，无需另装 node/dsh；
+                  cli 模式才使用下面的 node + dsh 入口
                 </p>
                 <div className="form-grid">
+                  <div className="field">
+                    <span className="field-label">运行方式 dsh_mode</span>
+                    <FancySelect
+                      testId="dsh-mode"
+                      className="form-select"
+                      value={cliForm.dsh_mode}
+                      options={[
+                        { id: "desktop", label: "desktop（DSH 桌面客户端，推荐）" },
+                        { id: "cli", label: "cli（独立 node + dsh 入口）" },
+                      ]}
+                      onChange={(v) => setCliForm({ ...cliForm, dsh_mode: v })}
+                    />
+                  </div>
+                  {cliForm.dsh_mode === "desktop" ? (
+                    <label className="full">
+                      DSH 桌面客户端路径（dsh_desktop_path，可留空自动探测）
+                      <input
+                        data-testid="dsh-desktop-path"
+                        value={cliForm.dsh_desktop_path}
+                        onChange={(e) =>
+                          setCliForm({ ...cliForm, dsh_desktop_path: e.target.value })
+                        }
+                        placeholder="留空自动从注册表 / 常见安装目录查找 DeepSeek Harness"
+                      />
+                      <span className="field-hint">
+                        将使用桌面客户端的 Electron 作 node、app.asar 内的 dsh runtime，并自动生成
+                        yzj-sdk profile（复制桌面里的模型 provider 配置）
+                      </span>
+                    </label>
+                  ) : null}
+                  {cliForm.dsh_mode === "cli" ? (
+                    <>
                   <label className="full">
                     DSH CLI 入口（dsh_entry）
                     <div className="inline-field cli-bin-row">
@@ -2992,6 +3031,8 @@ function App() {
                       </FadingHint>
                     ) : null}
                   </label>
+                    </>
+                  ) : null}
                   <div className="field">
                     <span className="field-label">默认模型</span>
                     <div className="inline-field">

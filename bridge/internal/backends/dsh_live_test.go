@@ -64,9 +64,9 @@ func liveDSHBase(id string) bot.Config {
 	return bot.Config{
 		ID:            id,
 		Backend:       "dsh",
-		DSHProfile:    "jsonrpc",
+		DSHMode:       "desktop",
 		DSHProvider:   "kuaidi100",
-		DSHModel:      "deepseek-v4-flash",
+		DSHModel:      "deepseek-flash",
 		DSHTimeout:    120,
 		DSHTTLSeconds: 60,
 		DSHMaxWarm:    3,
@@ -238,7 +238,11 @@ func liveDSHTTLReap(t *testing.T, cfg bot.Config) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	d := be.(*DSH)
-	key := d.poolKey(d.resolveProvider(), d.resolveModel(""))
+	rt, rtErr := resolveDSHRuntime(d.cfg)
+	if rtErr != nil {
+		t.Fatalf("resolveDSHRuntime: %v", rtErr)
+	}
+	key := rt.key(d.resolveProvider(), d.resolveModel(""))
 	got := liveRunOK(t, be, "只回复 pong", ws, sid)
 	if !strings.Contains(got.Reply, "pong") {
 		t.Fatalf("回复不含 pong: %q", got.Reply)

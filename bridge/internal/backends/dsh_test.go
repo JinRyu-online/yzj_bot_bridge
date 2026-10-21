@@ -133,6 +133,7 @@ func TestDSHThinkingLogged(t *testing.T) {
 	cfg := bot.Config{
 		ID:            "thinking-dsh",
 		Backend:       "dsh",
+		DSHMode:       "cli",
 		NodeBin:       resolveNodeBin(""),
 		DSHEntry:      dshStubPath(t),
 		DSHProfile:    "jsonrpc",

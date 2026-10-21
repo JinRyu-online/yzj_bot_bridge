@@ -4,6 +4,15 @@
 
 ---
 
+## Unreleased（yzj-cli 轮询入站 + DSH 桌面客户端 runtime）
+
+### DSH 后端改为使用 DSH 桌面客户端
+- `dsh_mode: desktop`（默认）：自动探测本机 DeepSeek Harness 桌面客户端，用它的 Electron 以 `ELECTRON_RUN_AS_NODE=1` 作 node、`app.asar` 内自带 dsh runtime 启动官方 SDK JSON-RPC server；不再要求单独安装 node / dsh CLI。
+- 桥自动生成并维护 `~/.dsh/profiles/yzj-sdk` profile：复制桌面客户端 `profiles/desktop/cordis.patch.yml` 里的模型 provider 配置，只把 app 层换成 `@deepseek-ai/dsh-sdk-jsonrpc-server`（官方 0.2.1 已内置 `session/resume`，不再使用 `@bridge/dsh-jsonrpc-resume`）。
+- 适配官方 0.2.1 协议：`session/prompt` 不再带 `cwd`（改用 `session/working-directory/set` 按会话设置工作目录）、`session/resume` 不再带 contentBlocks、`turn/end` reason 对象解析。
+- 无桌面客户端时自动回退旧 `cli` 模式（`dsh_entry` + `node_bin`），保留兼容。
+- GUI「AI 设置 → DSH」新增运行方式（desktop/cli）与桌面客户端路径；desktop 模式隐藏 CLI 入口/Node 字段。
+
 ## Unreleased（yzj-cli 轮询入站）
 
 ### 新功能
