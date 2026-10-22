@@ -60,6 +60,13 @@ func (d *DSH) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		e := d.store.GetEntry(d.cfg.ID, entryKey)
 		sessionID = e.Current
 		prevCWD = e.AgentCWD
+		if sessions.NeedsIdleReset(d.cfg.SessionIdleResetHours, e.LastUsedAt, time.Now()) {
+			log.Printf("bot=%s dsh: idle reset old_session=%s hours=%d", d.cfg.ID, e.Current, d.cfg.SessionIdleResetHours)
+			d.store.ClearSession(d.cfg.ID, entryKey)
+			_ = d.store.Save()
+			sessionID = ""
+			prevCWD = ""
+		}
 	}
 	if prevCWD != "" && opts.Workspace != "" && filepath.Clean(prevCWD) != filepath.Clean(opts.Workspace) {
 		sessionID = ""

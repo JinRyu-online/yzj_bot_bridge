@@ -89,6 +89,7 @@ type BotForm = {
   skills: string[];
   inbound_mode: string;
   session_mode: string;
+  session_idle_reset_hours: string;
   workspace: string;
   yzj_group_id: string;
   yzj_group_name: string;
@@ -691,6 +692,7 @@ function emptyBotForm(): BotForm {
     skills: [],
     inbound_mode: "websocket",
     session_mode: "shared",
+    session_idle_reset_hours: "3",
     workspace: defaultBotWorkspace(""),
     yzj_group_id: "",
     yzj_group_name: "",
@@ -2347,6 +2349,11 @@ function App() {
           (rawConfig?.defaults as Record<string, unknown> | undefined)?.session_mode ||
           "shared",
       ),
+      session_idle_reset_hours: String(
+        selectedRoleConfig.session_idle_reset_hours ??
+          (rawConfig?.defaults as Record<string, unknown> | undefined)?.session_idle_reset_hours ??
+          3,
+      ),
       workspace: String(selectedRoleConfig.workspace || "").trim() || defaultBotWorkspace(botId),
     });
     setBotWorkspaceTouched(true);
@@ -2466,6 +2473,7 @@ function App() {
       backend: botForm.backend,
       inbound_mode: botForm.inbound_mode,
       session_mode: botForm.session_mode,
+      session_idle_reset_hours: Math.max(0, Math.trunc(Number(botForm.session_idle_reset_hours) || 0)),
       system_prompt: botForm.system_prompt,
       workspace: botForm.workspace.trim() || defaultBotWorkspace(botForm.id),
       skills: botForm.skills,
@@ -4403,6 +4411,22 @@ function App() {
                   value={botForm.session_mode}
                   options={sessionModeOptions}
                   onChange={(v) => setBotForm({ ...botForm, session_mode: v })}
+                />
+              </div>
+              <div className="field">
+                <FieldLabel tip="同一会话超过 N 小时没有请求时，下一次请求自动开新会话；0 表示关闭">
+                  空闲重置（小时）
+                </FieldLabel>
+                <input
+                  data-testid="bot-session-idle-reset"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={botForm.session_idle_reset_hours}
+                  onChange={(e) =>
+                    setBotForm({ ...botForm, session_idle_reset_hours: e.target.value })
+                  }
+                  placeholder="3"
                 />
               </div>
               {botModal === "create" || !Array.isArray(selectedRoleConfig?.channels) ? (

@@ -47,6 +47,7 @@ func defaultMap() map[string]any {
 		"node_bin": "node", "dsh_entry": "", "dsh_profile": "jsonrpc",
 		"dsh_provider": "kuaidi100", "dsh_model": "", "dsh_reasoning_effort": "", "dsh_timeout": 600,
 		"dsh_ttl_seconds": 300, "dsh_max_warm": 3, "dsh_home": "",
+		"session_idle_reset_hours": 3,
 		"memory": map[string]any{
 			"enabled": false, "after_turns": 8, "idle_sec": 1800,
 			"appendix_runes": 800, "style_runes": 400, "donts_max": 8,
@@ -389,6 +390,7 @@ func mapToBotConfig(m map[string]any, id, roleID, group, sendURL, modelOverride 
 		OpenAICompactAfterTurns: asInt(m["openai_compact_after_turns"], 0),
 		OpenAICompactAfterRunes: asInt(m["openai_compact_after_runes"], 0),
 		SessionMode:             firstNonEmpty(asString(m["session_mode"]), "shared"),
+		SessionIdleResetHours:   asInt(m["session_idle_reset_hours"], 3),
 		JobQueue:                strings.ToLower(strings.TrimSpace(asString(m["job_queue"]))),
 		SharedSessionKey:        firstNonEmpty(asString(m["shared_session_key"]), "__shared__"),
 		AckPending:              asBool(m["ack_pending"], true), MentionOnReply: asBool(m["mention_on_reply"], true),

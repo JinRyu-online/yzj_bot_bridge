@@ -134,3 +134,41 @@ func TestSetChatIDFillsEmptySessionDay(t *testing.T) {
 		t.Fatalf("empty day should stamp today %+v", got)
 	}
 }
+func TestNeedsIdleReset(t *testing.T) {
+	now := time.Now()
+	if NeedsIdleReset(3, 0, now) {
+		t.Fatal("legacy entry without last_used_at must not reset")
+	}
+	if NeedsIdleReset(0, now.Add(-10*time.Hour).UnixMilli(), now) {
+		t.Fatal("hours=0 must disable idle reset")
+	}
+	if !NeedsIdleReset(3, now.Add(-3*time.Hour-time.Minute).UnixMilli(), now) {
+		t.Fatal("idle > 3h must reset")
+	}
+	if NeedsIdleReset(3, now.Add(-2*time.Hour).UnixMilli(), now) {
+		t.Fatal("idle < 3h must not reset")
+	}
+}
+
+func TestSetChatIDStampsLastUsedAtAndPersists(t *testing.T) {
+	st, err := Open(t.TempDir() + "/idle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SetChatID("bot", "u1", "chat-1", "n")
+	got := st.GetEntry("bot", "u1")
+	if got.LastUsedAt == 0 {
+		t.Fatal("SetChatID must stamp last_used_at")
+	}
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+	st2, err := Open(st.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2 := st2.GetEntry("bot", "u1")
+	if got2.LastUsedAt != got.LastUsedAt {
+		t.Fatalf("last_used_at not persisted: %d != %d", got2.LastUsedAt, got.LastUsedAt)
+	}
+}

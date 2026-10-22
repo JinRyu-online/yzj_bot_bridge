@@ -74,8 +74,10 @@ func (c *Cursor) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		e := c.store.GetEntry(c.cfg.ID, key)
 		sessionID = e.Current
 		today := sessions.LocalSessionDay(time.Now())
-		if sessions.NeedsDailyReset(c.cfg.CursorDailyReset, e.SessionDay, today) {
-			log.Printf("bot=%s cursor: daily reset old_chat=%s session_day=%s", c.cfg.ID, e.Current, e.SessionDay)
+		daily := sessions.NeedsDailyReset(c.cfg.CursorDailyReset, e.SessionDay, today)
+		idle := sessions.NeedsIdleReset(c.cfg.SessionIdleResetHours, e.LastUsedAt, time.Now())
+		if daily || idle {
+			log.Printf("bot=%s cursor: reset old_chat=%s daily=%v idle=%v", c.cfg.ID, e.Current, daily, idle)
 			c.store.ClearSession(c.cfg.ID, key)
 			_ = c.store.Save()
 			sessionID = ""

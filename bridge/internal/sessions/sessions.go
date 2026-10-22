@@ -49,6 +49,8 @@ type Entry struct {
 	OpenAICompact CompactState  `json:"openai_compact,omitempty"`
 	// SessionDay is the local calendar day (2006-01-02) when Current was created.
 	SessionDay string `json:"session_day,omitempty"`
+	// LastUsedAt is Unix milliseconds of the last completed request for this session.
+	LastUsedAt int64 `json:"last_used_at,omitempty"`
 }
 
 // LocalSessionDay formats t as a local calendar day key.
@@ -60,6 +62,15 @@ func LocalSessionDay(t time.Time) string {
 // Empty sessionDay (legacy entries) never resets until stamped.
 func NeedsDailyReset(enabled bool, sessionDay, today string) bool {
 	return enabled && sessionDay != "" && sessionDay != today
+}
+
+// NeedsIdleReset is true when the session has been idle longer than hours.
+// hours <= 0 disables the check; a legacy entry without LastUsedAt never resets.
+func NeedsIdleReset(hours int, lastUsedAt int64, now time.Time) bool {
+	if hours <= 0 || lastUsedAt <= 0 {
+		return false
+	}
+	return now.Sub(time.UnixMilli(lastUsedAt)) > time.Duration(hours)*time.Hour
 }
 
 type Store struct {
@@ -165,6 +176,7 @@ func entryFromAny(v any) Entry {
 			AgentCWD:      asStr(t["agent_cwd"]),
 			OpenAICompact: compactFromAny(t["openai_compact"]),
 			SessionDay:    asStr(t["session_day"]),
+			LastUsedAt:    asInt64(t["last_used_at"]),
 		}
 		if e.Current == "" {
 			e.Current = asStr(t["chat_id"])
@@ -209,6 +221,7 @@ func (s *Store) SetChatID(botID, userKey, chatID, name string) {
 	e := entryFromAny(users[userKey])
 	changed := e.Current != chatID
 	e.Current = chatID
+	e.LastUsedAt = time.Now().UnixMilli()
 	if name != "" {
 		e.Name = name
 	}
@@ -230,6 +243,7 @@ func (s *Store) ClearSession(botID, userKey string) {
 	}
 	e.Current = ""
 	e.SessionDay = ""
+	e.LastUsedAt = 0
 	e.OpenAICompact = CompactState{}
 	users[userKey] = e
 }
@@ -320,6 +334,20 @@ func sanitize(s string) string {
 		return "x"
 	}
 	return string(b)
+}
+
+func asInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	case int32:
+		return int64(n)
+	}
+	return 0
 }
 
 func asStr(v any) string {

@@ -1082,6 +1082,7 @@ test("机器人：yzj-cli 轮询字段与未登录提示", async ({ page }) => {
 
   await page.getByTestId("nav-bots").click();
   await page.getByTestId("create-bot").click();
+  await expect(page.getByTestId("bot-session-idle-reset")).toHaveValue("3");
   await page.getByTestId("bot-inbound").locator(".fancy-select-trigger").click();
   await page
     .getByTestId("bot-inbound-menu")

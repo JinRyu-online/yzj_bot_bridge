@@ -62,6 +62,13 @@ func (c *Claude) Run(prompt string, opts bot.RunOpts) bot.RunResult {
 		e := c.store.GetEntry(c.cfg.ID, entryKey)
 		sessionID = e.Current
 		prevCWD = e.AgentCWD
+		if sessions.NeedsIdleReset(c.cfg.SessionIdleResetHours, e.LastUsedAt, time.Now()) {
+			log.Printf("bot=%s claude: idle reset old_session=%s hours=%d", c.cfg.ID, e.Current, c.cfg.SessionIdleResetHours)
+			c.store.ClearSession(c.cfg.ID, entryKey)
+			_ = c.store.Save()
+			sessionID = ""
+			prevCWD = ""
+		}
 	}
 	if prevCWD != "" && opts.Workspace != "" && filepath.Clean(prevCWD) != filepath.Clean(opts.Workspace) {
 		sessionID = ""

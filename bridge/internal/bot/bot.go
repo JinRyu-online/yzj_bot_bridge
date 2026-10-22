@@ -58,6 +58,7 @@ type Config struct {
 	OpenAICompactAfterTurns int    `json:"openai_compact_after_turns"`
 	OpenAICompactAfterRunes int    `json:"openai_compact_after_runes"`
 	SessionMode             string `json:"session_mode"`
+	SessionIdleResetHours   int    `json:"session_idle_reset_hours"`
 	JobQueue                string `json:"job_queue"`
 	SharedSessionKey        string `json:"shared_session_key"`
 	AckPending              bool   `json:"ack_pending"`

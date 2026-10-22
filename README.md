@@ -134,6 +134,7 @@ bots:
 - `bots[].skills`：已安装 Skill 的 id 白名单（跨 OpenAI / Cursor / Claude）
 - `inbound_mode`: `websocket` | `webhook` | `both` | `yzj_cli`（轮询，仅配置群）
 - 会话：`session_mode` 为 `shared`（默认，同通道共享上下文且通道内排队）| `per_user`（按人隔离）| `oneshot`
+- 会话空闲重置：`session_idle_reset_hours` 默认 `3`，同一会话超过该小时数没有请求则下次自动新开；`0` 关闭
 - `cursor_daily_reset`（默认 true）：Cursor CLI 按本机自然日懒重置 `--resume` 会话；字段与判断见 [`sessions.NeedsDailyReset`](bridge/internal/sessions/sessions.go) / [`Cursor.Run`](bridge/internal/backends/cursor.go)
 - **工作目录**：仅 `bots[].workspace`；留空自动补全为 `~/.yzj-bridge/workspace/{roleID}`；旧版 `defaults.workspace` / `cursor_workspace` / `claude_workspace` 仍可读作兼容
 - **GUI 聊天测试**（侧栏「聊天」页）始终按 `gui-chat:{sessionId}` 独立 agent 上下文，**不受** `session_mode` 影响，与云之家群聊隔离；详见 [docs/chat-test.md](docs/chat-test.md)
