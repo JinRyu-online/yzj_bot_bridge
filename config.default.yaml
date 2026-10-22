@@ -30,6 +30,7 @@ defaults:
   dsh_profile: "jsonrpc"              # headless 自动映射 yzj-headless，sdk 自动映射 yzj-sdk；cli 模式默认 jsonrpc
   dsh_provider: "kuaidi100"           # LLM provider（桌面客户端 profile 中配置）
   dsh_model: ""                       # 空=复用机器人 model，再空=deepseek-v4-flash
+  dsh_reasoning_effort: ""            # DSH 思考强度：空=模型默认 | low | medium | high
   dsh_timeout: 600                    # 单轮超时秒
   dsh_ttl_seconds: 300                # 池进程空闲回收秒
   dsh_max_warm: 3                     # 池进程硬上限（超出按 LRU 提前回收）

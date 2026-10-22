@@ -1199,6 +1199,7 @@ function App() {
     dsh_desktop_path: "",
     dsh_entry: "",
     dsh_model: "",
+    dsh_reasoning_effort: "",
     memory_enabled: false,
     memory_gui_bind_enabled: false,
   });
@@ -1873,6 +1874,7 @@ function App() {
       dsh_desktop_path: String(defaults.dsh_desktop_path || ""),
       dsh_entry: String(defaults.dsh_entry || ""),
       dsh_model: String(defaults.dsh_model || ""),
+      dsh_reasoning_effort: String(defaults.dsh_reasoning_effort || ""),
       memory_enabled: Boolean(
         ((defaults.memory as Record<string, unknown> | undefined)?.enabled ?? false) === true,
       ),
@@ -2738,6 +2740,7 @@ function App() {
         // dsh_profile/dsh_provider/dsh_timeout/dsh_ttl_seconds/dsh_max_warm/dsh_home 不再由 GUI 编辑，
         // 通过上面展开 defaults 自然保留 config.yaml 中的既有值（后端仍读取）。
         defaults.dsh_model = cliForm.dsh_model.trim();
+        defaults.dsh_reasoning_effort = cliForm.dsh_reasoning_effort.trim();
         const prevMem = {
           ...(((defaults.memory as Record<string, unknown> | undefined) || {}) as Record<
             string,
@@ -3342,6 +3345,24 @@ function App() {
                         {dshModelsHint}
                       </span>
                     ) : null}
+                  </div>
+                  <div className="field">
+                    <span className="field-label">思考强度</span>
+                    <FancySelect
+                      testId="dsh-reasoning-effort"
+                      className="form-select"
+                      value={cliForm.dsh_reasoning_effort}
+                      options={[
+                        { id: "", label: "默认（由模型决定）" },
+                        { id: "low", label: "低 low" },
+                        { id: "medium", label: "中 medium" },
+                        { id: "high", label: "高 high" },
+                      ]}
+                      onChange={(v) => setCliForm({ ...cliForm, dsh_reasoning_effort: v })}
+                    />
+                    <span className="field-hint">
+                      仅对 DSH 生效；high 思考更充分但更慢、更耗 token。不支持的模型会由 DSH 报错。
+                    </span>
                   </div>
                 </div>
               </div>

@@ -43,6 +43,7 @@ type Config struct {
 	DSHProfile              string `json:"dsh_profile"`
 	DSHProvider             string `json:"dsh_provider"`
 	DSHModel                string `json:"dsh_model"`
+	DSHReasoningEffort      string `json:"dsh_reasoning_effort"`
 	DSHTimeout              int    `json:"dsh_timeout"`
 	DSHTTLSeconds           int    `json:"dsh_ttl_seconds"`
 	DSHMaxWarm              int    `json:"dsh_max_warm"`

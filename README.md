@@ -110,6 +110,8 @@ bots:
 | `cursor_model` | Cursor CLI 默认模型 |
 | `claude_model` | Claude Code 默认模型 |
 | `openai_model` | OpenAI 兼容默认模型 |
+| `dsh_model` | DSH 默认模型（空则按 DSH 默认） |
+| `dsh_reasoning_effort` | DSH 思考强度：空=模型默认 / `low` / `medium` / `high`；也可在 AI 设置里选 |
 
 机器人 / 通道上的 `model` 仅作该实体覆盖，不会再把某一引擎的默认值串写到其它引擎。
 

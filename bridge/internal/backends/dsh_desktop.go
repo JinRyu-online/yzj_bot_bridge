@@ -253,6 +253,7 @@ func desktopBaseEntries(cfg bot.Config) ([]map[string]any, error) {
 	if err := ensureProviderModel(kept, cfg); err != nil {
 		return nil, err
 	}
+	applyDSHAgentReasoning(kept, cfg)
 	return kept, nil
 }
 
@@ -343,6 +344,7 @@ func ensureProviderModel(entries []map[string]any, cfg bot.Config) error {
 		}
 		models = append(models, map[string]any{"id": id, "name": id, "input": input})
 	}
+	applyDSHModelReasoning(models, cfg.DSHReasoningEffort)
 	prov["models"] = models
 	return nil
 }

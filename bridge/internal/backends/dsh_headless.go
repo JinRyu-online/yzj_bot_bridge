@@ -216,17 +216,14 @@ func (d *DSH) execHeadless(ctx context.Context, rt dshRuntime, overlay, sid, wor
 // headlessOverlay 生成 --patch 覆盖文件，把本轮 provider/model 固定下来。
 func (d *DSH) headlessOverlay(provider, model string) (string, error) {
 	entries := []map[string]any{{
-		"id": "agent-default-model",
-		"config": map[string]any{
-			"provider": provider,
-			"model":    model,
-		},
+		"id":     "agent-default-model",
+		"config": dshAgentModelConfig(provider, model, d.cfg.DSHReasoningEffort),
 	}}
 	data, err := yaml.Marshal(entries)
 	if err != nil {
 		return "", err
 	}
-	sum := sha1.Sum([]byte(provider + "|" + model))
+	sum := sha1.Sum([]byte(provider + "|" + model + "|" + normalizeDSHReasoningEffort(d.cfg.DSHReasoningEffort)))
 	path := filepath.Join(paths.UserDataDir(), "dsh-headless", fmt.Sprintf("overlay-%x.yml", sum[:8]))
 	if err := writeFileIfChanged(path, data, 0o644); err != nil {
 		return "", err

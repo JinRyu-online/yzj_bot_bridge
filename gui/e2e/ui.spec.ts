@@ -1060,10 +1060,18 @@ test("AI 设置：DSH 精简卡片（desktop/cli 切换、入口/Node/模型）�
   await expect(dshMenu.getByRole("option", { name: "DeepSeek-V4-Flash" })).toBeVisible();
   await dshMenu.getByRole("option", { name: "DeepSeek-V4-Flash" }).click();
 
-  // 保存 → 回读保留 dsh_mode=cli 与 dsh_model。
+  await expect(page.getByTestId("dsh-reasoning-effort")).toBeVisible();
+  await page.getByTestId("dsh-reasoning-effort").locator(".fancy-select-trigger").click();
+  await page
+    .getByTestId("dsh-reasoning-effort-menu")
+    .getByRole("option", { name: "高 high" })
+    .click();
+
+  // 保存 → 回读保留 dsh_mode=cli、dsh_model 与思考强度。
   await page.getByTestId("save-settings").click();
   await expect(page.getByTestId("save-toast").filter({ hasText: "设置已保存" })).toBeVisible();
   await expect(page.getByTestId("dsh-model")).toContainText("DeepSeek-V4-Flash");
+  await expect(page.getByTestId("dsh-reasoning-effort")).toContainText("高 high");
   await expect(page.getByTestId("dsh-entry")).toBeVisible();
 });
 
