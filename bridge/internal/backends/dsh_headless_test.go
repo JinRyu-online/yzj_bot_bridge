@@ -1,7 +1,9 @@
 package backends
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -115,5 +117,53 @@ func TestEnsureHeadlessProfile(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(dir, "cordis.patch.yml"))
 	if string(after) != before {
 		t.Fatal("ensureHeadlessProfile 非幂等")
+	}
+}
+
+func TestDSHHeadlessParserStreamsThinking(t *testing.T) {
+	var got []string
+	p := &dshHeadlessParser{onThinking: func(s string) { got = append(got, s) }}
+	for _, line := range []string{
+		`{"type":"thinking","text":"step 1"}`,
+		`not-json-ignore-me`,
+		`{"type":"thinking","text":"step 2"}`,
+		`{"type":"thinking","text":""}`,
+		`{"type":"final","text":"ok"}`,
+	} {
+		p.feed(line)
+	}
+	if len(got) != 2 || got[0] != "step 1" || got[1] != "step 2" {
+		t.Fatalf("streamed thinking = %#v", got)
+	}
+	if len(p.out.Thinking) != 2 || p.out.Final != "ok" {
+		t.Fatalf("parsed out = %+v", p.out)
+	}
+}
+
+func TestExecHeadlessStreamsOutput(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not available")
+	}
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "stub.js")
+	script := "const lines = [\n" +
+		"  { type: 'session', sessionId: 'session-stub' },\n" +
+		"  { type: 'thinking', text: 't1' },\n" +
+		"  { type: 'thinking', text: 't2' },\n" +
+		"  { type: 'status', phase: 'turn_end', reason: { kind: 'completed' } },\n" +
+		"  { type: 'final', text: 'ok' },\n" +
+		"];\n" +
+		"for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');\n"
+	if err := os.WriteFile(stub, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := &DSH{cfg: bot.Config{ID: "stub"}}
+	out, stderr, runErr := d.execHeadless(context.Background(), dshRuntime{NodeBin: node, Entry: stub}, "", "", dir, "hi")
+	if runErr != nil {
+		t.Fatalf("execHeadless: %v (stderr=%s)", runErr, stderr)
+	}
+	if out.SessionID != "session-stub" || out.Final != "ok" || len(out.Thinking) != 2 {
+		t.Fatalf("out = %+v", out)
 	}
 }
