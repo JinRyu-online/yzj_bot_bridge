@@ -36,7 +36,7 @@ func TestApplyDSHModelReasoning(t *testing.T) {
 		map[string]any{"id": "deepseek-flash"},
 		map[string]any{"id": "deepseek-v4-flash", "compat": map[string]any{"supportsStore": false}},
 	}
-	applyDSHModelReasoning(models, "high")
+	applyDSHModelReasoning(models, "high", "deepseek")
 	for _, item := range models {
 		m := item.(map[string]any)
 		efforts, _ := m["reasoningEfforts"].(map[string]any)
@@ -52,7 +52,7 @@ func TestApplyDSHModelReasoning(t *testing.T) {
 
 func TestApplyDSHModelReasoningEmptyIsNoop(t *testing.T) {
 	m := map[string]any{"id": "deepseek-flash"}
-	applyDSHModelReasoning([]any{m}, "default")
+	applyDSHModelReasoning([]any{m}, "default", "")
 	if _, ok := m["reasoningEfforts"]; ok {
 		t.Fatal("default effort must not modify model")
 	}
@@ -144,6 +144,9 @@ func TestEnsureHeadlessProfileAppliesReasoning(t *testing.T) {
 	if compat["supportsReasoningEffort"] != true || compat["supportsDeveloperRole"] != false {
 		t.Fatalf("model compat = %#v", compat)
 	}
+	if compat["thinkingFormat"] != "deepseek" {
+		t.Fatalf("thinkingFormat = %#v（kuaidi100 应自动用 deepseek 协议）", compat["thinkingFormat"])
+	}
 	efforts, _ := m["reasoningEfforts"].(map[string]any)
 	if efforts["high"] != "high" {
 		t.Fatalf("reasoningEfforts = %#v", efforts)
@@ -152,7 +155,7 @@ func TestEnsureHeadlessProfileAppliesReasoning(t *testing.T) {
 
 func TestDSHReasoningOff(t *testing.T) {
 	models := []any{map[string]any{"id": "deepseek-flash"}}
-	applyDSHModelReasoning(models, "off")
+	applyDSHModelReasoning(models, "off", "deepseek")
 	m := models[0].(map[string]any)
 	efforts, _ := m["reasoningEfforts"].(map[string]any)
 	v, ok := efforts["off"]
@@ -219,5 +222,32 @@ func TestEnsureHeadlessProfileReasoningOff(t *testing.T) {
 	}
 	if agent["reasoningEffort"] != "off" {
 		t.Fatalf("agent reasoningEffort = %#v", agent["reasoningEffort"])
+	}
+}
+
+func TestDSHThinkingFormat(t *testing.T) {
+	cases := []struct{ provider, override, want string }{
+		{"kuaidi100", "", "deepseek"},
+		{"KUAIDI100", "", "deepseek"},
+		{"kuaidi100", "openai", "openai"},
+		{"openai", "", ""},
+	}
+	for _, c := range cases {
+		if got := dshThinkingFormat(c.provider, c.override); got != c.want {
+			t.Fatalf("dshThinkingFormat(%q,%q)=%q want %q", c.provider, c.override, got, c.want)
+		}
+	}
+}
+
+func TestApplyDSHModelReasoningThinkingFormat(t *testing.T) {
+	m := map[string]any{"id": "deepseek-flash"}
+	applyDSHModelReasoning([]any{m}, "off", "deepseek")
+	compat, _ := m["compat"].(map[string]any)
+	if compat["thinkingFormat"] != "deepseek" {
+		t.Fatalf("thinkingFormat = %#v", compat["thinkingFormat"])
+	}
+	efforts, _ := m["reasoningEfforts"].(map[string]any)
+	if v, ok := efforts["off"]; !ok || v != nil {
+		t.Fatalf("off 必须声明为无值: %#v", efforts)
 	}
 }

@@ -40,11 +40,30 @@ func dshSelectedModel(cfg bot.Config) string {
 	return "deepseek-v4-flash"
 }
 
+// dshThinkingFormat 决定 pi-ai 用哪种「思考开关」协议。
+//
+// 空值按 provider 自动推断：kuaidi100 网关按 DeepSeek 协议（thinking:{type}），
+// off 时会显式下发 thinking:{type:"disabled"}；其余 provider 保持 pi-ai 默认
+// openai 协议（不额外发送 thinking 参数）。
+func dshThinkingFormat(provider, override string) string {
+	if v := strings.ToLower(strings.TrimSpace(override)); v != "" {
+		return v
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "kuaidi100") {
+		return "deepseek"
+	}
+	return ""
+}
+
 // applyDSHModelReasoning 给 provider 模型声明 reasoning 能力。
 // 自定义 OpenAI 兼容网关默认没有 reasoning 元数据；只设置 agent 的
 // reasoningEffort 会被 DSH 拒绝（UNSUPPORTED_REASONING_EFFORT），因此必须同时
 // 声明 reasoningEfforts，并关闭 developer role（网关不支持该角色）。
-func applyDSHModelReasoning(models []any, effort string) {
+//
+// thinkingFormat 决定“关闭思考”怎么下发：openai 协议下 off 只是不发 reasoning
+// 参数，模型仍可能按自己默认思考；deepseek 协议下 off 会显式发
+// thinking:{type:"disabled"}，才能真正关掉。
+func applyDSHModelReasoning(models []any, effort, thinkingFormat string) {
 	effort = normalizeDSHReasoningEffort(effort)
 	if effort == "" {
 		return
@@ -61,6 +80,9 @@ func applyDSHModelReasoning(models []any, effort string) {
 		}
 		compat["supportsDeveloperRole"] = false
 		compat["supportsReasoningEffort"] = true
+		if f := strings.ToLower(strings.TrimSpace(thinkingFormat)); f != "" {
+			compat["thinkingFormat"] = f
+		}
 		m["compat"] = compat
 	}
 }

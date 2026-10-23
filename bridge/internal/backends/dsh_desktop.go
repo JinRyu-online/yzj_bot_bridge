@@ -344,7 +344,7 @@ func ensureProviderModel(entries []map[string]any, cfg bot.Config) error {
 		}
 		models = append(models, map[string]any{"id": id, "name": id, "input": input})
 	}
-	applyDSHModelReasoning(models, cfg.DSHReasoningEffort)
+	applyDSHModelReasoning(models, cfg.DSHReasoningEffort, dshThinkingFormat(provider, cfg.DSHThinkingFormat))
 	prov["models"] = models
 	return nil
 }

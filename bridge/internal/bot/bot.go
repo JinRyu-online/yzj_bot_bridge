@@ -36,14 +36,17 @@ type Config struct {
 	OpenCodeBin      string   `json:"opencode_bin"`
 	// DSH 后端：dsh_mode=desktop 时用 DSH 桌面客户端自带 runtime（默认），
 	// cli 时保留旧 node + dsh 入口；其余字段为模型/池参数。
-	DSHMode                 string `json:"dsh_mode"`
-	DSHDesktopPath          string `json:"dsh_desktop_path"`
-	NodeBin                 string `json:"node_bin"`
-	DSHEntry                string `json:"dsh_entry"`
-	DSHProfile              string `json:"dsh_profile"`
-	DSHProvider             string `json:"dsh_provider"`
-	DSHModel                string `json:"dsh_model"`
-	DSHReasoningEffort      string `json:"dsh_reasoning_effort"`
+	DSHMode            string `json:"dsh_mode"`
+	DSHDesktopPath     string `json:"dsh_desktop_path"`
+	NodeBin            string `json:"node_bin"`
+	DSHEntry           string `json:"dsh_entry"`
+	DSHProfile         string `json:"dsh_profile"`
+	DSHProvider        string `json:"dsh_provider"`
+	DSHModel           string `json:"dsh_model"`
+	DSHReasoningEffort string `json:"dsh_reasoning_effort"`
+	// DSHThinkingFormat 控制 pi-ai 的“思考开关”协议（openai 默认 / deepseek / qwen 等）；
+	// 空值自动推断：kuaidi100 网关按 deepseek（thinking:{type}），其余保持 openai。
+	DSHThinkingFormat       string `json:"dsh_thinking_format"`
 	DSHTimeout              int    `json:"dsh_timeout"`
 	DSHTTLSeconds           int    `json:"dsh_ttl_seconds"`
 	DSHMaxWarm              int    `json:"dsh_max_warm"`
