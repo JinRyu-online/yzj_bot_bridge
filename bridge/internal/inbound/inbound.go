@@ -384,11 +384,14 @@ func (d *Dispatcher) notifyQueue(b *bot.Bot, notices []jobs.Notice) {
 // bot workspace and returns a prompt block with local paths. It never fails the
 // job: download or validation problems become a short note in the returned text.
 func (d *Dispatcher) prepareAttachments(ctx context.Context, b *bot.Bot, n Normalized) string {
-	if d.DownloadAttachment == nil || len(n.Attachments) == 0 {
+	if len(n.Attachments) == 0 {
 		return ""
 	}
 	if !d.ImageEnabled && !d.FileEnabled {
 		return ""
+	}
+	if d.DownloadAttachment == nil {
+		return fmt.Sprintf("（用户随消息发送了 %d 个附件，但附件下载器不可用：yzj-cli 未就绪或未登录，无法读取文件内容）", len(n.Attachments))
 	}
 	ws := sessions.ResolveAgentWorkspace(b.Config, n.OpenID, d.Store)
 	if strings.TrimSpace(ws) == "" {
@@ -426,13 +429,17 @@ func (d *Dispatcher) prepareAttachments(ctx context.Context, b *bot.Bot, n Norma
 	}
 	safeMsg := safeFileToken(n.MsgID)
 	var images, files, fails []string
+	fileFailure := false
 	idx, imagesN, filesN := 0, 0, 0
 	for _, a := range n.Attachments {
+		kind := strings.ToLower(strings.TrimSpace(a.Kind))
 		if idx >= maxFiles {
+			if kind == "file" {
+				fileFailure = true
+			}
 			fails = append(fails, fmt.Sprintf("超出单条消息 %d 个附件上限", maxFiles))
 			break
 		}
-		kind := strings.ToLower(strings.TrimSpace(a.Kind))
 		switch kind {
 		case "image":
 			if !d.ImageEnabled {
@@ -479,10 +486,12 @@ func (d *Dispatcher) prepareAttachments(ctx context.Context, b *bot.Bot, n Norma
 				ext = normalizeImageExt(filepath.Ext(a.Name))
 			}
 			if blockedExt(ext, d.FileBlockExt) {
+				fileFailure = true
 				fails = append(fails, fmt.Sprintf("%s（类型不允许）", displayName(a)))
 				continue
 			}
 			if a.Size > fileMaxBytes && fileMaxBytes > 0 {
+				fileFailure = true
 				fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), fileMaxMB))
 				continue
 			}
@@ -490,11 +499,13 @@ func (d *Dispatcher) prepareAttachments(ctx context.Context, b *bot.Bot, n Norma
 			out := filepath.Join(dir, fmt.Sprintf("%s-%d%s", safeMsg, idx, ext))
 			st, err := d.downloadOne(ctx, a.FileID, out)
 			if err != nil {
+				fileFailure = true
 				fails = append(fails, fmt.Sprintf("%s（%v）", displayName(a), err))
 				continue
 			}
 			if fileMaxBytes > 0 && st.Size() > fileMaxBytes {
 				_ = os.Remove(out)
+				fileFailure = true
 				fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), fileMaxMB))
 				continue
 			}
@@ -526,7 +537,7 @@ func (d *Dispatcher) prepareAttachments(ctx context.Context, b *bot.Bot, n Norma
 			bld.WriteString("\n")
 		}
 		label := "附件下载失败："
-		if len(files) == 0 && len(images) == 0 {
+		if !fileFailure && len(files) == 0 {
 			label = "图片下载失败："
 		}
 		bld.WriteString("（" + label + strings.Join(fails, "；") + "）")

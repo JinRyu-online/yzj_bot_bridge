@@ -515,3 +515,33 @@ func TestPrepareAttachmentsBlocksDangerousExt(t *testing.T) {
 		t.Fatalf("prompt block = %q", block)
 	}
 }
+
+func TestPrepareAttachmentsFileFailureLabel(t *testing.T) {
+	d := &Dispatcher{
+		FileEnabled: true, FileMaxMB: 1,
+		FileBlockExt: []string{".exe"}, MaxAttachments: 5,
+	}
+	d.DownloadAttachment = func(ctx context.Context, fileID, out string) error { return nil }
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: t.TempDir()}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID: "m4",
+		Attachments: []Attachment{{
+			Kind: "file", FileID: "f4", Name: "run.exe", Ext: "exe", Size: 3,
+		}},
+	})
+	if !strings.Contains(block, "附件下载失败") || strings.Contains(block, "图片下载失败") {
+		t.Fatalf("文件失败应使用附件下载失败标签: %q", block)
+	}
+}
+
+func TestPrepareAttachmentsNoDownloader(t *testing.T) {
+	d := &Dispatcher{ImageEnabled: true, FileEnabled: true}
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: t.TempDir()}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID:       "m5",
+		Attachments: []Attachment{{Kind: "image", FileID: "f5", Ext: "png"}},
+	})
+	if !strings.Contains(block, "附件下载器不可用") {
+		t.Fatalf("block = %q", block)
+	}
+}

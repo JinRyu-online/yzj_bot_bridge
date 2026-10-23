@@ -316,7 +316,7 @@ func (r *Runtime) yzjAttachmentSettingsLocked() (enabled bool, maxMB, maxFiles i
 
 // applyMediaSettingsLocked 把图片/附件下载设置与「是否存在轮询群」解耦。
 // 纯 WSS 部署也需要下载器：WSS 帧里只有 file_id，实际字节必须由 yzj-cli 换取。
-func (r *Runtime) applyMediaSettingsLocked() {
+func (r *Runtime) applyMediaSettingsLocked(bots []*bot.Bot) {
 	if r.Disp == nil {
 		return
 	}
@@ -332,6 +332,19 @@ func (r *Runtime) applyMediaSettingsLocked() {
 	r.Disp.FileBlockExt = block
 
 	if r.Disp.DownloadAttachment != nil {
+		return
+	}
+	// 只有可能收到附件的入站方式才需要下载器，避免纯 Cursor/OpenAI 部署
+	// 在每次 Load 时刷「yzj-cli 未就绪」告警。
+	needs := false
+	for _, b := range bots {
+		mode := b.Config.InboundMode
+		if bot.ModeUsesWS(mode) || bot.ModeUsesWebhook(mode) || bot.ModeUsesPoll(mode) {
+			needs = true
+			break
+		}
+	}
+	if !needs {
 		return
 	}
 	cfg := r.yzjCLIConfigLocked()
