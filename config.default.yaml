@@ -78,6 +78,11 @@ defaults:
       enabled: true
       max_mb: 20
       keep_days: 7
+    attachment:                           # 图片/文件附件下载（WSS 与轮询共用）
+      files_enabled: true                 # false=只下载图片，文件只保留 [文件]:名字 占位
+      file_max_mb: 50                     # 单个文件大小上限
+      max_files: 5                        # 单条消息最多处理多少个附件
+      file_block_ext: [".exe", ".dll", ".msi", ".scr", ".com", ".bat", ".cmd", ".vbs", ".ps1", ".lnk", ".jar"]
   max_workers: 4
   skills_dir: "~/.yzj-bridge/skills"    # 已安装 Skill 包目录；bots[].skills 为白名单 id
   memory:

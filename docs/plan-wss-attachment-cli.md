@@ -70,7 +70,7 @@ WSS 侧的根因不是"平台不推二进制"，而是**桥的解析层丢弃了
 | A8 | 图片伪装成 jpg（魔数不是图片） | 删除文件；prompt 注明"不是可识别的图片" |
 | A9 | 纯文本 @机器人 | 行为与改造前完全一致 |
 | A10 | `both` 模式同一消息双入口 | 只下载一次、只回复一次 |
-| A11 | WSS 帧里没有 `file_id` | 走 CLI 反查兜底；仍拿不到则跳过并记日志 |
+| A11 | WSS 帧里没有 `file_id` | 走 CLI 反查兜底；仍拿不到则跳过并记日志（Phase 0 实测帧里有 `file_id`，本条为可选兜底） |
 | A12 | 机器人自己发的图片 | 不触发（防循环） |
 
 ### 2.4 设计约束：事件驱动，**不引入轮询**
@@ -98,6 +98,22 @@ Phase 0（0.5 人日，硬门禁）：
 4. 若帧内**没有** `file_id`：确认是否有可用的群 ID + `msgId`（用于 `im message list --group-id --type newest --limit 20` 反查），否则该场景降级为"仅文本 + 提示用户附件无法获取"。
 
 > 门禁结论决定 Phase 1 的解析字段和 Phase 4 是否必须做反查兜底。**Phase 0 未完成前不动生产代码。**
+
+### 3.1 Phase 0 结论（2026-10-23，已完成，门禁通过）
+
+**帧里直接带 `file_id`，不需要反查。**
+
+- 图片：`msg.msgParam`（转义后的 **JSON 字符串**）→ `desc[].data`（`type=image`）；
+- 文件：`msg.msgParam.file_id`（`ftype=0`、`name`、`ext`、`size` 齐全）；
+- `msgType` 在 WSS 里是**数字**：`2=text`、`8=file`、`23=富文本/图片`；
+- `content` 占位符非空（`[图片]…` / `[文件]:name`），不会命中 `content==""` 的丢弃分支；
+- 控制帧（`auth`/`addressbook`/`pong`）无 `content`，归为 `control`。
+
+字段表与原始帧见 [`wss-frame-samples.md`](wss-frame-samples.md)，fixture 在 `bridge/internal/inbound/testdata/`。
+
+因此 **Phase 4（CLI 反查兜底）降级为可选**：只在 `msgParam` 缺失或解析失败时尝试，默认关闭。
+
+> 本次抓的是机器人单聊（`groupId=BOT-…`）。**群聊 @ 帧仍需补一次样本**，用于确认 `desc` 里的 at 段与引用字段（Phase 1 触发层依赖）。
 
 ---
 

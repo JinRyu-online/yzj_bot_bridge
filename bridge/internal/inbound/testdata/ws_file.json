@@ -1,0 +1,29 @@
+{
+  "msg": {
+    "eid": "10712224",
+    "groupType": 3,
+    "clientId": "10220",
+    "msgType": 8,
+    "robotName": "Fairy",
+    "openId": "67bfd544e4b0cc79e38a4272",
+    "groupId": "BOT-67bfd544e4b0cc79e38a4271-BOT-6a7294c1e4b0a214555b2935",
+    "msgId": "6adadbf9e4b06541015bc5a9",
+    "msgParam": "{\"ext\":\"json\",\"file_id\":\"6adadbf8ae10d100011722a8\",\"ftype\":0,\"name\":\"示例文件.json\",\"size\":9187,\"unreadMonitor\":1}",
+    "robotId": "BOT-6a7294c1e4b0a214555b2935",
+    "type": 2,
+    "operatorName": "张三",
+    "content": "[文件]:示例文件.json",
+    "operatorOrigId": "67bfd544e4b0cc79e38a4271",
+    "operatorUserId": "67bfd544e4b0cc79e38a426c",
+    "senderId": "67bfd544e4b0cc79e38a4271",
+    "senderName": "张三",
+    "operatorOid": "67bfd544e4b0cc79e38a4272",
+    "msgAdapterType": 0,
+    "operatorOpenid": "67bfd544e4b0cc79e38a4272",
+    "time": 1792728057301,
+    "operatorId": "67bfd544e4b0cc79e38a4271"
+  },
+  "level": 0,
+  "cmd": "directPush",
+  "type": "robotMessage"
+}

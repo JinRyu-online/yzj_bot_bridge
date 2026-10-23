@@ -129,6 +129,7 @@ func (r *Runtime) Load(restoreWSS bool) error {
 		Reg: r.Reg, Orch: r.Orch, Dedupe: dedupe.New(), Jobs: jobs.New(), Store: store, Memory: r.Memory,
 	}
 	r.setupPollers(bots)
+	r.applyMediaSettingsLocked()
 	r.cleanupIncomingMedia(bots)
 
 	// teardown old clients

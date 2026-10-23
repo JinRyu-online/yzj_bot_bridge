@@ -279,6 +279,71 @@ func (r *Runtime) yzjDefaultsLocked() map[string]any {
 	return mapFrom(r.Defaults["yzj_cli"])
 }
 
+// defaultBlockedFileExts 是附件下载的默认拒绝列表：这些扩展名一律不落盘。
+var defaultBlockedFileExts = []string{
+	".exe", ".dll", ".msi", ".scr", ".com", ".bat", ".cmd",
+	".vbs", ".ps1", ".lnk", ".jar", ".reg", ".hta", ".cpl",
+}
+
+// yzjAttachmentSettingsLocked 读取附件（文件）下载配置，缺省开启。
+func (r *Runtime) yzjAttachmentSettingsLocked() (enabled bool, maxMB, maxFiles int, block []string) {
+	enabled, maxMB, maxFiles, block = true, 50, 5, defaultBlockedFileExts
+	att := mapFrom(r.yzjDefaultsLocked()["attachment"])
+	if b, ok := att["files_enabled"].(bool); ok {
+		enabled = b
+	}
+	maxMB = intFrom(att["file_max_mb"], maxMB)
+	maxFiles = intFrom(att["max_files"], maxFiles)
+	if list, ok := att["file_block_ext"].([]any); ok && len(list) > 0 {
+		var out []string
+		for _, v := range list {
+			if s := strings.TrimSpace(strFrom(v, "")); s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			block = out
+		}
+	}
+	if maxMB <= 0 {
+		maxMB = 50
+	}
+	if maxFiles <= 0 {
+		maxFiles = 5
+	}
+	return enabled, maxMB, maxFiles, block
+}
+
+// applyMediaSettingsLocked 把图片/附件下载设置与「是否存在轮询群」解耦。
+// 纯 WSS 部署也需要下载器：WSS 帧里只有 file_id，实际字节必须由 yzj-cli 换取。
+func (r *Runtime) applyMediaSettingsLocked() {
+	if r.Disp == nil {
+		return
+	}
+	enabled, maxMB, types, _ := r.yzjImageSettingsLocked()
+	r.Disp.ImageEnabled = enabled
+	r.Disp.ImageMaxMB = maxMB
+	r.Disp.ImageTypes = types
+
+	filesOn, fileMaxMB, maxFiles, block := r.yzjAttachmentSettingsLocked()
+	r.Disp.FileEnabled = filesOn
+	r.Disp.FileMaxMB = fileMaxMB
+	r.Disp.MaxAttachments = maxFiles
+	r.Disp.FileBlockExt = block
+
+	if r.Disp.DownloadAttachment != nil {
+		return
+	}
+	cfg := r.yzjCLIConfigLocked()
+	bin, err := yzjcli.ResolveBinary(cfg)
+	if err != nil {
+		log.Printf("yzjcli: 附件下载不可用（%v）；图片/文件会被跳过，请先安装 yzj-cli 再重启桥", err)
+		return
+	}
+	client := yzjcli.NewClient(bin, cfg.Profile, cfg.ConfigDir, cfg.Timeout)
+	r.Disp.DownloadAttachment = client.FileDownload
+}
+
 func (r *Runtime) yzjCLIConfigLocked() yzjcli.Config {
 	m := r.yzjDefaultsLocked()
 	cfg := yzjcli.Config{
