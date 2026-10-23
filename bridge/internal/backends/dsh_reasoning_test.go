@@ -11,14 +11,18 @@ import (
 
 func TestNormalizeDSHReasoningEffort(t *testing.T) {
 	cases := map[string]string{
-		"":        "",
-		"default": "",
-		"low":     "low",
-		"MEDIUM":  "medium",
-		" high ":  "high",
-		"xhigh":   "",
-		"max":     "",
-		"unknown": "",
+		"":         "",
+		"default":  "",
+		"low":      "low",
+		"MEDIUM":   "medium",
+		" high ":   "high",
+		"xhigh":    "",
+		"max":      "",
+		"unknown":  "",
+		"off":      "off",
+		"OFF":      "off",
+		"none":     "off",
+		"disabled": "off",
 	}
 	for in, want := range cases {
 		if got := normalizeDSHReasoningEffort(in); got != want {
@@ -143,5 +147,77 @@ func TestEnsureHeadlessProfileAppliesReasoning(t *testing.T) {
 	efforts, _ := m["reasoningEfforts"].(map[string]any)
 	if efforts["high"] != "high" {
 		t.Fatalf("reasoningEfforts = %#v", efforts)
+	}
+}
+
+func TestDSHReasoningOff(t *testing.T) {
+	models := []any{map[string]any{"id": "deepseek-flash"}}
+	applyDSHModelReasoning(models, "off")
+	m := models[0].(map[string]any)
+	efforts, _ := m["reasoningEfforts"].(map[string]any)
+	v, ok := efforts["off"]
+	if !ok {
+		t.Fatalf("reasoningEfforts 缺少 off: %#v", efforts)
+	}
+	if v != nil {
+		t.Fatalf("off 必须为无值(null)，实际 %#v", v)
+	}
+	if efforts["low"] != "low" || efforts["high"] != "high" {
+		t.Fatalf("其它档位不应受影响: %#v", efforts)
+	}
+
+	cfg := dshAgentModelConfig("kuaidi100", "deepseek-flash", "off")
+	if cfg["reasoningEffort"] != "off" {
+		t.Fatalf("agent reasoningEffort = %#v", cfg["reasoningEffort"])
+	}
+}
+
+func TestEnsureHeadlessProfileReasoningOff(t *testing.T) {
+	home := t.TempDir()
+	desktop := filepath.Join(home, "profiles", "desktop")
+	if err := os.MkdirAll(desktop, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	desktopPatch := `- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      kuaidi100:
+        api: openai-completions
+        baseURL: http://example.invalid/v1
+        models:
+          - id: deepseek-flash
+            name: deepseek-flash
+- id: agent-default-model
+  config:
+    provider: kuaidi100
+    model: deepseek-flash
+`
+	if err := os.WriteFile(filepath.Join(desktop, "cordis.patch.yml"), []byte(desktopPatch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := bot.Config{
+		DSHHome: home, DSHProvider: "kuaidi100", DSHModel: "deepseek-flash",
+		DSHReasoningEffort: "off",
+	}
+	if err := ensureHeadlessProfile(cfg, "yzj-headless"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(home, "profiles", "yzj-headless", "cordis.patch.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []map[string]any
+	if err := yaml.Unmarshal(raw, &entries); err != nil {
+		t.Fatal(err)
+	}
+	var agent map[string]any
+	for _, e := range entries {
+		if e["id"] == "agent-default-model" {
+			agent, _ = e["config"].(map[string]any)
+		}
+	}
+	if agent["reasoningEffort"] != "off" {
+		t.Fatalf("agent reasoningEffort = %#v", agent["reasoningEffort"])
 	}
 }

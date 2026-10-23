@@ -1,0 +1,29 @@
+{
+  "msg": {
+    "eid": "10712224",
+    "groupType": 3,
+    "clientId": "10220",
+    "msgType": 2,
+    "robotName": "Fairy",
+    "openId": "67bfd544e4b0cc79e38a4272",
+    "groupId": "BOT-67bfd544e4b0cc79e38a4271-BOT-6a7294c1e4b0a214555b2935",
+    "msgId": "6adadbf1e4b09328f707dd8c",
+    "msgParam": "{\"desc\":[],\"notifyTo\":[],\"notifyType\":1}",
+    "robotId": "BOT-6a7294c1e4b0a214555b2935",
+    "type": 2,
+    "operatorName": "张三",
+    "content": "文件里是什么",
+    "operatorOrigId": "67bfd544e4b0cc79e38a4271",
+    "operatorUserId": "67bfd544e4b0cc79e38a426c",
+    "senderId": "67bfd544e4b0cc79e38a4271",
+    "senderName": "张三",
+    "operatorOid": "67bfd544e4b0cc79e38a4272",
+    "msgAdapterType": 0,
+    "operatorOpenid": "67bfd544e4b0cc79e38a4272",
+    "time": 1792728049669,
+    "operatorId": "67bfd544e4b0cc79e38a4271"
+  },
+  "level": 0,
+  "cmd": "directPush",
+  "type": "robotMessage"
+}

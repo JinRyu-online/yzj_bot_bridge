@@ -1,0 +1,29 @@
+{
+  "msg": {
+    "eid": "10712224",
+    "groupType": 3,
+    "clientId": "10220",
+    "msgType": 23,
+    "robotName": "Fairy",
+    "openId": "67bfd544e4b0cc79e38a4272",
+    "groupId": "BOT-67bfd544e4b0cc79e38a4271-BOT-6a7294c1e4b0a214555b2935",
+    "msgId": "6adadbe0e4b051878b22e63e",
+    "msgParam": "{\"desc\":[{\"data\":\"6adadbdf9162a60001e6a2a5\",\"h\":91,\"length\":4,\"start\":0,\"type\":\"image\",\"w\":92}],\"notifyTo\":[],\"notifyType\":1}",
+    "robotId": "BOT-6a7294c1e4b0a214555b2935",
+    "type": 2,
+    "operatorName": "张三",
+    "content": "[图片]这是什么",
+    "operatorOrigId": "67bfd544e4b0cc79e38a4271",
+    "operatorUserId": "67bfd544e4b0cc79e38a426c",
+    "senderId": "67bfd544e4b0cc79e38a4271",
+    "senderName": "张三",
+    "operatorOid": "67bfd544e4b0cc79e38a4272",
+    "msgAdapterType": 0,
+    "operatorOpenid": "67bfd544e4b0cc79e38a4272",
+    "time": 1792728032078,
+    "operatorId": "67bfd544e4b0cc79e38a4271"
+  },
+  "level": 0,
+  "cmd": "directPush",
+  "type": "robotMessage"
+}

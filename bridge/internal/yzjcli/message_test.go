@@ -26,10 +26,21 @@ func TestMessageAttachmentsFileImage(t *testing.T) {
 	}
 }
 
-func TestMessageAttachmentsFileNonImageIgnored(t *testing.T) {
-	msg := Message{MsgType: "file", Param: MessageParam{FileID: "f9", Ext: "pdf", FType: flexIntPtr(2)}}
-	if got := msg.Attachments(); len(got) != 0 {
-		t.Fatalf("unexpected attachments: %+v", got)
+func TestMessageAttachmentsFileNonImage(t *testing.T) {
+	msg := Message{MsgType: "file", Param: MessageParam{
+		FileID: "f9", Ext: "pdf", Name: "合同.pdf", FType: flexIntPtr(2),
+		Size: []byte(`"1024"`),
+	}}
+	got := msg.Attachments()
+	if len(got) != 1 {
+		t.Fatalf("attachments = %+v want 1 file", got)
+	}
+	a := got[0]
+	if a.Kind != "file" || a.FileID != "f9" || a.Size != 1024 || a.Name != "合同.pdf" {
+		t.Fatalf("unexpected attachment: %+v", a)
+	}
+	if msg.HasImages() {
+		t.Fatal("plain file must not count as image")
 	}
 }
 

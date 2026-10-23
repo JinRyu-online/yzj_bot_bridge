@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -415,5 +416,132 @@ func TestHandleDedupesSameMessageAcrossSources(t *testing.T) {
 	defer g.mu.Unlock()
 	if len(g.started) != 1 {
 		t.Fatalf("same platform message must dedupe across sources, started=%v", g.started)
+	}
+}
+
+func TestNormalizeWSFramesFromCapture(t *testing.T) {
+	cases := []struct {
+		file    string
+		content string
+		group   string
+		atts    int
+		kind    string
+		fileID  string
+	}{
+		{"ws_text.json", "文件里是什么", "BOT-67bfd544e4b0cc79e38a4271-BOT-6a7294c1e4b0a214555b2935", 0, "", ""},
+		{"ws_image.json", "[图片]这是什么", "BOT-67bfd544e4b0cc79e38a4271-BOT-6a7294c1e4b0a214555b2935", 1, "image", "6adadbdf9162a60001e6a2a5"},
+		{"ws_file.json", "[文件]:示例文件.json", "BOT-67bfd544e4b0cc79e38a4271-BOT-6a7294c1e4b0a214555b2935", 1, "file", "6adadbf8ae10d100011722a8"},
+	}
+	for _, c := range cases {
+		raw, err := os.ReadFile(filepath.Join("testdata", c.file))
+		if err != nil {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(raw, &frame); err != nil {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		n, ok := NormalizeWS(frame)
+		if !ok {
+			t.Fatalf("%s: NormalizeWS returned false", c.file)
+		}
+		if n.Content != c.content || n.GroupID != c.group || n.Source != "websocket" {
+			t.Fatalf("%s: content=%q group=%q source=%q", c.file, n.Content, n.GroupID, n.Source)
+		}
+		if len(n.Attachments) != c.atts {
+			t.Fatalf("%s: attachments=%+v want %d", c.file, n.Attachments, c.atts)
+		}
+		if c.atts > 0 {
+			a := n.Attachments[0]
+			if a.Kind != c.kind || a.FileID != c.fileID {
+				t.Fatalf("%s: attachment=%+v", c.file, a)
+			}
+		}
+	}
+}
+
+func TestPrepareAttachmentsFile(t *testing.T) {
+	dir := t.TempDir()
+	var downloaded string
+	d := &Dispatcher{
+		FileEnabled: true, FileMaxMB: 1, MaxAttachments: 5,
+		FileBlockExt: []string{".exe"},
+	}
+	d.DownloadAttachment = func(ctx context.Context, fileID, out string) error {
+		if fileID != "f1" {
+			t.Fatalf("file id = %q", fileID)
+		}
+		downloaded = out
+		return os.WriteFile(out, []byte(`{"a":1}`), 0o600)
+	}
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: dir}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID: "m1",
+		Attachments: []Attachment{{
+			Kind: "file", FileID: "f1", Name: "示例文件.json", Ext: "json", Size: 7,
+		}},
+	})
+	for _, want := range []string{"1 个附件", "incoming_media", "原文件名: 示例文件.json", ".json"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("prompt block = %q, missing %q", block, want)
+		}
+	}
+	if _, err := os.Stat(downloaded); err != nil {
+		t.Fatalf("downloaded file missing: %v", err)
+	}
+}
+
+func TestPrepareAttachmentsBlocksDangerousExt(t *testing.T) {
+	d := &Dispatcher{
+		FileEnabled: true, FileMaxMB: 1,
+		FileBlockExt: []string{".exe"}, MaxAttachments: 5,
+	}
+	called := false
+	d.DownloadAttachment = func(ctx context.Context, fileID, out string) error {
+		called = true
+		return nil
+	}
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: t.TempDir()}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID: "m1",
+		Attachments: []Attachment{{
+			Kind: "file", FileID: "f1", Name: "run.exe", Ext: "exe", Size: 3,
+		}},
+	})
+	if called {
+		t.Fatal("blocked extension must not be downloaded")
+	}
+	if !strings.Contains(block, "类型不允许") {
+		t.Fatalf("prompt block = %q", block)
+	}
+}
+
+func TestPrepareAttachmentsFileFailureLabel(t *testing.T) {
+	d := &Dispatcher{
+		FileEnabled: true, FileMaxMB: 1,
+		FileBlockExt: []string{".exe"}, MaxAttachments: 5,
+	}
+	d.DownloadAttachment = func(ctx context.Context, fileID, out string) error { return nil }
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: t.TempDir()}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID: "m4",
+		Attachments: []Attachment{{
+			Kind: "file", FileID: "f4", Name: "run.exe", Ext: "exe", Size: 3,
+		}},
+	})
+	if !strings.Contains(block, "附件下载失败") || strings.Contains(block, "图片下载失败") {
+		t.Fatalf("文件失败应使用附件下载失败标签: %q", block)
+	}
+}
+
+func TestPrepareAttachmentsNoDownloader(t *testing.T) {
+	d := &Dispatcher{ImageEnabled: true, FileEnabled: true}
+	b := &bot.Bot{Config: bot.Config{ID: "fairy", Workspace: t.TempDir()}}
+	block := d.prepareAttachments(context.Background(), b, Normalized{
+		MsgID:       "m5",
+		Attachments: []Attachment{{Kind: "image", FileID: "f5", Ext: "png"}},
+	})
+	if !strings.Contains(block, "附件下载器不可用") {
+		t.Fatalf("block = %q", block)
 	}
 }

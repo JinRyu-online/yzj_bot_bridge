@@ -3362,6 +3362,7 @@ function App() {
                       value={cliForm.dsh_reasoning_effort}
                       options={[
                         { id: "", label: "默认（由模型决定）" },
+                        { id: "off", label: "关闭思考（不推理）" },
                         { id: "low", label: "低 low" },
                         { id: "medium", label: "中 medium" },
                         { id: "high", label: "高 high" },
@@ -3369,7 +3370,7 @@ function App() {
                       onChange={(v) => setCliForm({ ...cliForm, dsh_reasoning_effort: v })}
                     />
                     <span className="field-hint">
-                      仅对 DSH 生效；high 思考更充分但更慢、更耗 token。不支持的模型会由 DSH 报错。
+                      仅对 DSH 生效；off 不推理（更快、更省 token），high 思考更充分但更慢、更耗 token。不支持的模型会由 DSH 报错。
                     </span>
                   </div>
                 </div>

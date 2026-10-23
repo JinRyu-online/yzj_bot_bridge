@@ -30,7 +30,7 @@ defaults:
   dsh_profile: "jsonrpc"              # headless 自动映射 yzj-headless，sdk 自动映射 yzj-sdk；cli 模式默认 jsonrpc
   dsh_provider: "kuaidi100"           # LLM provider（桌面客户端 profile 中配置）
   dsh_model: ""                       # 空=复用机器人 model，再空=deepseek-v4-flash
-  dsh_reasoning_effort: ""            # DSH 思考强度：空=模型默认 | low | medium | high
+  dsh_reasoning_effort: ""            # DSH 思考强度：空=模型默认 | off(关闭思考) | low | medium | high
   dsh_timeout: 600                    # 单轮超时秒
   dsh_ttl_seconds: 300                # 池进程空闲回收秒
   dsh_max_warm: 3                     # 池进程硬上限（超出按 LRU 提前回收）
@@ -58,6 +58,7 @@ defaults:
   webhook_host: "0.0.0.0"
   webhook_port: 8765
   stale_ms: 45000
+  ws_debug_frames: false                  # true=把 WSS 原始帧（截断 4KB）写进运行日志，用于排查/抓帧
   ws_invalid_frame_limit: 3
   ws_auth_fail_limit: 3                   # 连续鉴权失败（如 openToken 过期）达到该次数后自动停用通道
   # yzj-cli 轮询入站（inbound_mode: yzj_cli）：只轮询下面 bots/channels 显式配置的群。
@@ -77,6 +78,11 @@ defaults:
       enabled: true
       max_mb: 20
       keep_days: 7
+    attachment:                           # 图片/文件附件下载（WSS 与轮询共用）
+      files_enabled: true                 # false=只下载图片，文件只保留 [文件]:名字 占位
+      file_max_mb: 50                     # 单个文件大小上限
+      max_files: 5                        # 单条消息最多处理多少个附件
+      file_block_ext: [".exe", ".dll", ".msi", ".scr", ".com", ".bat", ".cmd", ".vbs", ".ps1", ".lnk", ".jar"]
   max_workers: 4
   skills_dir: "~/.yzj-bridge/skills"    # 已安装 Skill 包目录；bots[].skills 为白名单 id
   memory:

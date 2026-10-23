@@ -324,3 +324,38 @@ func contains(s, sub string) bool {
 			return false
 		})())
 }
+
+// TestLegacyDirNameMismatch 覆盖历史/手工安装布局：目录名用连字符，
+// SKILL.md 的 name 用下划线（如 border-log/ + name: border_log）。
+// 修复前 Store.Get/Has 只按目录找，导致 GUI 保存配置时该 skill 被
+// runtime.SaveAndReload 当作“未安装”静默剪掉。
+func TestLegacyDirNameMismatch(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "inst")
+	dir := filepath.Join(root, "border-log")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	md := "---\nname: border_log\ndescription: legacy layout\n---\n\n# body\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(md), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(root)
+
+	if !store.Has("border_log") {
+		t.Fatal("Has(border_log) 应能按 SKILL.md name 解析到 border-log/ 目录")
+	}
+	if err := store.ValidateIDs([]string{"border_log"}); err != nil {
+		t.Fatalf("ValidateIDs 不应把已安装 skill 判成缺失: %v", err)
+	}
+	pkgs, err := Resolve(store, []string{"border_log"})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(pkgs) != 1 || pkgs[0].Manifest.ID != "border_log" {
+		t.Fatalf("Resolve 结果不对: %+v", pkgs)
+	}
+	if store.Has("border_log_missing") {
+		t.Fatal("确实不存在的 id 仍应判定为未安装")
+	}
+}

@@ -6,15 +6,21 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"yzj-bridge/internal/paths"
 )
 
 var nonIDChar = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+
+// mismatchWarned 记录已经告警过的 "目录名 != SKILL.md name" 组合，避免每次
+// Get 都刷屏（GUI 保存一次可能触发多条校验）。
+var mismatchWarned sync.Map
 
 type Store struct {
 	Root string
@@ -57,7 +63,46 @@ func (s *Store) Get(id string) (*Package, error) {
 	if !idRe.MatchString(id) {
 		return nil, fmt.Errorf("invalid skill id %q", id)
 	}
-	return LoadDir(filepath.Join(s.Root, id))
+	pkg, err := LoadDir(filepath.Join(s.Root, id))
+	if err == nil {
+		return pkg, nil
+	}
+	// 兼容历史/手工安装布局：目录名可能与 SKILL.md 的 name 不一致
+	// （例如 border-log/ 里写着 name: border_log）。InstallFromDir 现在按
+	// name 建目录，但老版本/手工放置会留下这种布局。若按 name 能唯一找到，
+	// 仍然认这个 id；否则保存配置时会被误判成“未安装”而清掉（见
+	// runtime.SaveAndReload 的 pruneMissingSkills）。
+	if legacy, ok := s.findByManifestID(id); ok {
+		key := s.Root + "|" + id
+		if _, seen := mismatchWarned.LoadOrStore(key, struct{}{}); !seen {
+			log.Printf("warn: skill %q 的目录名与 SKILL.md name 不一致：%s（建议把目录重命名为 %q）",
+				id, filepath.Base(legacy.Dir), id)
+		}
+		return legacy, nil
+	}
+	return nil, err
+}
+
+// findByManifestID 扫描已安装目录，按 SKILL.md 的 name(SKILL.md 才是权威 id)
+// 查找包；目录名不参与匹配。找不到返回 (nil,false)。
+func (s *Store) findByManifestID(id string) (*Package, bool) {
+	entries, err := os.ReadDir(s.Root)
+	if err != nil {
+		return nil, false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		pkg, err := LoadDir(filepath.Join(s.Root, e.Name()))
+		if err != nil {
+			continue
+		}
+		if pkg.Manifest.ID == id {
+			return pkg, true
+		}
+	}
+	return nil, false
 }
 
 func (s *Store) Has(id string) bool {

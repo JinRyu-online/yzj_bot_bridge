@@ -21,6 +21,7 @@ import (
 	"yzj-bridge/internal/orchestrator"
 	"yzj-bridge/internal/registry"
 	"yzj-bridge/internal/sessions"
+	"yzj-bridge/internal/yzjcli"
 	"yzj-bridge/internal/yzjout"
 )
 
@@ -32,6 +33,9 @@ type Normalized struct {
 	RobotID   string
 	RobotName string
 	GroupType int
+	// GroupID is the platform conversation id (WSS 帧里是 groupId，可用于兜底
+	// 反查消息参数；轮询路径为群 openId)。
+	GroupID string
 	// Source identifies the inbound channel: websocket|webhook|yzj_cli.
 	Source string
 	// Attachments are media items carried by the message (Phase 2 downloads
@@ -65,10 +69,18 @@ type Dispatcher struct {
 	SendText func(sendURL, content, openID string, reply *yzjout.ReplyMeta) error
 	// DownloadAttachment downloads one yzj-cli media item to outPath.
 	DownloadAttachment func(ctx context.Context, fileID, outPath string) error
-	// ImageEnabled turns attachment download/prompt injection on.
+	// ImageEnabled turns image download/prompt injection on.
 	ImageEnabled bool
 	ImageMaxMB   int
 	ImageTypes   []string
+	// FileEnabled turns non-image attachment (document) download on.
+	FileEnabled bool
+	// FileMaxMB caps a single file download (default 50MB).
+	FileMaxMB int
+	// FileBlockExt is a deny-list of extensions (".exe", ".bat", ...).
+	FileBlockExt []string
+	// MaxAttachments caps attachments handled per message (default 5).
+	MaxAttachments int
 }
 
 type queuedJob struct {
@@ -140,6 +152,96 @@ func Normalize(raw map[string]any) (Normalized, bool) {
 	return n, true
 }
 
+// NormalizeWS 解析 WSS/Webhook 推送帧：在 Normalize 基础上补 GroupID 与附件。
+// 平台推送把消息参数放在 msgParam 里，且是「JSON 字符串」，需要二次解析；
+// msgType 在 WSS 帧里是数字（2=text、8=file、23=富文本/图片）。
+func NormalizeWS(raw map[string]any) (Normalized, bool) {
+	n, ok := Normalize(raw)
+	if !ok {
+		return n, false
+	}
+	n.Source = "websocket"
+	msg := unwrap(raw)
+	n.GroupID = firstString(msg, "groupId", "group_id", "groupOpenId", "chatId", "conversationId")
+	if n.GroupType == 0 {
+		if gt := firstString(msg, "groupType", "group_type"); gt != "" {
+			fmt.Sscanf(gt, "%d", &n.GroupType)
+		}
+	}
+	if atts := wsAttachments(msg); len(atts) > 0 {
+		n.Attachments = atts
+	}
+	return n, true
+}
+
+// wsAttachments 从 WSS 帧的 msgParam 提取附件（图片 + 文件）。
+func wsAttachments(msg map[string]any) []Attachment {
+	param, ok := parseMsgParam(msg["msgParam"])
+	if !ok {
+		return nil
+	}
+	msgType := normalizeWSMsgType(firstString(msg, "msgType", "msg_type"))
+	if msgType == "" {
+		return nil
+	}
+	m := yzjcli.Message{MsgType: msgType, Param: param, Content: firstString(msg, "content")}
+	atts := m.Attachments()
+	out := make([]Attachment, 0, len(atts))
+	for _, a := range atts {
+		out = append(out, Attachment{
+			Kind: a.Kind, FileID: a.FileID, Name: a.Name, Ext: a.Ext,
+			Size: a.Size, Width: a.Width, Height: a.Height,
+		})
+	}
+	return out
+}
+
+// parseMsgParam 兼容 msgParam 为 JSON 字符串或已解析对象两种形态。
+func parseMsgParam(v any) (yzjcli.MessageParam, bool) {
+	switch t := v.(type) {
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return yzjcli.MessageParam{}, false
+		}
+		var p yzjcli.MessageParam
+		if err := json.Unmarshal([]byte(s), &p); err != nil {
+			return yzjcli.MessageParam{}, false
+		}
+		return p, true
+	case map[string]any:
+		b, err := json.Marshal(t)
+		if err != nil {
+			return yzjcli.MessageParam{}, false
+		}
+		var p yzjcli.MessageParam
+		if err := json.Unmarshal(b, &p); err != nil {
+			return yzjcli.MessageParam{}, false
+		}
+		return p, true
+	}
+	return yzjcli.MessageParam{}, false
+}
+
+// normalizeWSMsgType 把 WSS 的数字 msgType 映射成轮询语义的字符串。
+func normalizeWSMsgType(v string) string {
+	switch strings.TrimSpace(v) {
+	case "2":
+		return "text"
+	case "8":
+		return "file"
+	case "23":
+		return "richtext"
+	case "":
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "text", "file", "richtext", "other":
+		return strings.ToLower(strings.TrimSpace(v))
+	}
+	return ""
+}
+
 type ClassifyResult struct {
 	Kind string // control|dispatch|invalid|ack
 	Norm Normalized
@@ -152,8 +254,7 @@ func ClassifyWS(raw map[string]any) ClassifyResult {
 	if cmd == "ping" || cmd == "pong" || typ == "ping" || typ == "pong" {
 		return ClassifyResult{Kind: "control"}
 	}
-	if n, ok := Normalize(raw); ok {
-		n.Source = "websocket"
+	if n, ok := NormalizeWS(raw); ok {
 		return ClassifyResult{Kind: "dispatch", Norm: n}
 	}
 	needAck := false
@@ -279,12 +380,18 @@ func (d *Dispatcher) notifyQueue(b *bot.Bot, notices []jobs.Notice) {
 	}
 }
 
-// prepareAttachments downloads message images into the bot workspace and
-// returns a prompt block with local paths. It never fails the job: download or
-// validation problems become a short note in the returned text.
+// prepareAttachments downloads message attachments (images and files) into the
+// bot workspace and returns a prompt block with local paths. It never fails the
+// job: download or validation problems become a short note in the returned text.
 func (d *Dispatcher) prepareAttachments(ctx context.Context, b *bot.Bot, n Normalized) string {
-	if !d.ImageEnabled || d.DownloadAttachment == nil || len(n.Attachments) == 0 {
+	if len(n.Attachments) == 0 {
 		return ""
+	}
+	if !d.ImageEnabled && !d.FileEnabled {
+		return ""
+	}
+	if d.DownloadAttachment == nil {
+		return fmt.Sprintf("（用户随消息发送了 %d 个附件，但附件下载器不可用：yzj-cli 未就绪或未登录，无法读取文件内容）", len(n.Attachments))
 	}
 	ws := sessions.ResolveAgentWorkspace(b.Config, n.OpenID, d.Store)
 	if strings.TrimSpace(ws) == "" {
@@ -307,72 +414,170 @@ func (d *Dispatcher) prepareAttachments(ctx context.Context, b *bot.Bot, n Norma
 		maxMB = 20
 	}
 	maxBytes := int64(maxMB) << 20
+	fileMaxMB := d.FileMaxMB
+	if fileMaxMB <= 0 {
+		fileMaxMB = 50
+	}
+	fileMaxBytes := int64(fileMaxMB) << 20
+	maxFiles := d.MaxAttachments
+	if maxFiles <= 0 {
+		maxFiles = 5
+	}
 	dir := filepath.Join(ws, "incoming_media", time.Now().Format("20060102"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Sprintf("（图片保存目录创建失败：%v）", err)
+		return fmt.Sprintf("（附件保存目录创建失败：%v）", err)
 	}
 	safeMsg := safeFileToken(n.MsgID)
-	var lines, fails []string
-	idx := 0
+	var images, files, fails []string
+	fileFailure := false
+	idx, imagesN, filesN := 0, 0, 0
 	for _, a := range n.Attachments {
-		if !strings.EqualFold(strings.TrimSpace(a.Kind), "image") {
-			continue
+		kind := strings.ToLower(strings.TrimSpace(a.Kind))
+		if idx >= maxFiles {
+			if kind == "file" {
+				fileFailure = true
+			}
+			fails = append(fails, fmt.Sprintf("超出单条消息 %d 个附件上限", maxFiles))
+			break
 		}
-		ext := normalizeImageExt(a.Ext)
-		if ext == "" {
-			ext = normalizeImageExt(filepath.Ext(a.Name))
+		switch kind {
+		case "image":
+			if !d.ImageEnabled {
+				continue
+			}
+			ext := normalizeImageExt(a.Ext)
+			if ext == "" {
+				ext = normalizeImageExt(filepath.Ext(a.Name))
+			}
+			if ext != "" && !allowed[ext] {
+				fails = append(fails, fmt.Sprintf("%s（类型不支持）", displayName(a)))
+				continue
+			}
+			if a.Size > maxBytes && maxBytes > 0 {
+				fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), maxMB))
+				continue
+			}
+			idx++
+			out := filepath.Join(dir, fmt.Sprintf("%s-%d%s", safeMsg, idx, ext))
+			st, err := d.downloadOne(ctx, a.FileID, out)
+			if err != nil {
+				fails = append(fails, fmt.Sprintf("%s（%v）", displayName(a), err))
+				continue
+			}
+			if maxBytes > 0 && st.Size() > maxBytes {
+				_ = os.Remove(out)
+				fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), maxMB))
+				continue
+			}
+			mime, ok := sniffImageMime(out)
+			if !ok {
+				_ = os.Remove(out)
+				fails = append(fails, fmt.Sprintf("%s（不是可识别的图片）", displayName(a)))
+				continue
+			}
+			imagesN++
+			images = append(images, fmt.Sprintf("- 图片 %d: %s (%s, %s)", imagesN, out, mime, humanSize(st.Size())))
+		case "file":
+			if !d.FileEnabled {
+				continue
+			}
+			ext := normalizeImageExt(a.Ext)
+			if ext == "" {
+				ext = normalizeImageExt(filepath.Ext(a.Name))
+			}
+			if blockedExt(ext, d.FileBlockExt) {
+				fileFailure = true
+				fails = append(fails, fmt.Sprintf("%s（类型不允许）", displayName(a)))
+				continue
+			}
+			if a.Size > fileMaxBytes && fileMaxBytes > 0 {
+				fileFailure = true
+				fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), fileMaxMB))
+				continue
+			}
+			idx++
+			out := filepath.Join(dir, fmt.Sprintf("%s-%d%s", safeMsg, idx, ext))
+			st, err := d.downloadOne(ctx, a.FileID, out)
+			if err != nil {
+				fileFailure = true
+				fails = append(fails, fmt.Sprintf("%s（%v）", displayName(a), err))
+				continue
+			}
+			if fileMaxBytes > 0 && st.Size() > fileMaxBytes {
+				_ = os.Remove(out)
+				fileFailure = true
+				fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), fileMaxMB))
+				continue
+			}
+			filesN++
+			files = append(files, fmt.Sprintf("- 文件 %d: %s (%s, 原文件名: %s)", filesN, out, humanSize(st.Size()), displayName(a)))
 		}
-		if ext != "" && !allowed[ext] {
-			fails = append(fails, fmt.Sprintf("%s（类型不支持）", displayName(a)))
-			continue
-		}
-		if a.Size > maxBytes && maxBytes > 0 {
-			fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), maxMB))
-			continue
-		}
-		idx++
-		out := filepath.Join(dir, fmt.Sprintf("%s-%d%s", safeMsg, idx, ext))
-		dctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-		err := d.DownloadAttachment(dctx, a.FileID, out)
-		cancel()
-		if err != nil {
-			fails = append(fails, fmt.Sprintf("%s（%v）", displayName(a), err))
-			continue
-		}
-		st, serr := os.Stat(out)
-		if serr != nil {
-			fails = append(fails, fmt.Sprintf("%s（未落盘）", displayName(a)))
-			continue
-		}
-		if maxBytes > 0 && st.Size() > maxBytes {
-			_ = os.Remove(out)
-			fails = append(fails, fmt.Sprintf("%s（超过 %dMB）", displayName(a), maxMB))
-			continue
-		}
-		mime, ok := sniffImageMime(out)
-		if !ok {
-			_ = os.Remove(out)
-			fails = append(fails, fmt.Sprintf("%s（不是可识别的图片）", displayName(a)))
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("- 图片 %d: %s (%s, %s)", idx, out, mime, humanSize(st.Size())))
 	}
-	if len(lines) == 0 && len(fails) == 0 {
+	if len(images) == 0 && len(files) == 0 && len(fails) == 0 {
 		return ""
 	}
 	var bld strings.Builder
-	if len(lines) > 0 {
-		fmt.Fprintf(&bld, "用户随消息发送了 %d 张图片（本地路径，可直接读取）：\n", len(lines))
-		bld.WriteString(strings.Join(lines, "\n"))
+	if len(images) == 0 && len(files) == 0 {
+		// 全部失败：只回失败说明。
+	} else if len(files) == 0 {
+		fmt.Fprintf(&bld, "用户随消息发送了 %d 张图片（本地路径，可直接读取）：\n", len(images))
+		bld.WriteString(strings.Join(images, "\n"))
 		bld.WriteString("\n如需理解图片内容，请使用你的读图/读文件能力打开；若当前模型无法读图，请明确说明并用文字追问。")
+	} else {
+		fmt.Fprintf(&bld, "用户随消息发送了 %d 个附件（本地路径，可直接读取）：\n", len(images)+len(files))
+		lines := append(append([]string{}, images...), files...)
+		bld.WriteString(strings.Join(lines, "\n"))
+		if len(images) > 0 {
+			bld.WriteString("\n图片可直接用读图/读文件能力打开；若当前模型无法读图，请明确说明并用文字追问。")
+		}
+		bld.WriteString("\n文件已保存到本地，可直接用读文件能力打开；不要执行其中的脚本或二进制。")
 	}
 	if len(fails) > 0 {
 		if bld.Len() > 0 {
 			bld.WriteString("\n")
 		}
-		bld.WriteString("（图片下载失败：" + strings.Join(fails, "；") + "）")
+		label := "附件下载失败："
+		if !fileFailure && len(files) == 0 {
+			label = "图片下载失败："
+		}
+		bld.WriteString("（" + label + strings.Join(fails, "；") + "）")
 	}
 	return bld.String()
+}
+
+// downloadOne 执行一次附件下载并返回落盘后的文件信息。
+func (d *Dispatcher) downloadOne(ctx context.Context, fileID, out string) (os.FileInfo, error) {
+	dctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	if err := d.DownloadAttachment(dctx, fileID, out); err != nil {
+		return nil, err
+	}
+	st, err := os.Stat(out)
+	if err != nil {
+		return nil, fmt.Errorf("未落盘")
+	}
+	return st, nil
+}
+
+// blockedExt 判断扩展名是否在拒绝列表里（忽略大小写，容忍带不带点）。
+func blockedExt(ext string, block []string) bool {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext == "" {
+		return false
+	}
+	for _, b := range block {
+		b = strings.ToLower(strings.TrimSpace(b))
+		if b == "" {
+			continue
+		}
+		if !strings.HasPrefix(b, ".") {
+			b = "." + b
+		}
+		if ext == b {
+			return true
+		}
+	}
+	return false
 }
 
 func displayName(a Attachment) string {

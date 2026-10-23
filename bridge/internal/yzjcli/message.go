@@ -173,10 +173,23 @@ func (m Message) ImageAttachments() []Attachment {
 	return dropEmptyAttachments(out)
 }
 
-// Attachments returns every downloadable attachment (images for now; files are
-// a Phase 2 extension and use the same file_id mechanism).
+// Attachments returns every downloadable attachment: inline images plus plain
+// file messages. A file message whose ftype=1 (or image extension) stays an
+// image attachment; everything else becomes Kind="file".
 func (m Message) Attachments() []Attachment {
-	return m.ImageAttachments()
+	out := m.ImageAttachments()
+	switch strings.ToLower(strings.TrimSpace(m.MsgType)) {
+	case "file":
+		ext := normalizeExt(m.Param.Ext)
+		isImage := (m.Param.FType != nil && int(*m.Param.FType) == 1) || isImageExt(ext)
+		if !isImage && strings.TrimSpace(m.Param.FileID) != "" {
+			out = append(out, Attachment{
+				Kind: "file", FileID: strings.TrimSpace(m.Param.FileID),
+				Name: m.Param.Name, Ext: ext, Size: rawSize(m.Param.Size),
+			})
+		}
+	}
+	return dropEmptyAttachments(out)
 }
 
 // HasImages reports whether the message carries at least one image.
