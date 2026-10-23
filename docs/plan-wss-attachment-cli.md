@@ -115,7 +115,24 @@ Phase 0（0.5 人日，硬门禁）：
 
 > 本次抓的是机器人单聊（`groupId=BOT-…`）。**群聊 @ 帧仍需补一次样本**，用于确认 `desc` 里的 at 段与引用字段（Phase 1 触发层依赖）。
 
+### 3.2 实施状态（v0.4.3）
+
+已落地（`f9bc34c` 及其后的回归修复）：
+
+- [x] L1 解析：`inbound.NormalizeWS`（`GroupID` + 附件；`msgParam` 字符串/对象兼容；数字 `msgType` 归一）；
+- [x] L1 附件模型：`yzjcli.Message.Attachments()` 支持 `Kind:"file"`；
+- [x] L3 下载：`prepareAttachments` 图片/文件统一下载、大小限制、扩展名黑名单、失败降级提示；
+- [x] L3 解耦：`runtime.applyMediaSettingsLocked` 不再依赖轮询群；`yzj_cli.attachment` 配置；
+- [x] 单测：真实帧 fixture、文件下载、黑名单、无下载器降级。
+
+待办：
+
+- [ ] L2 触发层 `inbound.TargetsBot`：群聊 at 段 / 引用机器人发图（需先补群聊 WSS 帧样本）；
+- [ ] webhook 单独入站复用 `NormalizeWS`（当前 `both` 模式靠 WSS 副本处理）；
+- [ ] Phase 4 反查兜底（默认关闭，仅在 `msgParam` 缺失时启用）。
+
 ---
+
 
 ## 4. 总体方案
 
