@@ -26,6 +26,9 @@ type Client struct {
 	// AuthFailLimit 连续鉴权失败（如 openToken 过期）达到该次数后自动停用通道，
 	// 避免无限重连刷屏。<=0 时使用默认值 3。
 	AuthFailLimit int
+	// DebugFrames 打开后把每个原始 WSS 帧（截断 4KB）写进运行日志，用于抓帧
+	// 和排查字段结构；默认关闭，配置项 defaults.ws_debug_frames。
+	DebugFrames bool
 	// OnAuthGiveUp 在通道因连续鉴权失败被停用时回调（botID），
 	// 由 Runtime 挂接以持久化停用状态；可为 nil。
 	OnAuthGiveUp func(botID string)
@@ -145,6 +148,9 @@ func (c *Client) loop(ctx context.Context) {
 					return
 				}
 				last = time.Now()
+				if c.DebugFrames {
+					log.Printf("ws frame bot=%s len=%d: %s", c.Bot.Config.ID, len(data), clipDebugFrame(data, 4096))
+				}
 				var raw map[string]any
 				if json.Unmarshal(data, &raw) != nil {
 					invalid++
@@ -251,4 +257,14 @@ func authOK(raw map[string]any) bool {
 	}
 	ok, _ := raw["success"].(bool)
 	return ok
+}
+
+// clipDebugFrame 把原始帧压成单行并截断，避免大帧把运行日志撑爆。
+func clipDebugFrame(b []byte, limit int) string {
+	s := strings.ReplaceAll(string(b), "\x00", "")
+	s = strings.Join(strings.Fields(s), " ")
+	if limit > 0 && len(s) > limit {
+		s = s[:limit] + "…"
+	}
+	return s
 }

@@ -7,9 +7,13 @@ import (
 	"yzj-bridge/internal/bot"
 )
 
-// normalizeDSHReasoningEffort 只接受当前桥 UI 暴露的三档；空值表示交给 provider 默认。
+// normalizeDSHReasoningEffort 接受桥 UI 暴露的四档；空值表示交给 provider 默认。
+// "off"/"none"/"disabled" 统一归一成 "off"：DSH 侧 off 表示“不推理、不发送任何
+// reasoning 参数”（见 dshReasoningEfforts 里 off 的 null 语义）。
 func normalizeDSHReasoningEffort(v string) string {
 	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "none", "disabled":
+		return "off"
 	case "low", "medium", "high":
 		return strings.ToLower(strings.TrimSpace(v))
 	default:
@@ -17,8 +21,13 @@ func normalizeDSHReasoningEffort(v string) string {
 	}
 }
 
+// dshReasoningEfforts 声明模型支持的推理档位。
+//
+// off 映射为 nil 是 DSH/pi-ai 的约定：声明的 off 不带值时，pi-ai 会把它当作
+// “支持 off、但什么都不发送”——这正是“关闭思考”的正确下发方式；若写成
+// off: "off" 反而会把 off 这个字面量发给 provider。其余层级仍是直接下发字符串。
 func dshReasoningEfforts() map[string]any {
-	return map[string]any{"low": "low", "medium": "medium", "high": "high"}
+	return map[string]any{"off": nil, "low": "low", "medium": "medium", "high": "high"}
 }
 
 // dshSelectedModel 与 DSH.resolveModel 的默认优先级保持一致。
