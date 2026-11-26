@@ -17,7 +17,9 @@ var (
 	forgetRe   = regexp.MustCompile(`(?i)(?:--|/)forget(?:\s|$)`)
 	projectRe  = regexp.MustCompile(`(?i)(?:--|/)project(?:\s+(\S+))?`)
 	modelRe    = regexp.MustCompile(`(?i)(?:--|/)model(?:\s+(\S+))`)
-	atRe       = regexp.MustCompile(`(?i)@([^\s@]+)\b\s*`)
+	// atTokenRe 只抓「@+非空白」的提及 token。Go 正则的单词边界（\b）只认 ASCII，
+	// 中文机器人名（如「寄件日志查询」）后面永远匹配不到边界。
+	atTokenRe = regexp.MustCompile(`(?i)@[^\s@]+`)
 )
 
 type Result struct {
@@ -42,8 +44,13 @@ func StripBotMention(text string, b *bot.Bot, extra []string, onlySelf bool) str
 		if n == "" {
 			continue
 		}
-		re := regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(n) + `\b\s*`)
-		out = re.ReplaceAllString(out, "")
+		// 不能用 \b：Go 正则的 \b 只认 ASCII 单词边界，中文机器人名后面
+		// 永远不是边界，导致「@寄件日志查询 /clear」原样留下，命令退化成
+		// 「命令 + 正文」而触发模型。这里改判「后跟空白/结尾/非标识符」，
+		// 并把作为分隔的字符原样保留（否则「@名字/clear」会丢掉前导 /）。
+		// 允许名字后带「机器人」后缀（云之家 @ 机器人时常见写法）。
+		re := regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(n) + `(?:机器人)?(\s|$|[^\p{L}\p{N}_])`)
+		out = re.ReplaceAllString(out, "$1")
 	}
 	if !onlySelf {
 		out = regexp.MustCompile(`(?m)^@\S+\s*`).ReplaceAllString(out, "")
@@ -136,6 +143,12 @@ func Parse(text string, b *bot.Bot, reg *registry.Registry) Result {
 	}
 	text = cmdFlagRe.ReplaceAllString(text, " ")
 	res.RestText = strings.TrimSpace(text)
+	// 兜底：@机器人 的提及没被剥离时（中文名、@名字带前缀/后缀等），残留的
+	// 「@token」会被当成用户正文，令纯命令退化为「命令 + 空提问」并白跑一轮
+	// 模型。剩余文本若只由 @提及 构成，按纯命令处理。
+	if res.RestText != "" && strings.TrimSpace(atTokenRe.ReplaceAllString(res.RestText, "")) == "" {
+		res.RestText = ""
+	}
 	if res.RestText != "" {
 		res.Handled = false
 	}

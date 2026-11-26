@@ -66,6 +66,45 @@ func TestParseJobsAlwaysAvailable(t *testing.T) {
 		}
 	}
 }
+func TestStripBotMentionChineseName(t *testing.T) {
+	b := &bot.Bot{Config: bot.Config{ID: "border_bot", Name: "寄件日志查询", CommandsEnabled: true}}
+	for _, in := range []string{"@寄件日志查询 /clear", "@寄件日志查询/clear"} {
+		if got := StripBotMention(in, b, nil, true); got != "/clear" {
+			t.Fatalf("%q => %q", in, got)
+		}
+	}
+	// 带「机器人」后缀的提及也要剥掉。
+	if got := StripBotMention("@寄件日志查询机器人 /clear", b, nil, true); got != "/clear" {
+		t.Fatalf("suffix => %q", got)
+	}
+}
+
+func TestParseSlashCommandAfterChineseMention(t *testing.T) {
+	b := &bot.Bot{Config: bot.Config{ID: "border_bot", Name: "寄件日志查询", CommandsEnabled: true}}
+	got := Parse(StripBotMention("@寄件日志查询 /clear", b, nil, true), b, nil)
+	if got.Overrides["clear"] != "1" || !got.Handled || got.RestText != "" {
+		t.Fatalf("pure clear => %+v", got)
+	}
+	if !strings.Contains(got.Reply, "已清除会话") {
+		t.Fatalf("reply missing ack: %+v", got)
+	}
+	got = Parse(StripBotMention("@寄件日志查询 /clear 帮我查 422387169", b, nil, true), b, nil)
+	if got.Overrides["clear"] != "1" || got.Handled || got.RestText != "帮我查 422387169" {
+		t.Fatalf("clear with text => %+v", got)
+	}
+}
+
+// 即使提及没被剥离（名称带后缀、平台格式差异等），纯命令也不能退化成提问。
+func TestParsePureCommandWithUnstrippedMention(t *testing.T) {
+	b := &bot.Bot{Config: bot.Config{ID: "border_bot", Name: "寄件日志查询", CommandsEnabled: true}}
+	for _, in := range []string{"@寄件日志查询 /clear", "@寄件日志查询机器人 /clear", "@寄件日志查询 /new"} {
+		got := Parse(in, b, nil)
+		if got.Overrides["clear"] != "1" || !got.Handled || got.RestText != "" {
+			t.Fatalf("%q => %+v", in, got)
+		}
+	}
+}
+
 func TestMessageTargetsBotOtherGroupMention(t *testing.T) {
 	reg := registry.New()
 	reg.Replace([]*bot.Bot{
